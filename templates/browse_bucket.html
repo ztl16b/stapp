@@ -88,7 +88,7 @@
                     <tr class="file-row">
                         <td>{{ file.key }}</td>
                         <td>{{ (file.size / 1024)|round(1) }} KB</td>
-                        <td>{{ file.last_modified.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                        <td>{{ file.last_modified.strftime('%m/%d/%y     %I:%M %p') }}</td>
                         <td>
                             <button type="button" class="btn btn-danger btn-sm" 
                                     data-bs-toggle="modal" 

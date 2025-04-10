@@ -45,6 +45,11 @@
 .upload-button-container .btn {
     min-width: 200px;
 }
+.file-size-warning {
+    color: #dc3545;
+    font-weight: bold;
+    margin-top: 0.5rem;
+}
 </style>
 {% endblock %}
 
@@ -82,6 +87,7 @@
                 </button>
             </div>
             <p class="text-muted">Supported formats: JPG, PNG, GIF</p>
+            <p class="text-muted">Maximum file size: 5MB per file</p>
         </div>
 
         <div id="filePreview" class="file-preview"></div>
@@ -104,6 +110,7 @@
         const uploadButton = document.getElementById('uploadButton');
         const fixedUploadButton = document.getElementById('fixedUploadButton');
         let files = [];
+        const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
 
         // Prevent default drag behaviors
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -151,7 +158,23 @@
         }
 
         function handleFiles(e) {
-            files = [...e.target.files];
+            const newFiles = [...e.target.files];
+            const validFiles = [];
+            const invalidFiles = [];
+            
+            newFiles.forEach(file => {
+                if (file.size <= MAX_FILE_SIZE) {
+                    validFiles.push(file);
+                } else {
+                    invalidFiles.push(file);
+                }
+            });
+            
+            if (invalidFiles.length > 0) {
+                alert(`The following files exceed the 5MB size limit and will not be uploaded:\n${invalidFiles.map(f => f.name).join('\n')}`);
+            }
+            
+            files = validFiles;
             updateFilePreview();
         }
 
@@ -174,6 +197,10 @@
                 const fileName = document.createElement('span');
                 fileName.textContent = file.name;
                 
+                const fileSize = document.createElement('span');
+                fileSize.className = 'ms-2 text-muted';
+                fileSize.textContent = `(${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+                
                 const removeButton = document.createElement('span');
                 removeButton.className = 'remove-file';
                 removeButton.innerHTML = '&times;';
@@ -183,6 +210,7 @@
                 };
                 
                 fileItem.appendChild(fileName);
+                fileItem.appendChild(fileSize);
                 fileItem.appendChild(removeButton);
                 filePreview.appendChild(fileItem);
             });

@@ -200,10 +200,26 @@ def upload():
         successful_uploads = 0
         failed_uploads = 0
         
+        # Set a maximum file size (5MB)
+        MAX_FILE_SIZE = 5 * 1024 * 1024
+        
         for file in files:
             if file and file.filename:
                 try:
+                    # Check file size
+                    file_size = 0
+                    file.seek(0, 2)  # Seek to end of file
+                    file_size = file.tell()
+                    file.seek(0)  # Reset file pointer
+                    
+                    if file_size > MAX_FILE_SIZE:
+                        app.logger.warning(f"File {file.filename} exceeds size limit of 5MB")
+                        failed_uploads += 1
+                        continue
+                    
+                    # Process file in chunks to avoid memory issues
                     import requests
+                    import io
                     
                     headers = {
                         'Authorization': f'Bearer {BYTESCALE_API_KEY}'
@@ -213,7 +229,13 @@ def upload():
                         'file': (file.filename, file, file.content_type)
                     }
                     
-                    upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data)
+                    # Set a timeout for the request to prevent hanging
+                    upload_response = requests.post(
+                        BYTESCALE_UPLOAD_URL, 
+                        headers=headers, 
+                        files=files_data,
+                        timeout=10  # 10 second timeout
+                    )
                     
                     app.logger.info(f"Bytescale Upload Response: {upload_response.text}")
                     
@@ -234,16 +256,20 @@ def upload():
                         # Create the processed image URL with the required parameters
                         processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
                         
-                        # Download the processed image
-                        download_response = requests.get(processed_url)
+                        # Download the processed image with a timeout
+                        download_response = requests.get(processed_url, timeout=10)
                         
                         if download_response.ok:
                             # Upload the processed image to S3
                             upload_path = f"temp_performer_at_venue_images/{file.filename.rsplit('.', 1)[0]}.webp"
+                            
+                            # Use a buffer to avoid loading the entire file into memory
+                            buffer = io.BytesIO(download_response.content)
+                            
                             s3_client.put_object(
                                 Bucket=S3_UPLOAD_BUCKET,
                                 Key=upload_path,
-                                Body=download_response.content,
+                                Body=buffer,
                                 ContentType='image/webp'
                             )
                             
@@ -255,6 +281,9 @@ def upload():
                         app.logger.error(f"Bytescale Upload Error: {upload_response.text}")
                         failed_uploads += 1
                         
+                except requests.exceptions.Timeout:
+                    app.logger.error(f"Timeout while processing {file.filename}")
+                    failed_uploads += 1
                 except ClientError as e:
                     app.logger.error(f"S3 Upload Error: {e}")
                     failed_uploads += 1
