@@ -37,12 +37,23 @@ def login_required(f):
 def login():
     if request.method == 'POST':
         password = request.form.get('password')
-        if password == ADMIN_PASSWORD:
+        browse_password = os.getenv('BROWSE_PASSWORD')
+        admin_password = os.getenv('ADMIN_PASSWORD')
+        
+        # Log password check for debugging (without exposing actual passwords)
+        app.logger.info(f"Login attempt - Browse password set: {bool(browse_password)}, Admin password set: {bool(admin_password)}")
+        
+        if password == browse_password or password == admin_password:
+            session.permanent = True  # Make the session permanent
             session['logged_in'] = True
-            flash('You have been logged in successfully.', 'success')
-            return redirect(url_for('browse_buckets'))
+            session['login_time'] = datetime.now().isoformat()
+            flash('Login successful!', 'success')
+            
+            # Redirect to the stored URL or default to browse_buckets
+            next_url = session.pop('next', None)
+            return redirect(next_url or url_for('browse_buckets'))
         else:
-            flash('Invalid password. Please try again.', 'danger')
+            flash('Invalid password. Please try again.', 'error')
     return render_template('login.html')
 
 @app.route('/logout')
@@ -371,14 +382,12 @@ def browse_bucket(bucket_name):
         
     bucket_info = buckets[bucket_name]
     try:
-        # Get page number, search query, sort order, date filter, and size filter from query parameters
+        # Get page number, search query, sort order, and date filter from query parameters
         page = request.args.get('page', 1, type=int)
         search_query = request.args.get('search', '').lower()
         sort_order = request.args.get('sort', 'desc')  # Default to descending order
         date_from = request.args.get('date_from', '')  # Date filter from
         date_to = request.args.get('date_to', '')      # Date filter to
-        min_size = request.args.get('min_size', '')    # Minimum file size in KB
-        max_size = request.args.get('max_size', '')    # Maximum file size in KB
         per_page = 500  # Number of items per page
         
         # Create a paginator for list_objects_v2
@@ -401,23 +410,19 @@ def browse_bucket(bucket_name):
                             if any(c.isalpha() for c in filename):
                                 # Apply date filter if dates are provided
                                 if apply_date_filter(item['LastModified'], date_from, date_to):
-                                    # Apply size filter if sizes are provided
-                                    if apply_size_filter(item['Size'], min_size, max_size):
-                                        all_files.append({
-                                            'key': item['Key'],
-                                            'size': item['Size'],
-                                            'last_modified': item['LastModified']
-                                        })
-                        elif not search_query or search_query in item['Key'].lower():
-                            # Apply date filter if dates are provided
-                            if apply_date_filter(item['LastModified'], date_from, date_to):
-                                # Apply size filter if sizes are provided
-                                if apply_size_filter(item['Size'], min_size, max_size):
                                     all_files.append({
                                         'key': item['Key'],
                                         'size': item['Size'],
                                         'last_modified': item['LastModified']
                                     })
+                        elif not search_query or search_query in item['Key'].lower():
+                            # Apply date filter if dates are provided
+                            if apply_date_filter(item['LastModified'], date_from, date_to):
+                                all_files.append({
+                                    'key': item['Key'],
+                                    'size': item['Size'],
+                                    'last_modified': item['LastModified']
+                                })
         
         # Sort files by last_modified date
         all_files.sort(key=lambda x: x['last_modified'], reverse=(sort_order == 'desc'))
@@ -447,9 +452,7 @@ def browse_bucket(bucket_name):
                              search_query=search_query,
                              sort_order=sort_order,
                              date_from=date_from,
-                             date_to=date_to,
-                             min_size=min_size,
-                             max_size=max_size)
+                             date_to=date_to)
     except Exception as e:
         app.logger.error(f"Error listing bucket contents: {e}")
         flash(f'Error accessing bucket: {str(e)}', 'danger')
@@ -478,36 +481,6 @@ def apply_date_filter(last_modified, date_from, date_to):
         except ValueError:
             app.logger.error(f"Invalid date_to format: {date_to}")
     
-    return True
-
-def apply_size_filter(file_size, min_size, max_size):
-    """Apply size filter to a file's size (in bytes)"""
-    # If no size filters are provided, include the file
-    if not min_size and not max_size:
-        return True
-    
-    # Convert file size to KB for comparison
-    file_size_kb = file_size / 1024
-    
-    # Apply minimum size filter if provided
-    if min_size:
-        try:
-            min_size_kb = float(min_size)
-            if file_size_kb < min_size_kb:
-                return False
-        except ValueError:
-            app.logger.error(f"Invalid min_size format: {min_size}")
-    
-    # Apply maximum size filter if provided
-    if max_size:
-        try:
-            max_size_kb = float(max_size)
-            if file_size_kb > max_size_kb:
-                return False
-        except ValueError:
-            app.logger.error(f"Invalid max_size format: {max_size}")
-    
-    # If we get here, the file passes the size filter
     return True
 
 @app.route('/delete/<bucket_name>/<path:object_key>', methods=['POST'])
