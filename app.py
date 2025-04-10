@@ -9,7 +9,9 @@ from datetime import datetime
 
 load_dotenv()
 
-app = Flask(__name__)
+# Get the absolute path to the templates directory
+template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
+app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.urandom(24)
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
