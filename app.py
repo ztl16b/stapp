@@ -432,6 +432,7 @@ def browse_bucket(bucket_name):
                                 if apply_date_filter(item['LastModified'], date_from, date_to):
                                     all_files.append({
                                         'key': item['Key'],
+                                        'size': item['Size'],
                                         'last_modified': item['LastModified']
                                     })
                         elif not search_query or search_query in item['Key'].lower():
@@ -439,6 +440,7 @@ def browse_bucket(bucket_name):
                             if apply_date_filter(item['LastModified'], date_from, date_to):
                                 all_files.append({
                                     'key': item['Key'],
+                                    'size': item['Size'],
                                     'last_modified': item['LastModified']
                                 })
         
