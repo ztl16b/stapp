@@ -9,6 +9,7 @@ from functools import wraps
 from datetime import datetime, timedelta
 from flask_session import Session
 from concurrent.futures import ThreadPoolExecutor
+from celery import Celery
 
 load_dotenv()
 
@@ -24,6 +25,35 @@ app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HT
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 Session(app)
+
+# Celery configuration
+app.config['CELERY_BROKER_URL'] = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+app.config['CELERY_RESULT_BACKEND'] = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+app.config['CELERY_TASK_SERIALIZER'] = 'json'
+app.config['CELERY_ACCEPT_CONTENT'] = ['json']
+app.config['CELERY_RESULT_SERIALIZER'] = 'json'
+app.config['CELERY_TIMEZONE'] = 'UTC'
+
+# Initialize Celery
+celery = Celery(
+    app.name,
+    broker=app.config['CELERY_BROKER_URL'],
+    backend=app.config['CELERY_RESULT_BACKEND']
+)
+celery.conf.update(app.config)
+
+# Create a task context
+TaskBase = celery.Task
+class ContextTask(TaskBase):
+    abstract = True
+    def __on_success__(self, retval, task_id, args, kwargs):
+        print('Task {0} completed successfully'.format(task_id))
+    def __on_failure__(self, exc, task_id, args, kwargs, einfo):
+        print('Task {0} failed: {1}'.format(task_id, exc))
+    def __call__(self, *args, **kwargs):
+        with app.app_context():
+            return TaskBase.__call__(self, *args, **kwargs)
+celery.Task = ContextTask
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -96,6 +126,151 @@ except NoCredentialsError:
     raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
+
+# Celery task for processing images
+@celery.task(name='process_image')
+def process_image(file_data, filename, content_type):
+    try:
+        headers = {
+            'Authorization': f'Bearer {BYTESCALE_API_KEY}'
+        }
+        
+        # Create a file-like object from the base64 data
+        import base64
+        import io
+        
+        # Decode base64 data
+        file_content = base64.b64decode(file_data)
+        file_obj = io.BytesIO(file_content)
+        
+        files_data = {
+            'file': (filename, file_obj, content_type)
+        }
+        
+        upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data)
+        
+        app.logger.info(f"Bytescale Upload Response: {upload_response.text}")
+        
+        if upload_response.ok:
+            json_response = upload_response.json()
+            file_url = None
+            
+            for file_obj in json_response.get("files", []):
+                if file_obj.get("formDataFieldName") == "file":
+                    file_url = file_obj.get("fileUrl")
+                    break
+            
+            if not file_url:
+                app.logger.error(f"Bytescale Upload Response: {json_response}")
+                return {'success': False, 'error': 'Failed to get file URL from Bytescale'}
+            
+            # Create the processed image URL with the required parameters
+            processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
+            
+            # Download the processed image with streaming
+            download_response = requests.get(processed_url, stream=True)
+            
+            if download_response.ok:
+                # Upload the processed image to S3
+                upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
+                
+                # Use streaming upload to S3
+                s3_client.upload_fileobj(
+                    download_response.raw,
+                    S3_UPLOAD_BUCKET,
+                    upload_path,
+                    ExtraArgs={'ContentType': 'image/webp'}
+                )
+                
+                return {'success': True, 'path': upload_path}
+            else:
+                app.logger.error(f"Error downloading processed image: {download_response.text}")
+                return {'success': False, 'error': 'Failed to download processed image'}
+        else:
+            app.logger.error(f"Bytescale Upload Error: {upload_response.text}")
+            return {'success': False, 'error': 'Failed to upload to Bytescale'}
+            
+    except ClientError as e:
+        app.logger.error(f"S3 Upload Error: {e}")
+        return {'success': False, 'error': f'S3 Upload Error: {str(e)}'}
+    except NoCredentialsError:
+        app.logger.error("AWS credentials not found")
+        return {'success': False, 'error': 'AWS credentials not found'}
+    except Exception as e:
+        app.logger.error(f"Upload Error: {e}")
+        return {'success': False, 'error': f'Upload Error: {str(e)}'}
+
+# Now modify the upload route to use Celery
+@app.route('/upload', methods=['GET', 'POST'])
+def upload():
+    if request.method == 'POST':
+        if 'files' not in request.files:
+            flash('No files part', 'warning')
+            return redirect(request.url)
+            
+        files = request.files.getlist('files')
+        if not files or all(file.filename == '' for file in files):
+            flash('No selected files', 'warning')
+            return redirect(request.url)
+        
+        # Store task IDs for tracking
+        task_ids = []
+        
+        for file in files:
+            if file and file.filename:
+                try:
+                    # Read file content and convert to base64
+                    import base64
+                    file_content = file.read()
+                    file_base64 = base64.b64encode(file_content).decode('utf-8')
+                    
+                    # Submit task to Celery
+                    task = process_image.delay(
+                        file_base64,
+                        file.filename,
+                        file.content_type
+                    )
+                    
+                    task_ids.append({
+                        'task_id': task.id,
+                        'filename': file.filename
+                    })
+                    
+                except Exception as e:
+                    app.logger.error(f"Error submitting task for {file.filename}: {e}")
+        
+        # Store task IDs in session for tracking
+        session['upload_tasks'] = task_ids
+        
+        flash(f'{len(task_ids)} files submitted for processing. You can check the status in the upload history.', 'info')
+        return redirect(url_for('upload_status'))
+    
+    return render_template('upload.html')
+
+# Add a route to check upload status
+@app.route('/upload-status')
+@login_required
+def upload_status():
+    task_ids = session.get('upload_tasks', [])
+    results = []
+    
+    for task_info in task_ids:
+        task_id = task_info['task_id']
+        filename = task_info['filename']
+        
+        # Get task status
+        task = celery.AsyncResult(task_id)
+        
+        status = {
+            'filename': filename,
+            'task_id': task_id,
+            'status': task.status,
+            'result': task.result if task.ready() else None
+        }
+        
+        results.append(status)
+    
+    return render_template('upload_status.html', results=results)
 
 def get_random_image_key(bucket_name):
     """Gets a random object key from the specified bucket."""
@@ -182,121 +357,9 @@ def get_presigned_url(bucket_name, object_key, expiration=3600):
         flash("An unexpected error occurred while generating the image URL.", "danger")
     return None
 
-
 @app.route('/')
 def index():
     return redirect(url_for('upload'))
-
-@app.route('/upload', methods=['GET', 'POST'])
-def upload():
-    if request.method == 'POST':
-        if 'files' not in request.files:
-            flash('No files part', 'warning')
-            return redirect(request.url)
-            
-        files = request.files.getlist('files')
-        if not files or all(file.filename == '' for file in files):
-            flash('No selected files', 'warning')
-            return redirect(request.url)
-            
-        successful_uploads = 0
-        failed_uploads = 0
-        
-        def process_file(file):
-            try:
-                headers = {
-                    'Authorization': f'Bearer {BYTESCALE_API_KEY}'
-                }
-                
-                files_data = {
-                    'file': (file.filename, file, file.content_type)
-                }
-                
-                upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data)
-                
-                app.logger.info(f"Bytescale Upload Response: {upload_response.text}")
-                
-                if upload_response.ok:
-                    json_response = upload_response.json()
-                    file_url = None
-                    
-                    for file_obj in json_response.get("files", []):
-                        if file_obj.get("formDataFieldName") == "file":
-                            file_url = file_obj.get("fileUrl")
-                            break
-                    
-                    if not file_url:
-                        app.logger.error(f"Bytescale Upload Response: {json_response}")
-                        return False
-                    
-                    # Create the processed image URL with the required parameters
-                    processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
-                    
-                    # Download the processed image with streaming
-                    download_response = requests.get(processed_url, stream=True)
-                    
-                    if download_response.ok:
-                        # Upload the processed image to S3
-                        upload_path = f"temp_performer_at_venue_images/{file.filename.rsplit('.', 1)[0]}.webp"
-                        
-                        # Use streaming upload to S3
-                        s3_client.upload_fileobj(
-                            download_response.raw,
-                            S3_UPLOAD_BUCKET,
-                            upload_path,
-                            ExtraArgs={'ContentType': 'image/webp'}
-                        )
-                        
-                        return True
-                    else:
-                        app.logger.error(f"Error downloading processed image: {download_response.text}")
-                        return False
-                else:
-                    app.logger.error(f"Bytescale Upload Error: {upload_response.text}")
-                    return False
-                    
-            except ClientError as e:
-                app.logger.error(f"S3 Upload Error: {e}")
-                return False
-            except NoCredentialsError:
-                flash('AWS credentials not found.', 'danger')
-                return False
-            except Exception as e:
-                app.logger.error(f"Upload Error: {e}")
-                return False
-        
-        # Process files in batches of 20
-        batch_size = 20
-        total_files = len(files)
-        
-        for i in range(0, total_files, batch_size):
-            batch = files[i:i+batch_size]
-            app.logger.info(f"Processing batch {i//batch_size + 1} of {(total_files + batch_size - 1)//batch_size} ({len(batch)} files)")
-            
-            # Use ThreadPoolExecutor to process files in parallel within each batch
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                results = list(executor.map(process_file, batch))
-                
-                batch_successful = sum(1 for result in results if result)
-                batch_failed = sum(1 for result in results if not result)
-                
-                successful_uploads += batch_successful
-                failed_uploads += batch_failed
-                
-                # Log progress after each batch
-                app.logger.info(f"Batch {i//batch_size + 1} complete: {batch_successful} successful, {batch_failed} failed")
-        
-        if successful_uploads > 0:
-            if failed_uploads > 0:
-                flash(f'{successful_uploads} files uploaded successfully. {failed_uploads} files failed to upload.', 'warning')
-            else:
-                flash(f'{successful_uploads} files uploaded successfully!', 'success')
-        else:
-            flash('No files were uploaded successfully.', 'danger')
-            
-        return redirect(url_for('upload'))
-
-    return render_template('upload.html')
 
 @app.route('/review')
 @login_required
