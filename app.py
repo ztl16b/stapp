@@ -29,6 +29,7 @@ app.config['SESSION_COOKIE_SECURE'] = True  # Set to True for HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 app.config['SESSION_COOKIE_NAME'] = 'image_interface_session'
+app.config['SECRET_KEY'] = os.urandom(24)
 Session(app)
 
 # Celery configuration
