@@ -5,9 +5,6 @@
     <div class="d-flex justify-content-between align-items-center mt-5 mb-4">
         <h1>{{ bucket.name }}</h1>
         <div>
-            <a href="{{ url_for('upload') }}" class="btn btn-primary me-2">
-                <i class="fas fa-upload"></i> Upload Files
-            </a>
             <button type="button" class="btn btn-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
                 Delete All Files
             </button>
@@ -29,29 +26,21 @@
     <!-- Search Form -->
     <form class="search-form mb-4" method="get">
         <div class="row g-3">
-            <div class="col-md-4">
+            <div class="col-md-6">
                 <div class="input-group">
                     <input type="text" name="search" class="form-control" placeholder="Search files..." value="{{ search_query }}">
                     <button type="submit" class="btn btn-primary">Search</button>
                     <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, search='letters') }}" class="btn btn-info">Letters</a>
-                    {% if search_query or date_from or date_to or min_size or max_size %}
+                    {% if search_query or date_from or date_to %}
                         <a href="{{ url_for('browse_bucket', bucket_name=bucket_name) }}" class="btn btn-secondary">Clear</a>
                     {% endif %}
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-6">
                 <div class="input-group">
                     <span class="input-group-text">Date Range</span>
                     <input type="date" name="date_from" class="form-control" value="{{ date_from }}" placeholder="From">
                     <input type="date" name="date_to" class="form-control" value="{{ date_to }}" placeholder="To">
-                    <button type="submit" class="btn btn-primary">Filter</button>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="input-group">
-                    <span class="input-group-text">Size (KB)</span>
-                    <input type="number" name="min_size" class="form-control" value="{{ min_size }}" placeholder="Min" min="0" step="0.1">
-                    <input type="number" name="max_size" class="form-control" value="{{ max_size }}" placeholder="Max" min="0" step="0.1">
                     <button type="submit" class="btn btn-primary">Filter</button>
                 </div>
             </div>
@@ -72,15 +61,6 @@
                 To {{ date_to }}
             {% endif %}
         {% endif %}
-        {% if min_size or max_size %}
-            <br>Size range: 
-            {% if min_size %}
-                Min {{ min_size }} KB
-            {% endif %}
-            {% if max_size %}
-                Max {{ max_size }} KB
-            {% endif %}
-        {% endif %}
     </div>
 
     {% if files %}
@@ -91,7 +71,7 @@
                         <th>File Name</th>
                         <th>Size</th>
                         <th>
-                            <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to, min_size=min_size, max_size=max_size) }}" class="text-dark text-decoration-none">
+                            <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to) }}" class="text-dark text-decoration-none">
                                 Last Modified
                                 {% if sort_order == 'desc' %}
                                     <i class="fas fa-sort-down"></i>
@@ -150,7 +130,7 @@
             <ul class="pagination justify-content-center">
                 {% if current_page > 1 %}
                 <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to, min_size=min_size, max_size=max_size) }}" aria-label="Previous">
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Previous">
                         <span aria-hidden="true">&laquo;</span>
                     </a>
                 </li>
@@ -158,13 +138,13 @@
                 
                 {% for p in range(1, total_pages + 1) %}
                 <li class="page-item {% if p == current_page %}active{% endif %}">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to, min_size=min_size, max_size=max_size) }}">{{ p }}</a>
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ p }}</a>
                 </li>
                 {% endfor %}
                 
                 {% if current_page < total_pages %}
                 <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to, min_size=min_size, max_size=max_size) }}" aria-label="Next">
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Next">
                         <span aria-hidden="true">&raquo;</span>
                     </a>
                 </li>

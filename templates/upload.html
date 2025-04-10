@@ -35,6 +35,16 @@
     height: 0.5rem;
     margin-top: 0.5rem;
 }
+.hidden-button {
+    display: none;
+}
+.upload-button-container {
+    margin: 1rem 0;
+    text-align: center;
+}
+.upload-button-container .btn {
+    min-width: 200px;
+}
 </style>
 {% endblock %}
 
@@ -54,6 +64,13 @@
     {% endwith %}
 
     <form method="post" enctype="multipart/form-data" id="uploadForm">
+        <!-- Upload button at the top -->
+        <div class="upload-button-container">
+            <button type="button" class="btn btn-primary" id="fixedUploadButton" disabled>
+                Upload Files
+            </button>
+        </div>
+
         <div class="upload-area" id="dropZone">
             <input type="file" name="files" id="fileInput" multiple accept="image/*" style="display: none;">
             <div class="mb-3">
@@ -69,11 +86,10 @@
 
         <div id="filePreview" class="file-preview"></div>
 
-        <div class="d-grid gap-2">
-            <button type="submit" class="btn btn-primary" id="uploadButton" disabled>
-                Upload Files
-            </button>
-        </div>
+        <!-- Hidden submit button -->
+        <button type="submit" class="btn btn-primary hidden-button" id="uploadButton" disabled>
+            Upload Files
+        </button>
     </form>
 </div>
 {% endblock %}
@@ -86,6 +102,7 @@
         const fileInput = document.getElementById('fileInput');
         const filePreview = document.getElementById('filePreview');
         const uploadButton = document.getElementById('uploadButton');
+        const fixedUploadButton = document.getElementById('fixedUploadButton');
         let files = [];
 
         // Prevent default drag behaviors
@@ -108,6 +125,11 @@
         
         // Handle file input change
         fileInput.addEventListener('change', handleFiles, false);
+
+        // Handle fixed upload button click
+        fixedUploadButton.addEventListener('click', function() {
+            document.getElementById('uploadForm').submit();
+        });
 
         function preventDefaults (e) {
             e.preventDefault();
@@ -138,10 +160,12 @@
             
             if (files.length === 0) {
                 uploadButton.disabled = true;
+                fixedUploadButton.disabled = true;
                 return;
             }
             
             uploadButton.disabled = false;
+            fixedUploadButton.disabled = false;
             
             files.forEach((file, index) => {
                 const fileItem = document.createElement('div');

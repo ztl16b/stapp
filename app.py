@@ -5,7 +5,8 @@ from flask import Flask, request, render_template, redirect, url_for, flash, ses
 from dotenv import load_dotenv
 from botocore.exceptions import NoCredentialsError, ClientError
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
+from flask_session import Session
 
 load_dotenv()
 
@@ -13,6 +14,14 @@ load_dotenv()
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.urandom(24)
+
+# Session configuration
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_REFRESH_EACH_REQUEST'] = True
+Session(app)
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -30,6 +39,8 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get('logged_in'):
+            # Store the URL the user was trying to access
+            session['next'] = request.url
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
@@ -421,7 +432,6 @@ def browse_bucket(bucket_name):
                                 if apply_date_filter(item['LastModified'], date_from, date_to):
                                     all_files.append({
                                         'key': item['Key'],
-                                        'size': item['Size'],
                                         'last_modified': item['LastModified']
                                     })
                         elif not search_query or search_query in item['Key'].lower():
@@ -429,7 +439,6 @@ def browse_bucket(bucket_name):
                             if apply_date_filter(item['LastModified'], date_from, date_to):
                                 all_files.append({
                                     'key': item['Key'],
-                                    'size': item['Size'],
                                     'last_modified': item['LastModified']
                                 })
         
