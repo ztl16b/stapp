@@ -53,7 +53,7 @@ This application allows users to upload, process, and manage images using Flask,
 
 2. Add Heroku Redis addon:
    ```
-   heroku addons:create heroku-redis:hobby-dev
+   heroku addons:create heroku-redis:mini
    ```
 
 3. Set environment variables:
