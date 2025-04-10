@@ -2,14 +2,14 @@ import os
 import random
 import boto3
 import requests
-from flask import Flask, request, render_template, redirect, url_for, flash, session
+from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify
 from dotenv import load_dotenv
 from botocore.exceptions import NoCredentialsError, ClientError
 from functools import wraps
 from datetime import datetime, timedelta
 from flask_session import Session
-from concurrent.futures import ThreadPoolExecutor
-from celery import Celery
+from celery_worker import app as celery_app
+from tasks import process_image
 
 load_dotenv()
 
@@ -27,33 +27,19 @@ app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 Session(app)
 
 # Celery configuration
-app.config['CELERY_BROKER_URL'] = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-app.config['CELERY_RESULT_BACKEND'] = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+app.config['CELERY_BROKER_URL'] = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+app.config['CELERY_RESULT_BACKEND'] = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 app.config['CELERY_TASK_SERIALIZER'] = 'json'
 app.config['CELERY_ACCEPT_CONTENT'] = ['json']
 app.config['CELERY_RESULT_SERIALIZER'] = 'json'
 app.config['CELERY_TIMEZONE'] = 'UTC'
+app.config['CELERY_ENABLE_UTC'] = True
 
 # Initialize Celery
-celery = Celery(
-    app.name,
-    broker=app.config['CELERY_BROKER_URL'],
-    backend=app.config['CELERY_RESULT_BACKEND']
-)
-celery.conf.update(app.config)
+celery_app.conf.update(app.config)
 
-# Create a task context
-TaskBase = celery.Task
-class ContextTask(TaskBase):
-    abstract = True
-    def __on_success__(self, retval, task_id, args, kwargs):
-        print('Task {0} completed successfully'.format(task_id))
-    def __on_failure__(self, exc, task_id, args, kwargs, einfo):
-        print('Task {0} failed: {1}'.format(task_id, exc))
-    def __call__(self, *args, **kwargs):
-        with app.app_context():
-            return TaskBase.__call__(self, *args, **kwargs)
-celery.Task = ContextTask
+# Dictionary to store upload status
+upload_status = {}
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -67,6 +53,8 @@ BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -127,80 +115,10 @@ except NoCredentialsError:
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
 
-# Celery task for processing images
-@celery.task(name='process_image')
-def process_image(file_data, filename, content_type):
-    try:
-        headers = {
-            'Authorization': f'Bearer {BYTESCALE_API_KEY}'
-        }
-        
-        # Create a file-like object from the base64 data
-        import base64
-        import io
-        
-        # Decode base64 data
-        file_content = base64.b64decode(file_data)
-        file_obj = io.BytesIO(file_content)
-        
-        files_data = {
-            'file': (filename, file_obj, content_type)
-        }
-        
-        upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data)
-        
-        app.logger.info(f"Bytescale Upload Response: {upload_response.text}")
-        
-        if upload_response.ok:
-            json_response = upload_response.json()
-            file_url = None
-            
-            for file_obj in json_response.get("files", []):
-                if file_obj.get("formDataFieldName") == "file":
-                    file_url = file_obj.get("fileUrl")
-                    break
-            
-            if not file_url:
-                app.logger.error(f"Bytescale Upload Response: {json_response}")
-                return {'success': False, 'error': 'Failed to get file URL from Bytescale'}
-            
-            # Create the processed image URL with the required parameters
-            processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
-            
-            # Download the processed image with streaming
-            download_response = requests.get(processed_url, stream=True)
-            
-            if download_response.ok:
-                # Upload the processed image to S3
-                upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
-                
-                # Use streaming upload to S3
-                s3_client.upload_fileobj(
-                    download_response.raw,
-                    S3_UPLOAD_BUCKET,
-                    upload_path,
-                    ExtraArgs={'ContentType': 'image/webp'}
-                )
-                
-                return {'success': True, 'path': upload_path}
-            else:
-                app.logger.error(f"Error downloading processed image: {download_response.text}")
-                return {'success': False, 'error': 'Failed to download processed image'}
-        else:
-            app.logger.error(f"Bytescale Upload Error: {upload_response.text}")
-            return {'success': False, 'error': 'Failed to upload to Bytescale'}
-            
-    except ClientError as e:
-        app.logger.error(f"S3 Upload Error: {e}")
-        return {'success': False, 'error': f'S3 Upload Error: {str(e)}'}
-    except NoCredentialsError:
-        app.logger.error("AWS credentials not found")
-        return {'success': False, 'error': 'AWS credentials not found'}
-    except Exception as e:
-        app.logger.error(f"Upload Error: {e}")
-        return {'success': False, 'error': f'Upload Error: {str(e)}'}
+@app.route('/')
+def index():
+    return redirect(url_for('upload'))
 
-# Now modify the upload route to use Celery
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
     if request.method == 'POST':
@@ -213,64 +131,101 @@ def upload():
             flash('No selected files', 'warning')
             return redirect(request.url)
         
-        # Store task IDs for tracking
+        # Store file information for processing
         task_ids = []
         
         for file in files:
-            if file and file.filename:
-                try:
-                    # Read file content and convert to base64
-                    import base64
-                    file_content = file.read()
-                    file_base64 = base64.b64encode(file_content).decode('utf-8')
-                    
-                    # Submit task to Celery
-                    task = process_image.delay(
-                        file_base64,
-                        file.filename,
-                        file.content_type
-                    )
-                    
-                    task_ids.append({
-                        'task_id': task.id,
-                        'filename': file.filename
-                    })
-                    
-                except Exception as e:
-                    app.logger.error(f"Error submitting task for {file.filename}: {e}")
+            # Read file data
+            file_data = file.read()
+            filename = file.filename
+            content_type = file.content_type
+            
+            # Submit task to Celery
+            task = process_image.delay(file_data, filename, content_type)
+            task_ids.append(task.id)
+            
+            # Initialize status for this task
+            upload_status[task.id] = {
+                'status': 'PENDING',
+                'filename': filename,
+                'message': 'Task queued'
+            }
         
-        # Store task IDs in session for tracking
-        session['upload_tasks'] = task_ids
+        # Store task IDs in session for status checking
+        session['upload_task_ids'] = task_ids
         
-        flash(f'{len(task_ids)} files submitted for processing. You can check the status in the upload history.', 'info')
+        flash(f'{len(files)} files queued for processing. You can check the status below.', 'info')
         return redirect(url_for('upload_status'))
-    
+        
     return render_template('upload.html')
 
-# Add a route to check upload status
 @app.route('/upload-status')
-@login_required
-def upload_status():
-    task_ids = session.get('upload_tasks', [])
-    results = []
+def upload_status_route():
+    task_ids = session.get('upload_task_ids', [])
+    tasks = []
     
-    for task_info in task_ids:
-        task_id = task_info['task_id']
-        filename = task_info['filename']
-        
-        # Get task status
-        task = celery.AsyncResult(task_id)
-        
-        status = {
-            'filename': filename,
-            'task_id': task_id,
-            'status': task.status,
-            'result': task.result if task.ready() else None
-        }
-        
-        results.append(status)
+    for task_id in task_ids:
+        if task_id in upload_status:
+            task_info = upload_status[task_id]
+            
+            # If task is still pending, check its status
+            if task_info['status'] == 'PENDING':
+                task = celery_app.AsyncResult(task_id)
+                
+                if task.ready():
+                    result = task.result
+                    if result['status'] == 'success':
+                        task_info['status'] = 'SUCCESS'
+                        task_info['message'] = result['message']
+                    else:
+                        task_info['status'] = 'FAILED'
+                        task_info['message'] = result['message']
+                elif task.state == 'PROCESSING':
+                    task_info['status'] = 'PROCESSING'
+                    task_info['message'] = task.info.get('status', 'Processing')
+            
+            tasks.append({
+                'id': task_id,
+                'filename': task_info['filename'],
+                'status': task_info['status'],
+                'message': task_info['message']
+            })
     
-    return render_template('upload_status.html', results=results)
+    return render_template('upload_status.html', tasks=tasks)
+
+@app.route('/check-upload-status')
+def check_upload_status():
+    task_ids = session.get('upload_task_ids', [])
+    tasks = []
+    
+    for task_id in task_ids:
+        if task_id in upload_status:
+            task_info = upload_status[task_id]
+            
+            # If task is still pending, check its status
+            if task_info['status'] == 'PENDING':
+                task = celery_app.AsyncResult(task_id)
+                
+                if task.ready():
+                    result = task.result
+                    if result['status'] == 'success':
+                        task_info['status'] = 'SUCCESS'
+                        task_info['message'] = result['message']
+                    else:
+                        task_info['status'] = 'FAILED'
+                        task_info['message'] = result['message']
+                elif task.state == 'PROCESSING':
+                    task_info['status'] = 'PROCESSING'
+                    task_info['message'] = task.info.get('status', 'Processing')
+            
+            tasks.append({
+                'id': task_id,
+                'filename': task_info['filename'],
+                'status': task_info['status'],
+                'message': task_info['message']
+            })
+    
+    return jsonify({'tasks': tasks})
 
 def get_random_image_key(bucket_name):
     """Gets a random object key from the specified bucket."""
@@ -356,10 +311,6 @@ def get_presigned_url(bucket_name, object_key, expiration=3600):
         app.logger.error(f"Unexpected error generating presigned URL: {e}")
         flash("An unexpected error occurred while generating the image URL.", "danger")
     return None
-
-@app.route('/')
-def index():
-    return redirect(url_for('upload'))
 
 @app.route('/review')
 @login_required
@@ -492,17 +443,17 @@ def browse_bucket(bucket_name):
         sort_order = request.args.get('sort', 'desc')  # Default to descending order
         date_from = request.args.get('date_from', '')  # Date filter from
         date_to = request.args.get('date_to', '')      # Date filter to
-        per_page = 500  # Number of items per page
+        per_page = 100  # Reduced from 500 to 100 for better performance
         
-        # Create a paginator for list_objects_v2
+        # Create a paginator for list_objects_v2 with MaxKeys parameter
         paginator = s3_client.get_paginator('list_objects_v2')
         
-        # Get all objects using the paginator
+        # Get objects using the paginator with MaxKeys
         all_files = []
         for page_obj in paginator.paginate(
             Bucket=bucket_info['bucket'],
             Prefix=bucket_info['prefix'],
-            MaxKeys=1000
+            MaxKeys=per_page  # Limit the number of keys returned per request
         ):
             if 'Contents' in page_obj:
                 for item in page_obj['Contents']:
@@ -603,9 +554,9 @@ def delete_object_route(bucket_name, object_key):
         return redirect(url_for('browse_buckets'))
         
     try:
-        s3_client.delete_objects(
-            Bucket=bucket_name,
-            Delete={'Objects': [{'Key': k} for k in keys_to_delete]}
+        s3_client.delete_object(
+            Bucket=buckets[bucket_name],
+            Key=object_key
         )
         flash(f'File {object_key} deleted successfully', 'success')
     except Exception as e:

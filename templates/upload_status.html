@@ -4,84 +4,138 @@
 
 {% block content %}
 <div class="container mt-4">
-    <h1 class="mb-4">Upload Status</h1>
+    <h1>Upload Status</h1>
     
-    <div class="card">
+    <div class="card mb-4">
         <div class="card-header">
-            <h5 class="mb-0">Recent Uploads</h5>
+            <h5 class="mb-0">Processing Status</h5>
         </div>
         <div class="card-body">
-            {% if results %}
-                <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead>
-                            <tr>
-                                <th>Filename</th>
-                                <th>Status</th>
-                                <th>Result</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for result in results %}
+            <div id="status-container">
+                {% if tasks %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
                                 <tr>
-                                    <td>{{ result.filename }}</td>
-                                    <td>
-                                        {% if result.status == 'PENDING' %}
-                                            <span class="badge bg-warning">Pending</span>
-                                        {% elif result.status == 'STARTED' %}
-                                            <span class="badge bg-info">Processing</span>
-                                        {% elif result.status == 'SUCCESS' %}
-                                            <span class="badge bg-success">Completed</span>
-                                        {% elif result.status == 'FAILURE' %}
-                                            <span class="badge bg-danger">Failed</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary">{{ result.status }}</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if result.status == 'SUCCESS' and result.result %}
-                                            <span class="text-success">Successfully uploaded</span>
-                                        {% elif result.status == 'FAILURE' and result.result %}
-                                            <span class="text-danger">{{ result.result.error }}</span>
-                                        {% else %}
-                                            -
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if result.status == 'SUCCESS' %}
-                                            <a href="{{ url_for('browse_bucket', bucket_name='upload') }}" class="btn btn-sm btn-primary">View</a>
-                                        {% elif result.status == 'FAILURE' %}
-                                            <button class="btn btn-sm btn-warning" onclick="retryUpload('{{ result.task_id }}')">Retry</button>
-                                        {% endif %}
-                                    </td>
+                                    <th>Filename</th>
+                                    <th>Status</th>
+                                    <th>Message</th>
                                 </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <div class="alert alert-info">
-                    No upload tasks found. <a href="{{ url_for('upload') }}">Upload some files</a> to get started.
-                </div>
-            {% endif %}
-        </div>
-        <div class="card-footer">
-            <a href="{{ url_for('upload') }}" class="btn btn-primary">Upload More Files</a>
-            <a href="{{ url_for('browse_bucket', bucket_name='upload') }}" class="btn btn-secondary">View Uploaded Files</a>
+                            </thead>
+                            <tbody>
+                                {% for task in tasks %}
+                                <tr>
+                                    <td>{{ task.filename }}</td>
+                                    <td>
+                                        {% if task.status == 'PENDING' %}
+                                            <span class="badge bg-secondary">Pending</span>
+                                        {% elif task.status == 'PROCESSING' %}
+                                            <span class="badge bg-primary">Processing</span>
+                                        {% elif task.status == 'SUCCESS' %}
+                                            <span class="badge bg-success">Success</span>
+                                        {% elif task.status == 'FAILED' %}
+                                            <span class="badge bg-danger">Failed</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ task.message }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="alert alert-info">
+                        No upload tasks found. <a href="{{ url_for('upload') }}">Upload some files</a> to see their status here.
+                    </div>
+                {% endif %}
+            </div>
         </div>
     </div>
-</div>
-
-<script>
-    // Auto-refresh the page every 5 seconds to check for updates
-    setTimeout(function() {
-        window.location.reload();
-    }, 5000);
     
-    function retryUpload(taskId) {
-        // This would need to be implemented with a backend endpoint
-        alert('Retry functionality will be implemented soon.');
-    }
+    <div class="d-flex justify-content-between">
+        <a href="{{ url_for('upload') }}" class="btn btn-primary">Back to Upload</a>
+        <button id="refresh-status" class="btn btn-secondary">Refresh Status</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Function to refresh status
+        function refreshStatus() {
+            fetch('{{ url_for("check_upload_status") }}')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('status-container');
+                    
+                    if (data.tasks && data.tasks.length > 0) {
+                        let tableHtml = `
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Filename</th>
+                                            <th>Status</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                        `;
+                        
+                        data.tasks.forEach(task => {
+                            let statusBadge = '';
+                            if (task.status === 'PENDING') {
+                                statusBadge = '<span class="badge bg-secondary">Pending</span>';
+                            } else if (task.status === 'PROCESSING') {
+                                statusBadge = '<span class="badge bg-primary">Processing</span>';
+                            } else if (task.status === 'SUCCESS') {
+                                statusBadge = '<span class="badge bg-success">Success</span>';
+                            } else if (task.status === 'FAILED') {
+                                statusBadge = '<span class="badge bg-danger">Failed</span>';
+                            }
+                            
+                            tableHtml += `
+                                <tr>
+                                    <td>${task.filename}</td>
+                                    <td>${statusBadge}</td>
+                                    <td>${task.message}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        tableHtml += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        `;
+                        
+                        container.innerHTML = tableHtml;
+                    } else {
+                        container.innerHTML = `
+                            <div class="alert alert-info">
+                                No upload tasks found. <a href="{{ url_for('upload') }}">Upload some files</a> to see their status here.
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error refreshing status:', error);
+                });
+        }
+        
+        // Set up auto-refresh every 5 seconds
+        let refreshInterval = setInterval(refreshStatus, 5000);
+        
+        // Manual refresh button
+        document.getElementById('refresh-status').addEventListener('click', function() {
+            refreshStatus();
+        });
+        
+        // Clean up interval when leaving the page
+        window.addEventListener('beforeunload', function() {
+            clearInterval(refreshInterval);
+        });
+    });
 </script>
 {% endblock %} 
