@@ -570,23 +570,40 @@ def delete_all_objects_route(bucket_name):
     error_count = 0
     
     try:
+        # Get all objects in the bucket with the specified prefix
         paginator = s3_client.get_paginator('list_objects_v2')
         
+        # Collect all keys to delete
+        keys_to_delete = []
         for page in paginator.paginate(
             Bucket=bucket_info['bucket'],
             Prefix=bucket_info['prefix']
         ):
             if 'Contents' in page:
                 for item in page['Contents']:
-                    try:
-                        s3_client.delete_objects(
-                            Bucket=bucket_name,
-                            Delete={'Objects': [{'Key': k} for k in keys_to_delete]}
-                        )
-                        deleted_count += 1
-                    except Exception as e:
-                        app.logger.error(f"Error deleting object {item['Key']}: {e}")
-                        error_count += 1
+                    keys_to_delete.append(item['Key'])
+        
+        # Delete objects in batches of 1000 (S3 limit)
+        batch_size = 1000
+        for i in range(0, len(keys_to_delete), batch_size):
+            batch = keys_to_delete[i:i+batch_size]
+            try:
+                response = s3_client.delete_objects(
+                    Bucket=bucket_info['bucket'],
+                    Delete={'Objects': [{'Key': key} for key in batch]}
+                )
+                
+                # Count successful deletions
+                if 'Deleted' in response:
+                    deleted_count += len(response['Deleted'])
+                
+                # Count errors
+                if 'Errors' in response:
+                    error_count += len(response['Errors'])
+                    
+            except Exception as e:
+                app.logger.error(f"Error deleting batch of objects: {e}")
+                error_count += len(batch)
         
         if error_count == 0:
             flash(f'Successfully deleted {deleted_count} files from {bucket_info["name"]}', 'success')
