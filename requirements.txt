@@ -1,6 +1,7 @@
 Flask
 Flask-Session==0.4.0
-boto3
+boto3==1.26.137
+botocore==1.29.137
 requests
 python-dotenv
 celery

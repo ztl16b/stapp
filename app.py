@@ -10,6 +10,10 @@ from datetime import datetime, timedelta
 from flask_session import Session
 from celery_worker import app as celery_app
 from tasks import process_image
+from werkzeug.utils import secure_filename
+import ssl
+from celery import Celery
+import uuid
 
 load_dotenv()
 
@@ -36,7 +40,33 @@ app.config['CELERY_TIMEZONE'] = 'UTC'
 app.config['CELERY_ENABLE_UTC'] = True
 
 # Initialize Celery
-celery_app.conf.update(app.config)
+celery = Celery(
+    app.name,
+    broker=os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
+    backend=os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+)
+
+# Configure SSL for Redis if using rediss://
+broker_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+result_backend = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
+broker_use_ssl = {
+    'ssl_cert_reqs': ssl.CERT_NONE
+} if broker_url.startswith('rediss://') else None
+
+result_backend_use_ssl = {
+    'ssl_cert_reqs': ssl.CERT_NONE
+} if result_backend.startswith('rediss://') else None
+
+celery.conf.update(
+    broker_use_ssl=broker_use_ssl,
+    redis_backend_use_ssl=result_backend_use_ssl,
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
+)
 
 # Dictionary to store upload status
 upload_status = {}
@@ -170,7 +200,7 @@ def upload_status_route():
             
             # If task is still pending, check its status
             if task_info['status'] == 'PENDING':
-                task = celery_app.AsyncResult(task_id)
+                task = celery.AsyncResult(task_id)
                 
                 if task.ready():
                     result = task.result
@@ -204,7 +234,7 @@ def check_upload_status():
             
             # If task is still pending, check its status
             if task_info['status'] == 'PENDING':
-                task = celery_app.AsyncResult(task_id)
+                task = celery.AsyncResult(task_id)
                 
                 if task.ready():
                     result = task.result
