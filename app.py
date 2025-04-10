@@ -172,10 +172,10 @@ def get_presigned_url(bucket_name, object_key, expiration=3600):
 
 @app.route('/')
 def index():
-    return redirect(url_for('upload_file_route'))
+    return redirect(url_for('upload'))
 
 @app.route('/upload', methods=['GET', 'POST'])
-def upload_file_route():
+def upload():
     if request.method == 'POST':
         if 'files' not in request.files:
             flash('No files part', 'warning')
@@ -262,7 +262,7 @@ def upload_file_route():
         else:
             flash('No files were uploaded successfully.', 'danger')
             
-        return redirect(url_for('upload_file_route'))
+        return redirect(url_for('upload'))
 
     return render_template('upload.html')
 
@@ -360,12 +360,19 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
 @app.route('/browse')
 @login_required
 def browse_buckets():
+    app.logger.info("Entering browse_buckets function")
+    app.logger.info(f"S3_GOOD_BUCKET: {S3_GOOD_BUCKET}")
+    app.logger.info(f"S3_BAD_BUCKET: {S3_BAD_BUCKET}")
+    app.logger.info(f"S3_INCREDIBLE_BUCKET: {S3_INCREDIBLE_BUCKET}")
+    app.logger.info(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
+    
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'}
     }
+    app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
 
 @app.route('/browse/<bucket_name>')
@@ -487,7 +494,7 @@ def apply_date_filter(last_modified, date_from, date_to):
 
 @app.route('/delete/<bucket_name>/<path:object_key>', methods=['POST'])
 @login_required
-def delete_object(bucket_name, object_key):
+def delete_object_route(bucket_name, object_key):
     buckets = {
         'good': S3_GOOD_BUCKET,
         'bad': S3_BAD_BUCKET,
@@ -513,7 +520,7 @@ def delete_object(bucket_name, object_key):
 
 @app.route('/delete-all/<bucket_name>', methods=['POST'])
 @login_required
-def delete_all_objects(bucket_name):
+def delete_all_objects_route(bucket_name):
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},

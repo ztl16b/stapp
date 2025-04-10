@@ -5,7 +5,7 @@
     <div class="d-flex justify-content-between align-items-center mt-5 mb-4">
         <h1>{{ bucket.name }}</h1>
         <div>
-            <a href="{{ url_for('upload_file_route') }}" class="btn btn-primary me-2">
+            <a href="{{ url_for('upload') }}" class="btn btn-primary me-2">
                 <i class="fas fa-upload"></i> Upload Files
             </a>
             <button type="button" class="btn btn-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
@@ -132,7 +132,7 @@
                                 </div>
                                 <div class="modal-footer">
                                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                    <form action="{{ url_for('delete_object', bucket_name=bucket_name, object_key=file.key) }}" method="post" style="display: inline;">
+                                    <form action="{{ url_for('delete_object_route', bucket_name=bucket_name, object_key=file.key) }}" method="post" style="display: inline;">
                                         <button type="submit" class="btn btn-danger">Delete</button>
                                     </form>
                                 </div>
@@ -197,7 +197,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <form action="{{ url_for('delete_all_objects', bucket_name=bucket_name) }}" method="post">
+                <form action="{{ url_for('delete_all_objects_route', bucket_name=bucket_name) }}" method="post">
                     <button type="submit" class="btn btn-danger">Delete All Files</button>
                 </form>
             </div>
