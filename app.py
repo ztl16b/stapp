@@ -1,12 +1,14 @@
 import os
 import random
 import boto3
+import requests
 from flask import Flask, request, render_template, redirect, url_for, flash, session
 from dotenv import load_dotenv
 from botocore.exceptions import NoCredentialsError, ClientError
 from functools import wraps
 from datetime import datetime, timedelta
 from flask_session import Session
+from concurrent.futures import ThreadPoolExecutor
 
 load_dotenv()
 
@@ -200,99 +202,89 @@ def upload():
         successful_uploads = 0
         failed_uploads = 0
         
-        # Set a maximum file size (5MB)
-        MAX_FILE_SIZE = 5 * 1024 * 1024
-        
-        for file in files:
-            if file and file.filename:
-                try:
-                    # Check file size
-                    file_size = 0
-                    file.seek(0, 2)  # Seek to end of file
-                    file_size = file.tell()
-                    file.seek(0)  # Reset file pointer
+        def process_file(file):
+            try:
+                headers = {
+                    'Authorization': f'Bearer {BYTESCALE_API_KEY}'
+                }
+                
+                files_data = {
+                    'file': (file.filename, file, file.content_type)
+                }
+                
+                upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data)
+                
+                app.logger.info(f"Bytescale Upload Response: {upload_response.text}")
+                
+                if upload_response.ok:
+                    json_response = upload_response.json()
+                    file_url = None
                     
-                    if file_size > MAX_FILE_SIZE:
-                        app.logger.warning(f"File {file.filename} exceeds size limit of 5MB")
-                        failed_uploads += 1
-                        continue
+                    for file_obj in json_response.get("files", []):
+                        if file_obj.get("formDataFieldName") == "file":
+                            file_url = file_obj.get("fileUrl")
+                            break
                     
-                    # Process file in chunks to avoid memory issues
-                    import requests
-                    import io
+                    if not file_url:
+                        app.logger.error(f"Bytescale Upload Response: {json_response}")
+                        return False
                     
-                    headers = {
-                        'Authorization': f'Bearer {BYTESCALE_API_KEY}'
-                    }
+                    # Create the processed image URL with the required parameters
+                    processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
                     
-                    files_data = {
-                        'file': (file.filename, file, file.content_type)
-                    }
+                    # Download the processed image with streaming
+                    download_response = requests.get(processed_url, stream=True)
                     
-                    # Set a timeout for the request to prevent hanging
-                    upload_response = requests.post(
-                        BYTESCALE_UPLOAD_URL, 
-                        headers=headers, 
-                        files=files_data,
-                        timeout=10  # 10 second timeout
-                    )
-                    
-                    app.logger.info(f"Bytescale Upload Response: {upload_response.text}")
-                    
-                    if upload_response.ok:
-                        json_response = upload_response.json()
-                        file_url = None
+                    if download_response.ok:
+                        # Upload the processed image to S3
+                        upload_path = f"temp_performer_at_venue_images/{file.filename.rsplit('.', 1)[0]}.webp"
                         
-                        for file_obj in json_response.get("files", []):
-                            if file_obj.get("formDataFieldName") == "file":
-                                file_url = file_obj.get("fileUrl")
-                                break
+                        # Use streaming upload to S3
+                        s3_client.upload_fileobj(
+                            download_response.raw,
+                            S3_UPLOAD_BUCKET,
+                            upload_path,
+                            ExtraArgs={'ContentType': 'image/webp'}
+                        )
                         
-                        if not file_url:
-                            app.logger.error(f"Bytescale Upload Response: {json_response}")
-                            failed_uploads += 1
-                            continue
-                        
-                        # Create the processed image URL with the required parameters
-                        processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
-                        
-                        # Download the processed image with a timeout
-                        download_response = requests.get(processed_url, timeout=10)
-                        
-                        if download_response.ok:
-                            # Upload the processed image to S3
-                            upload_path = f"temp_performer_at_venue_images/{file.filename.rsplit('.', 1)[0]}.webp"
-                            
-                            # Use a buffer to avoid loading the entire file into memory
-                            buffer = io.BytesIO(download_response.content)
-                            
-                            s3_client.put_object(
-                                Bucket=S3_UPLOAD_BUCKET,
-                                Key=upload_path,
-                                Body=buffer,
-                                ContentType='image/webp'
-                            )
-                            
-                            successful_uploads += 1
-                        else:
-                            app.logger.error(f"Error downloading processed image: {download_response.text}")
-                            failed_uploads += 1
+                        return True
                     else:
-                        app.logger.error(f"Bytescale Upload Error: {upload_response.text}")
-                        failed_uploads += 1
-                        
-                except requests.exceptions.Timeout:
-                    app.logger.error(f"Timeout while processing {file.filename}")
-                    failed_uploads += 1
-                except ClientError as e:
-                    app.logger.error(f"S3 Upload Error: {e}")
-                    failed_uploads += 1
-                except NoCredentialsError:
-                    flash('AWS credentials not found.', 'danger')
-                    return redirect(request.url)
-                except Exception as e:
-                    app.logger.error(f"Upload Error: {e}")
-                    failed_uploads += 1
+                        app.logger.error(f"Error downloading processed image: {download_response.text}")
+                        return False
+                else:
+                    app.logger.error(f"Bytescale Upload Error: {upload_response.text}")
+                    return False
+                    
+            except ClientError as e:
+                app.logger.error(f"S3 Upload Error: {e}")
+                return False
+            except NoCredentialsError:
+                flash('AWS credentials not found.', 'danger')
+                return False
+            except Exception as e:
+                app.logger.error(f"Upload Error: {e}")
+                return False
+        
+        # Process files in batches of 20
+        batch_size = 20
+        total_files = len(files)
+        
+        for i in range(0, total_files, batch_size):
+            batch = files[i:i+batch_size]
+            app.logger.info(f"Processing batch {i//batch_size + 1} of {(total_files + batch_size - 1)//batch_size} ({len(batch)} files)")
+            
+            # Use ThreadPoolExecutor to process files in parallel within each batch
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                results = list(executor.map(process_file, batch))
+                
+                batch_successful = sum(1 for result in results if result)
+                batch_failed = sum(1 for result in results if not result)
+                
+                successful_uploads += batch_successful
+                failed_uploads += batch_failed
+                
+                # Log progress after each batch
+                app.logger.info(f"Batch {i//batch_size + 1} complete: {batch_successful} successful, {batch_failed} failed")
         
         if successful_uploads > 0:
             if failed_uploads > 0:
@@ -446,7 +438,8 @@ def browse_bucket(bucket_name):
         all_files = []
         for page_obj in paginator.paginate(
             Bucket=bucket_info['bucket'],
-            Prefix=bucket_info['prefix']
+            Prefix=bucket_info['prefix'],
+            MaxKeys=1000
         ):
             if 'Contents' in page_obj:
                 for item in page_obj['Contents']:
@@ -547,9 +540,9 @@ def delete_object_route(bucket_name, object_key):
         return redirect(url_for('browse_buckets'))
         
     try:
-        s3_client.delete_object(
-            Bucket=buckets[bucket_name],
-            Key=object_key
+        s3_client.delete_objects(
+            Bucket=bucket_name,
+            Delete={'Objects': [{'Key': k} for k in keys_to_delete]}
         )
         flash(f'File {object_key} deleted successfully', 'success')
     except Exception as e:
@@ -586,9 +579,9 @@ def delete_all_objects_route(bucket_name):
             if 'Contents' in page:
                 for item in page['Contents']:
                     try:
-                        s3_client.delete_object(
-                            Bucket=bucket_info['bucket'],
-                            Key=item['Key']
+                        s3_client.delete_objects(
+                            Bucket=bucket_name,
+                            Delete={'Objects': [{'Key': k} for k in keys_to_delete]}
                         )
                         deleted_count += 1
                     except Exception as e:
