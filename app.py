@@ -7,9 +7,6 @@ from dotenv import load_dotenv
 from botocore.exceptions import NoCredentialsError, ClientError
 from functools import wraps
 from datetime import datetime, timedelta
-from flask_session import Session
-from celery_worker import app as celery_app
-from tasks import process_image
 from werkzeug.utils import secure_filename
 import ssl
 from celery import Celery
@@ -20,62 +17,15 @@ load_dotenv()
 # Get the absolute path to the templates directory
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
-app.secret_key = os.urandom(24)
+
+# Generate a consistent secret key
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 
 # Session configuration
-app.config['SESSION_TYPE'] = 'filesystem'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=365)
 app.config['SESSION_COOKIE_SECURE'] = True  # Set to True for HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
-app.config['SESSION_COOKIE_NAME'] = 'image_interface_session'
-app.config['SECRET_KEY'] = os.urandom(24)
-app.config['SESSION_FILE_DIR'] = '/tmp/flask_session'
-app.config['SESSION_FILE_THRESHOLD'] = 500
-
-# Ensure session directory exists
-if not os.path.exists(app.config['SESSION_FILE_DIR']):
-    os.makedirs(app.config['SESSION_FILE_DIR'])
-
-Session(app)
-
-# Celery configuration
-app.config['CELERY_BROKER_URL'] = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-app.config['CELERY_RESULT_BACKEND'] = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-app.config['CELERY_TASK_SERIALIZER'] = 'json'
-app.config['CELERY_ACCEPT_CONTENT'] = ['json']
-app.config['CELERY_RESULT_SERIALIZER'] = 'json'
-app.config['CELERY_TIMEZONE'] = 'UTC'
-app.config['CELERY_ENABLE_UTC'] = True
-
-# Initialize Celery
-celery = Celery(
-    app.name,
-    broker=os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
-    backend=os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-)
-
-# Configure SSL for Redis if using rediss://
-broker_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-result_backend = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-
-broker_use_ssl = {
-    'ssl_cert_reqs': ssl.CERT_NONE
-} if broker_url.startswith('rediss://') else None
-
-result_backend_use_ssl = {
-    'ssl_cert_reqs': ssl.CERT_NONE
-} if result_backend.startswith('rediss://') else None
-
-celery.conf.update(
-    broker_use_ssl=broker_use_ssl,
-    redis_backend_use_ssl=result_backend_use_ssl,
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
-)
 
 # Dictionary to store upload status
 upload_status = {}
