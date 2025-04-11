@@ -17,6 +17,7 @@ from rq import Queue
 import threading
 import json
 import base64
+import logging
 
 load_dotenv()
 

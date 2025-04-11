@@ -17,8 +17,8 @@ def rename_files_in_directory(directory, prefix="1-"):
             print(f"Renamed: {file} -> {new_filename}")
             counter += 1
 
-folder_path = f"{downloads_folder}/drive-download-20250410T200451Z-001/04_08_AA" 
-prefix = "2-"
+folder_path = f"{downloads_folder}/drive-download-20250410T200451Z-001/04_08_JORDAN" 
+prefix = "3-"
 
 if os.path.isdir(folder_path):
     rename_files_in_directory(folder_path, prefix)
