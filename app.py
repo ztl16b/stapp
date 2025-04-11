@@ -19,29 +19,45 @@ load_dotenv()
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
 
-# Generate a consistent secret key
-app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+# Generate a consistent secret key from environment or use a default for development
+app.secret_key = os.environ.get('SECRET_KEY')
+if not app.secret_key:
+    # Generate a random key for development
+    app.secret_key = os.urandom(24)
+    app.logger.warning('No SECRET_KEY set in environment. Using random key - sessions will not persist across restarts!')
 
-# Session configuration - simplified for better persistence
+# Determine if we're running on Heroku
+is_heroku = os.environ.get('DYNO') is not None
+
+# Session configuration optimized for Heroku
 app.config.update(
-    PERMANENT_SESSION_LIFETIME=timedelta(days=7),  # Extend to 7 days for better persistence
-    SESSION_COOKIE_SECURE=True,  # Set to True for HTTPS
+    PERMANENT_SESSION_LIFETIME=timedelta(days=7),  # 7 day sessions
+    SESSION_COOKIE_SECURE=is_heroku,  # Only use secure cookies on Heroku (HTTPS)
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_REFRESH_EACH_REQUEST=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_NAME='image_interface_session',
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024  # 16MB max file size
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB max file size
+    # Disable Flask's default permanent session feature
+    PERMANENT_SESSIONS=False
 )
 
 # Dictionary to store upload status
 upload_status = {}
 
-# Add a before_request handler to refresh the session on each request
+def init_session():
+    """Initialize or refresh session data"""
+    if 'logged_in' not in session:
+        session['logged_in'] = False
+    if session.get('logged_in') and 'login_time' not in session:
+        session['login_time'] = datetime.now().isoformat()
+        session['user_id'] = str(uuid.uuid4())
+
 @app.before_request
 def before_request():
-    session.permanent = True  # Make the session permanent
-    if session.get('logged_in'):
-        session.modified = True  # Mark the session as modified to ensure it's saved
+    init_session()
+    # Log request details for debugging
+    app.logger.debug(f"Request path: {request.path}")
+    app.logger.debug(f"Session data: {dict(session)}")
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -60,16 +76,10 @@ BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Check if user is logged in
         if not session.get('logged_in'):
-            # Store the URL the user was trying to access
             session['next'] = request.url
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('login'))
-        
-        # Log access for debugging
-        app.logger.debug(f"User {session.get('user_id', 'unknown')} accessed {request.url}")
-        
         return f(*args, **kwargs)
     return decorated_function
 
@@ -80,46 +90,30 @@ def login():
         browse_password = os.getenv('BROWSE_PASSWORD')
         admin_password = os.getenv('ADMIN_PASSWORD')
         
-        # Log password check for debugging (without exposing actual passwords)
-        app.logger.info(f"Login attempt - Browse password set: {bool(browse_password)}, Admin password set: {bool(admin_password)}")
-        
         if password == browse_password or password == admin_password:
-            # Clear any existing session data
+            # Set up session
             session.clear()
-            
-            # Set up a new session with a more robust approach
-            session.permanent = True  # Make the session permanent
             session['logged_in'] = True
             session['login_time'] = datetime.now().isoformat()
-            session['user_id'] = str(uuid.uuid4())  # Add a unique user ID
-            session['last_activity'] = datetime.now().isoformat()
+            session['user_id'] = str(uuid.uuid4())
             
-            # Log successful login with more details
-            app.logger.info(f"User logged in successfully at {session['login_time']}")
-            app.logger.info(f"Session ID: {session.sid if hasattr(session, 'sid') else 'No session ID'}")
-            
+            # Log successful login
+            app.logger.info(f"Successful login - User ID: {session['user_id']}")
             flash('Login successful!', 'success')
             
-            # Redirect to the stored URL or default to browse_buckets
-            next_url = session.pop('next', None)
-            
-            # If the next URL is the review page, redirect there
-            if next_url and 'review' in next_url:
-                app.logger.info(f"Redirecting to review page after login")
-                return redirect(url_for('review_image_route'))
-            elif next_url:
-                app.logger.info(f"Redirecting to {next_url} after login")
+            # Handle redirect
+            next_url = session.get('next')
+            if next_url:
+                session.pop('next', None)
                 return redirect(next_url)
-            else:
-                app.logger.info(f"Redirecting to browse_buckets after login")
-                return redirect(url_for('browse_buckets'))
-        else:
-            flash('Invalid password. Please try again.', 'error')
+            return redirect(url_for('browse_buckets'))
+            
+        flash('Invalid password. Please try again.', 'error')
     return render_template('login.html')
 
 @app.route('/logout')
 def logout():
-    session.pop('logged_in', None)
+    session.clear()
     flash('You have been logged out.', 'info')
     return redirect(url_for('login'))
 
