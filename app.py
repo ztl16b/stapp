@@ -12,12 +12,10 @@ from requests.exceptions import RequestException
 import uuid
 import time
 from io import BytesIO
-import redis
-from rq import Queue
-import threading
 import json
 import base64
 import logging
+import threading
 
 load_dotenv()
 
@@ -52,12 +50,6 @@ BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
-
-# Redis connection and queue setup
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
-redis_conn = redis.from_url(REDIS_URL)
-upload_queue = Queue('uploads', connection=redis_conn)
-results_ttl = 3600  # Results will stay in Redis for 1 hour
 
 # Thread local storage for S3 clients
 thread_local = threading.local()
@@ -102,77 +94,6 @@ VALID_IMAGE_SIGNATURES = {
     b'\x42\x4d': 'BMP',         # BMP
     b'\x52\x49\x46\x46': 'WEBP' # WEBP
 }
-
-# Background processing function for RQ
-def process_image_task(file_data_b64, filename, content_type, batch_id):
-    """
-    Worker function that will be called by RQ worker processes
-    """
-    try:
-        # Decode base64 file data
-        file_data = base64.b64decode(file_data_b64)
-        
-        # Get thread-local S3 client
-        s3 = get_s3_client()
-        
-        # Quick validation of file format using first few bytes
-        file_start = file_data[:8]  # First 8 bytes is enough for all formats
-        is_valid_image = any(file_start.startswith(sig) for sig in VALID_IMAGE_SIGNATURES)
-                
-        if not is_valid_image:
-            return {
-                'status': 'error',
-                'message': 'Invalid image format',
-                'filename': filename,
-                'batch_id': batch_id
-            }
-        
-        # Generate unique upload path to prevent overwrites
-        timestamp = int(time.time() * 1000)  # millisecond precision
-        random_suffix = str(uuid.uuid4())[:8]
-        upload_path = f"tmp_upload/{batch_id}/{timestamp}_{random_suffix}_{filename}"
-        
-        # Upload to S3 directly from memory
-        file_obj = BytesIO(file_data)
-        
-        s3.upload_fileobj(
-            file_obj,
-            S3_TEMP_BUCKET,
-            upload_path,
-            ExtraArgs={'ContentType': content_type},
-            Config=s3_upload_config
-        )
-        
-        file_obj.close()
-        
-        # Update the batch progress in Redis
-        update_batch_progress(batch_id)
-        
-        return {
-            'status': 'success',
-            'message': 'Upload successful',
-            's3_path': upload_path,
-            'filename': filename,
-            'batch_id': batch_id
-        }
-    except Exception as e:
-        print(f"Error processing {filename}: {str(e)}")
-        return {
-            'status': 'error',
-            'message': str(e),
-            'filename': filename,
-            'batch_id': batch_id
-        }
-
-def update_batch_progress(batch_id):
-    """Update the progress counter for a batch"""
-    key = f"batch:{batch_id}:progress"
-    completed = redis_conn.incr(key)
-    total = redis_conn.get(f"batch:{batch_id}:total")
-    if total:
-        total = int(total)
-        if completed >= total:
-            redis_conn.set(f"batch:{batch_id}:status", "complete")
 
 def login_required(f):
     @wraps(f)
@@ -283,57 +204,6 @@ def upload():
         return redirect(request.url)
     
     return render_template('upload.html')
-
-@app.route('/batch-status/<batch_id>')
-def batch_status(batch_id):
-    # Get batch information from Redis
-    total = redis_conn.get(f"batch:{batch_id}:total")
-    progress = redis_conn.get(f"batch:{batch_id}:progress")
-    status = redis_conn.get(f"batch:{batch_id}:status")
-    
-    if not total:
-        flash('Batch not found or has expired', 'warning')
-        return redirect(url_for('upload'))
-    
-    total = int(total)
-    progress = int(progress or 0)
-    status = status.decode('utf-8') if status else 'unknown'
-    
-    percent_complete = (progress / total) * 100 if total > 0 else 0
-    
-    return render_template(
-        'batch_status.html',
-        batch_id=batch_id,
-        total=total,
-        progress=progress,
-        percent_complete=percent_complete,
-        status=status
-    )
-
-@app.route('/api/batch-progress/<batch_id>')
-def batch_progress_api(batch_id):
-    """API endpoint to check batch progress via AJAX"""
-    total = redis_conn.get(f"batch:{batch_id}:total")
-    progress = redis_conn.get(f"batch:{batch_id}:progress")
-    status = redis_conn.get(f"batch:{batch_id}:status")
-    
-    if not total:
-        return jsonify({
-            'error': 'Batch not found or expired'
-        }), 404
-    
-    total = int(total)
-    progress = int(progress or 0)
-    status = status.decode('utf-8') if status else 'processing'
-    
-    return jsonify({
-        'batch_id': batch_id,
-        'total': total,
-        'progress': progress,
-        'percent_complete': (progress / total) * 100 if total > 0 else 0,
-        'status': status,
-        'is_complete': status == 'complete'
-    })
 
 def process_image(file_data, filename, content_type, timeout=None):
     """
