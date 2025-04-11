@@ -137,6 +137,7 @@ def index():
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
     if request.method == 'POST':
+        # Basic validation for file upload
         if 'files' not in request.files:
             flash('No files part', 'warning')
             return redirect(request.url)
@@ -146,77 +147,39 @@ def upload():
             flash('No selected files', 'warning')
             return redirect(request.url)
         
-        # Maximum batch size - increase if needed
+        # Define your limits
         max_batch_size = 500
-        
-        # Simple counters instead of storing lists
-        success_count = 0
-        error_count = 0
-        skipped_count = 0
         total_count = len(files)
-        
-        # Limit batch size if needed
         if total_count > max_batch_size:
             files = files[:max_batch_size]
             skipped_count = total_count - max_batch_size
             flash(f'Processing {max_batch_size} files. {skipped_count} additional files were skipped.', 'warning')
+        else:
+            skipped_count = 0
         
-        # Process in manageable chunks
-        chunk_size = 50
-        processed = 0
-        
-        # Start timing for performance monitoring
+        # Instead of processing inline, queue each file as a Celery task.
+        task_ids = []
         start_time = time.time()
+        for file in files:
+            # Skip files that exceed size limit (5MB)
+            if file.content_length and file.content_length > 5 * 1024 * 1024:
+                app.logger.info(f"Skipping large file: {file.filename}")
+                continue
+
+            # Read file content and validate
+            file_data = file.read()
+            if not file_data:
+                app.logger.info(f"Skipping empty file: {file.filename}")
+                continue
+
+            filename = secure_filename(file.filename)
+            # Queue asynchronous processing
+            task = process_file_task.delay(file_data, filename, file.content_type)
+            task_ids.append(task.id)
         
-        # Process files in chunks
-        for i in range(0, len(files), chunk_size):
-            chunk = files[i:i+chunk_size]
-            
-            for file in chunk:
-                try:
-                    # Skip files that exceed size limit (5MB)
-                    if file.content_length and file.content_length > 5 * 1024 * 1024:
-                        error_count += 1
-                        continue
-                    
-                    # Get the file data
-                    file_data = file.read()
-                    if not file_data:  # Skip empty files
-                        error_count += 1
-                        continue
-                        
-                    # Process the file
-                    filename = secure_filename(file.filename)
-                    result = process_image(file_data, filename, file.content_type)
-                    
-                    # Count successes and failures
-                    if result['status'] == 'success':
-                        success_count += 1
-                    else:
-                        error_count += 1
-                        
-                    # Free memory immediately
-                    del file_data
-                    
-                except Exception:
-                    # Just count errors without storing details
-                    error_count += 1
-            
-            # Update progress
-            processed += len(chunk)
-            if processed < len(files):
-                elapsed = time.time() - start_time
-                rate = processed / elapsed if elapsed > 0 else 0
-                estimated = (len(files) - processed) / rate if rate > 0 else 0
-                app.logger.info(f"Progress: {processed}/{len(files)} files ({rate:.1f} files/sec, ~{estimated:.1f}s remaining)")
-        
-        # Calculate total processing time
-        total_time = time.time() - start_time
-        
-        # Show a simple summary
-        flash(f'Upload complete: {success_count} successful, {error_count} failed, {skipped_count} skipped in {total_time:.1f} seconds.', 
-              'success' if error_count == 0 else 'warning')
-        
+        elapsed = time.time() - start_time
+        app.logger.info(f"Queued {len(task_ids)} tasks in {elapsed:.1f} seconds.")
+        flash(f"Queued {len(task_ids)} file processing tasks.", 'success')
         return redirect(url_for('upload'))
     
     return render_template('upload.html')
