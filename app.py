@@ -128,7 +128,7 @@ def upload():
             return redirect(request.url)
         
         # Limit number of files processed at once to prevent crashes
-        max_files_per_batch = 100
+        max_files_per_batch = 500
         
         # Process files directly, but with better handling
         successful_uploads = []
@@ -147,47 +147,72 @@ def upload():
             files_to_process = files
         
         # Set a larger timeout for requests to external services
-        processing_timeout = 120  # 2 minutes
+        processing_timeout = 180  # 3 minutes
         
-        for file in files_to_process:
-            try:
-                # Apply size limit (5MB)
-                if file.content_length and file.content_length > 5 * 1024 * 1024:
-                    failed_uploads.append((file.filename, "File exceeds 5MB size limit"))
-                    continue
-                
-                # Read file data
-                file_data = file.read()
-                
-                # Skip empty files
-                if not file_data:
-                    failed_uploads.append((file.filename, "Empty file"))
-                    continue
+        # Process in smaller chunks to provide feedback and manage memory better
+        chunk_size = 25  # Process 25 files at a time for better progress feedback
+        total_to_process = len(files_to_process)
+        processed_count = 0
+        
+        for i in range(0, total_to_process, chunk_size):
+            chunk = files_to_process[i:i+chunk_size]
+            chunk_processed = 0
+            
+            for file in chunk:
+                try:
+                    # Apply size limit (5MB)
+                    content_length = getattr(file, 'content_length', None) or 0
+                    if content_length and content_length > 5 * 1024 * 1024:
+                        failed_uploads.append((file.filename, "File exceeds 5MB size limit"))
+                        continue
                     
-                filename = secure_filename(file.filename)  # Sanitize filename
-                content_type = file.content_type
-                
-                # Process the image with increased timeout
-                result = process_image(file_data, filename, content_type, timeout=processing_timeout)
-                
-                if result['status'] == 'success':
-                    successful_uploads.append(filename)
-                else:
-                    failed_uploads.append((filename, result['message']))
-            except Exception as e:
-                app.logger.error(f"Unexpected error during file upload processing: {str(e)}")
-                failed_uploads.append((file.filename, f"Unexpected error: {str(e)}"))
+                    # Read file data
+                    file_data = file.read()
+                    
+                    # Skip empty files
+                    if not file_data:
+                        failed_uploads.append((file.filename, "Empty file"))
+                        continue
+                        
+                    filename = secure_filename(file.filename)  # Sanitize filename
+                    content_type = file.content_type
+                    
+                    # Process the image with increased timeout
+                    result = process_image(file_data, filename, content_type, timeout=processing_timeout)
+                    
+                    if result['status'] == 'success':
+                        successful_uploads.append(filename)
+                    else:
+                        failed_uploads.append((filename, result['message']))
+                        
+                    # Clear file data reference to help with memory management
+                    del file_data
+                    
+                    # Update processed count
+                    processed_count += 1
+                    chunk_processed += 1
+                    
+                except Exception as e:
+                    app.logger.error(f"Unexpected error during file upload processing: {str(e)}")
+                    failed_uploads.append((file.filename, f"Unexpected error: {str(e)}"))
+            
+            # Show progress after each chunk
+            if i + chunk_size < total_to_process:
+                app.logger.info(f"Processed {processed_count}/{total_to_process} files...")
         
         # Flash messages about the results
         if successful_uploads:
             flash(f'Successfully processed {len(successful_uploads)} files.', 'success')
         
         if failed_uploads:
-            for filename, error in failed_uploads[:5]:  # Limit to first 5 errors to avoid excessive messages
+            failure_count = len(failed_uploads)
+            # Show first 5 errors with details
+            for filename, error in failed_uploads[:5]:
                 flash(f'Failed to process {filename}: {error}', 'error')
             
-            if len(failed_uploads) > 5:
-                flash(f'... and {len(failed_uploads) - 5} more files failed.', 'error')
+            # For larger batches, summarize remaining errors
+            if failure_count > 5:
+                flash(f'... and {failure_count - 5} more files failed. Check logs for details.', 'error')
         
         if skipped_files:
             flash(f'Skipped {len(skipped_files)} files due to batch size limit. Please upload them separately.', 'warning')
@@ -220,7 +245,8 @@ def process_image(file_data, filename, content_type, timeout=60):
                 'filename': filename
             }
         
-        # Validate file type by checking first few bytes (magic numbers)
+        # Quick validation of file type by checking first few bytes (magic numbers)
+        # This avoids doing expensive operations on non-image files
         valid_image_signatures = {
             b'\xff\xd8\xff': 'JPEG',
             b'\x89\x50\x4e\x47': 'PNG',
@@ -242,6 +268,7 @@ def process_image(file_data, filename, content_type, timeout=60):
                 'filename': filename
             }
         
+        # Set up headers and files for the Bytescale API
         headers = {
             'Authorization': f'Bearer {BYTESCALE_API_KEY}'
         }
@@ -251,45 +278,59 @@ def process_image(file_data, filename, content_type, timeout=60):
         
         # Upload to Bytescale with configurable timeout
         app.logger.info(f"Uploading {filename} to Bytescale")
-        upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data, timeout=timeout)
-        upload_response.raise_for_status()
         
-        json_response = upload_response.json()
-        file_url = None
-        for file_obj in json_response.get("files", []):
-            if file_obj.get("formDataFieldName") == "file":
-                file_url = file_obj.get("fileUrl")
-                break
-        
-        if not file_url:
-            raise ValueError("Could not find file URL in Bytescale response")
-        
-        app.logger.info(f"Downloading processed image for {filename}")
-        processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
-        
-        # Download the processed image with configurable timeout
-        download_response = requests.get(processed_url, stream=True, timeout=timeout)
-        download_response.raise_for_status()
-        
-        # Upload to S3 with progress tracking
-        app.logger.info(f"Uploading {filename} to S3")
-        upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
-        
-        # Additional S3 upload configuration with retry
-        s3_config = boto3.s3.transfer.TransferConfig(
-            multipart_threshold=5 * 1024 * 1024,  # 5MB
-            max_concurrency=10,
-            multipart_chunksize=5 * 1024 * 1024,  # 5MB
-            use_threads=True
-        )
-        
-        s3_client.upload_fileobj(
-            download_response.raw,
-            S3_UPLOAD_BUCKET,
-            upload_path,
-            ExtraArgs={'ContentType': 'image/webp'},
-            Config=s3_config
-        )
+        # Use a session for better connection pooling when processing multiple files
+        with requests.Session() as session:
+            # Upload to Bytescale
+            upload_response = session.post(
+                BYTESCALE_UPLOAD_URL, 
+                headers=headers, 
+                files=files_data, 
+                timeout=timeout
+            )
+            upload_response.raise_for_status()
+            
+            # Parse response to get file URL
+            json_response = upload_response.json()
+            file_url = None
+            for file_obj in json_response.get("files", []):
+                if file_obj.get("formDataFieldName") == "file":
+                    file_url = file_obj.get("fileUrl")
+                    break
+            
+            if not file_url:
+                raise ValueError("Could not find file URL in Bytescale response")
+            
+            # We don't need the original file data anymore
+            del file_data
+            del files_data
+            
+            app.logger.info(f"Downloading processed image for {filename}")
+            processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
+            
+            # Download the processed image with configurable timeout
+            download_response = session.get(processed_url, stream=True, timeout=timeout)
+            download_response.raise_for_status()
+            
+            # Upload to S3 with progress tracking
+            app.logger.info(f"Uploading {filename} to S3")
+            upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
+            
+            # Optimized S3 upload configuration for better performance
+            s3_config = boto3.s3.transfer.TransferConfig(
+                multipart_threshold=8 * 1024 * 1024,  # 8MB
+                max_concurrency=10,
+                multipart_chunksize=8 * 1024 * 1024,  # 8MB
+                use_threads=True
+            )
+            
+            s3_client.upload_fileobj(
+                download_response.raw,
+                S3_UPLOAD_BUCKET,
+                upload_path,
+                ExtraArgs={'ContentType': 'image/webp'},
+                Config=s3_config
+            )
         
         return {
             'status': 'success',
