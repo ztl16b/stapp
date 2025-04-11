@@ -11,6 +11,9 @@ from werkzeug.utils import secure_filename
 from requests.exceptions import RequestException
 import uuid
 import time
+import concurrent.futures
+import threading
+import psutil
 
 load_dotenv()
 
@@ -43,6 +46,12 @@ BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
+
+# Threading lock for thread-safe operations
+upload_lock = threading.Lock()
+
+# Thread-local storage for session data
+thread_local = threading.local()
 
 def login_required(f):
     @wraps(f)
@@ -148,68 +157,107 @@ def upload():
             files_to_process = files
         
         # Set a larger timeout for requests to external services
-        processing_timeout = 240  # 4 minutes (increased from 3)
+        processing_timeout = 240  # 4 minutes
         
-        # Process in smaller chunks to provide feedback and manage memory better
-        # For 200+ files, use a larger chunk size to reduce overhead
-        chunk_size = min(50, max(25, total_files // 10))  # Adaptive chunking
-        total_to_process = len(files_to_process)
-        processed_count = 0
+        # Prepare the files for processing
+        file_data_list = []
+        for file in files_to_process:
+            try:
+                # Apply size limit (5MB)
+                content_length = getattr(file, 'content_length', None) or 0
+                if content_length and content_length > 5 * 1024 * 1024:
+                    failed_uploads.append((file.filename, "File exceeds 5MB size limit"))
+                    continue
+                
+                # Read file data
+                file_data = file.read()
+                
+                # Skip empty files
+                if not file_data:
+                    failed_uploads.append((file.filename, "Empty file"))
+                    continue
+                
+                filename = secure_filename(file.filename)  # Sanitize filename
+                content_type = file.content_type
+                
+                # Add to list of files to process
+                file_data_list.append((file_data, filename, content_type))
+            except Exception as e:
+                app.logger.error(f"Error preparing file {file.filename}: {str(e)}")
+                failed_uploads.append((file.filename, f"Error preparing file: {str(e)}"))
         
-        # Log the upload plan
-        app.logger.info(f"Processing {total_to_process} files in chunks of {chunk_size} with a timeout of {processing_timeout}s")
+        # Determine optimal thread count based on system resources
+        # On Heroku, we should limit threads to avoid overwhelming the dyno
+        cpu_count = psutil.cpu_count(logical=True) or 4
+        available_memory_mb = psutil.virtual_memory().available / (1024 * 1024)
         
-        for i in range(0, total_to_process, chunk_size):
-            chunk = files_to_process[i:i+chunk_size]
-            chunk_processed = 0
-            chunk_size_actual = len(chunk)
+        # Calculate thread count based on available resources
+        # Each thread might use ~100MB of memory for processing
+        memory_based_threads = max(1, int(available_memory_mb / 100))
+        
+        # Use the lower of CPU count or memory-based thread count
+        # Never use more than 10 threads on Heroku
+        optimal_thread_count = min(cpu_count, memory_based_threads, 10)
+        
+        # For small batches, don't use more threads than files
+        thread_count = min(optimal_thread_count, len(file_data_list))
+        
+        app.logger.info(f"Processing with {thread_count} threads (CPU: {cpu_count}, Memory: {int(available_memory_mb)}MB available)")
+        
+        # Function to process a file with proper exception handling
+        def process_file_task(file_tuple):
+            file_data, filename, content_type = file_tuple
+            try:
+                # Process the image with increased timeout
+                result = process_image(file_data, filename, content_type, timeout=processing_timeout)
+                
+                # Free memory
+                del file_data
+                
+                # Return result with filename for identification
+                return (filename, result)
+            except Exception as e:
+                app.logger.error(f"Unhandled exception in thread processing {filename}: {str(e)}")
+                return (filename, {
+                    'status': 'error',
+                    'message': f'Thread error: {str(e)}',
+                    'filename': filename
+                })
+        
+        # Use thread pool for concurrent processing
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+            # Submit all tasks
+            future_to_filename = {
+                executor.submit(process_file_task, file_tuple): file_tuple[1] 
+                for file_tuple in file_data_list
+            }
             
-            app.logger.info(f"Starting chunk {i//chunk_size + 1} with {chunk_size_actual} files")
-            
-            for file in chunk:
+            # Process completed tasks as they finish
+            for i, future in enumerate(concurrent.futures.as_completed(future_to_filename)):
+                filename = future_to_filename[future]
                 try:
-                    # Apply size limit (5MB)
-                    content_length = getattr(file, 'content_length', None) or 0
-                    if content_length and content_length > 5 * 1024 * 1024:
-                        failed_uploads.append((file.filename, "File exceeds 5MB size limit"))
-                        continue
+                    result_filename, result = future.result()
+                    results.append((result_filename, result))
                     
-                    # Read file data
-                    file_data = file.read()
-                    
-                    # Skip empty files
-                    if not file_data:
-                        failed_uploads.append((file.filename, "Empty file"))
-                        continue
-                        
-                    filename = secure_filename(file.filename)  # Sanitize filename
-                    content_type = file.content_type
-                    
-                    # Process the image with increased timeout
-                    result = process_image(file_data, filename, content_type, timeout=processing_timeout)
-                    
-                    if result['status'] == 'success':
-                        successful_uploads.append(filename)
-                    else:
-                        failed_uploads.append((filename, result['message']))
-                        
-                    # Clear file data reference to help with memory management
-                    del file_data
-                    
-                    # Update processed count
-                    processed_count += 1
-                    chunk_processed += 1
+                    # Log progress periodically
+                    if (i + 1) % 10 == 0 or i == len(file_data_list) - 1:
+                        app.logger.info(f"Progress: {i + 1}/{len(file_data_list)} files processed")
                     
                 except Exception as e:
-                    app.logger.error(f"Unexpected error processing {file.filename}: {str(e)}")
-                    failed_uploads.append((file.filename, f"Unexpected error: {str(e)}"))
-            
-            # Show progress after each chunk and force garbage collection
-            if i + chunk_size < total_to_process:
-                app.logger.info(f"Chunk {i//chunk_size + 1} complete: Processed {processed_count}/{total_to_process} files ({chunk_processed} in this chunk)")
-                # Force garbage collection to free memory
-                import gc
-                gc.collect()
+                    app.logger.error(f"Error getting result for {filename}: {str(e)}")
+                    failed_uploads.append((filename, f"Thread execution error: {str(e)}"))
+        
+        # Process results
+        for filename, result in results:
+            if result['status'] == 'success':
+                successful_uploads.append(filename)
+            else:
+                failed_uploads.append((filename, result['message']))
+        
+        # Force garbage collection after processing
+        import gc
+        gc.collect()
         
         # Final log of results
         app.logger.info(f"Upload complete: {len(successful_uploads)} successful, {len(failed_uploads)} failed, {len(skipped_files)} skipped")
@@ -298,151 +346,173 @@ def process_image(file_data, filename, content_type, timeout=60):
         app.logger.info(f"Uploading {filename} to Bytescale")
         upload_start = time.time()
         
-        # Use a session for better connection pooling when processing multiple files
-        with requests.Session() as session:
-            # Configure session timeouts and retries
-            session.mount('https://', requests.adapters.HTTPAdapter(
-                max_retries=3,
-                pool_connections=10,
-                pool_maxsize=10
-            ))
-            
-            # Upload to Bytescale
-            try:
-                upload_response = session.post(
-                    BYTESCALE_UPLOAD_URL, 
-                    headers=headers, 
-                    files=files_data, 
-                    timeout=timeout
-                )
-                upload_response.raise_for_status()
-            except Exception as e:
-                app.logger.error(f"Bytescale upload failed for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'Bytescale API Error: {str(e)}',
-                    'filename': filename
-                }
-            
-            steps_timing['bytescale_upload'] = time.time() - upload_start
-            
-            # Parse response to get file URL
-            try:
-                json_response = upload_response.json()
-                file_url = None
-                for file_obj in json_response.get("files", []):
-                    if file_obj.get("formDataFieldName") == "file":
-                        file_url = file_obj.get("fileUrl")
-                        break
-            except Exception as e:
-                app.logger.error(f"Failed to parse Bytescale response for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'Failed to parse API response: {str(e)}',
-                    'filename': filename
-                }
-            
-            if not file_url:
-                return {
-                    'status': 'error',
-                    'message': 'Could not find file URL in Bytescale response',
-                    'filename': filename
-                }
-            
-            # We don't need the original file data anymore
-            del file_data
-            del files_data
-            
-            # Download the processed image
-            app.logger.info(f"Downloading processed image for {filename}")
-            download_start = time.time()
-            processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
-            
-            # Download the processed image with configurable timeout
-            try:
-                download_response = session.get(processed_url, stream=True, timeout=timeout)
-                download_response.raise_for_status()
-            except Exception as e:
-                app.logger.error(f"Failed to download processed image for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'Download Error: {str(e)}',
-                    'filename': filename
-                }
-                
-            steps_timing['download'] = time.time() - download_start
-            
-            # Upload to S3
-            app.logger.info(f"Uploading {filename} to S3")
-            s3_upload_start = time.time()
-            upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
-            
-            # Optimized S3 upload configuration for better performance
-            s3_config = boto3.s3.transfer.TransferConfig(
-                multipart_threshold=8 * 1024 * 1024,  # 8MB
-                max_concurrency=10,
-                multipart_chunksize=8 * 1024 * 1024,  # 8MB
-                use_threads=True
+        # Use thread-local session for better isolation between threads
+        def get_thread_local_session():
+            if not hasattr(thread_local, 'session'):
+                thread_local.session = requests.Session()
+                # Configure session timeouts and retries
+                thread_local.session.mount('https://', requests.adapters.HTTPAdapter(
+                    max_retries=3,
+                    pool_connections=10,
+                    pool_maxsize=10
+                ))
+            return thread_local.session
+        
+        # Get thread-local session
+        session = get_thread_local_session()
+        
+        # Upload to Bytescale
+        try:
+            upload_response = session.post(
+                BYTESCALE_UPLOAD_URL, 
+                headers=headers, 
+                files=files_data, 
+                timeout=timeout
             )
+            upload_response.raise_for_status()
+        except Exception as e:
+            app.logger.error(f"Bytescale upload failed for {filename}: {str(e)}")
+            return {
+                'status': 'error',
+                'message': f'Bytescale API Error: {str(e)}',
+                'filename': filename
+            }
+        
+        steps_timing['bytescale_upload'] = time.time() - upload_start
+        
+        # Parse response to get file URL
+        try:
+            json_response = upload_response.json()
+            file_url = None
+            for file_obj in json_response.get("files", []):
+                if file_obj.get("formDataFieldName") == "file":
+                    file_url = file_obj.get("fileUrl")
+                    break
+        except Exception as e:
+            app.logger.error(f"Failed to parse Bytescale response for {filename}: {str(e)}")
+            return {
+                'status': 'error',
+                'message': f'Failed to parse API response: {str(e)}',
+                'filename': filename
+            }
+        
+        if not file_url:
+            return {
+                'status': 'error',
+                'message': 'Could not find file URL in Bytescale response',
+                'filename': filename
+            }
+        
+        # We don't need the original file data anymore
+        del file_data
+        del files_data
+        
+        # Download the processed image
+        app.logger.info(f"Downloading processed image for {filename}")
+        download_start = time.time()
+        processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
+        
+        # Download the processed image with configurable timeout
+        try:
+            download_response = session.get(processed_url, stream=True, timeout=timeout)
+            download_response.raise_for_status()
+        except Exception as e:
+            app.logger.error(f"Failed to download processed image for {filename}: {str(e)}")
+            return {
+                'status': 'error',
+                'message': f'Download Error: {str(e)}',
+                'filename': filename
+            }
             
-            try:
-                s3_client.upload_fileobj(
+        steps_timing['download'] = time.time() - download_start
+        
+        # Upload to S3
+        app.logger.info(f"Uploading {filename} to S3")
+        s3_upload_start = time.time()
+        upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
+        
+        # Create thread-local S3 client if needed
+        # This prevents S3 connection issues when multiple threads are uploading
+        def get_thread_local_s3_client():
+            if not hasattr(thread_local, 's3_client'):
+                thread_local.s3_client = boto3.client(
+                    's3',
+                    aws_access_key_id=AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+                    region_name=AWS_REGION
+                )
+            return thread_local.s3_client
+        
+        # Get thread-local S3 client
+        s3_client_thread = get_thread_local_s3_client()
+        
+        # Optimized S3 upload configuration for better performance
+        s3_config = boto3.s3.transfer.TransferConfig(
+            multipart_threshold=8 * 1024 * 1024,  # 8MB
+            max_concurrency=10,
+            multipart_chunksize=8 * 1024 * 1024,  # 8MB
+            use_threads=True
+        )
+        
+        try:
+            with upload_lock:  # Use lock for thread safety with S3 operations
+                s3_client_thread.upload_fileobj(
                     download_response.raw,
                     S3_UPLOAD_BUCKET,
                     upload_path,
                     ExtraArgs={'ContentType': 'image/webp'},
                     Config=s3_config
                 )
-            except Exception as e:
-                app.logger.error(f"S3 upload failed for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'S3 Upload Error: {str(e)}',
-                    'filename': filename
-                }
-            
-            steps_timing['s3_upload'] = time.time() - s3_upload_start
+        except Exception as e:
+            app.logger.error(f"S3 upload failed for {filename}: {str(e)}")
+            return {
+                'status': 'error',
+                'message': f'S3 Upload Error: {str(e)}',
+                'filename': filename
+            }
         
-        total_time = time.time() - start_time
-        app.logger.info(f"Successfully processed {filename} in {total_time:.2f}s (Bytescale: {steps_timing.get('bytescale_upload', 0):.2f}s, Download: {steps_timing.get('download', 0):.2f}s, S3: {steps_timing.get('s3_upload', 0):.2f}s)")
-        
-        return {
-            'status': 'success',
-            'message': f'Successfully processed and uploaded {filename}',
-            's3_path': upload_path,
-            'filename': filename,
-            'timing': steps_timing,
-            'total_time': total_time
-        }
-        
-    except RequestException as e:
-        app.logger.error(f"Network error processing {filename}: {e}")
-        return {
-            'status': 'error',
-            'message': f'Network Error: {str(e)}',
-            'filename': filename
-        }
-    except ClientError as e:
-        app.logger.error(f"S3 upload error for {filename}: {e}")
-        return {
-            'status': 'error',
-            'message': f'S3 Upload Error: {str(e)}',
-            'filename': filename
-        }
-    except NoCredentialsError:
-        app.logger.error(f"AWS credentials not found when processing {filename}")
-        return {
-            'status': 'error',
-            'message': 'AWS credentials not found',
-            'filename': filename
-        }
-    except Exception as e:
-        app.logger.error(f"Unexpected error processing {filename}: {e}")
-        return {
-            'status': 'error',
-            'message': f'Unexpected error: {str(e)}',
-            'filename': filename
-        }
+        steps_timing['s3_upload'] = time.time() - s3_upload_start
+    
+    total_time = time.time() - start_time
+    app.logger.info(f"Successfully processed {filename} in {total_time:.2f}s (Bytescale: {steps_timing.get('bytescale_upload', 0):.2f}s, Download: {steps_timing.get('download', 0):.2f}s, S3: {steps_timing.get('s3_upload', 0):.2f}s)")
+    
+    return {
+        'status': 'success',
+        'message': f'Successfully processed and uploaded {filename}',
+        's3_path': upload_path,
+        'filename': filename,
+        'timing': steps_timing,
+        'total_time': total_time
+    }
+    
+except RequestException as e:
+    app.logger.error(f"Network error processing {filename}: {e}")
+    return {
+        'status': 'error',
+        'message': f'Network Error: {str(e)}',
+        'filename': filename
+    }
+except ClientError as e:
+    app.logger.error(f"S3 upload error for {filename}: {e}")
+    return {
+        'status': 'error',
+        'message': f'S3 Upload Error: {str(e)}',
+        'filename': filename
+    }
+except NoCredentialsError:
+    app.logger.error(f"AWS credentials not found when processing {filename}")
+    return {
+        'status': 'error',
+        'message': 'AWS credentials not found',
+        'filename': filename
+    }
+except Exception as e:
+    app.logger.error(f"Unexpected error processing {filename}: {e}")
+    return {
+        'status': 'error',
+        'message': f'Unexpected error: {str(e)}',
+        'filename': filename
+    }
 
 def get_random_image_key(bucket_name):
     """Gets a random object key from the specified bucket."""
