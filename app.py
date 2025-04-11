@@ -30,6 +30,13 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 app.config['SESSION_COOKIE_NAME'] = 'image_interface_session'
 app.config['SECRET_KEY'] = os.urandom(24)
+app.config['SESSION_FILE_DIR'] = '/tmp/flask_session'
+app.config['SESSION_FILE_THRESHOLD'] = 500
+
+# Ensure session directory exists
+if not os.path.exists(app.config['SESSION_FILE_DIR']):
+    os.makedirs(app.config['SESSION_FILE_DIR'])
+
 Session(app)
 
 # Celery configuration
