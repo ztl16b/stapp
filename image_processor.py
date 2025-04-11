@@ -5,6 +5,7 @@ import boto3
 import requests
 import logging
 import traceback
+import sys
 from io import BytesIO
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -38,21 +39,43 @@ BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 # Debug variables
 DEBUG_FILE = "processor_debug.txt"
 LAST_RUN_FILE = "last_run.txt"
+TEMP_PREFIX = "tmp_upload/"
+DESTINATION_PREFIX = "temp_performer_at_venue_images/"
 
 # Print configuration for debugging
-print(f"Starting image processor with configuration:")
+print(f"\n==== IMAGE PROCESSOR STARTING ====")
 print(f"AWS_REGION: {AWS_REGION}")
 print(f"S3_TEMP_BUCKET: {S3_TEMP_BUCKET}")
 print(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
 print(f"BYTESCALE API KEY set: {'Yes' if BYTESCALE_API_KEY else 'No'}")
 print(f"BYTESCALE UPLOAD URL set: {'Yes' if BYTESCALE_UPLOAD_URL else 'No'}")
+print(f"TEMP_PREFIX: {TEMP_PREFIX}")
+print(f"DESTINATION_PREFIX: {DESTINATION_PREFIX}")
+print(f"====================================\n")
+
+# Validate configuration
+missing_vars = []
+if not AWS_ACCESS_KEY_ID: missing_vars.append("AWS_ACCESS_KEY_ID")
+if not AWS_SECRET_ACCESS_KEY: missing_vars.append("AWS_SECRET_ACCESS_KEY")
+if not AWS_REGION: missing_vars.append("AWS_REGION")
+if not S3_TEMP_BUCKET: missing_vars.append("S3_TEMP_BUCKET")
+if not S3_UPLOAD_BUCKET: missing_vars.append("S3_UPLOAD_BUCKET")
+if not BYTESCALE_API_KEY: missing_vars.append("BYTESCALE_API_KEY")
+if not BYTESCALE_UPLOAD_URL: missing_vars.append("BYTESCALE_UPLOAD_URL")
+
+if missing_vars:
+    error_msg = f"ERROR: Missing required environment variables: {', '.join(missing_vars)}"
+    print(error_msg)
+    logger.error(error_msg)
+    sys.exit(1)
 
 def write_debug_info(message):
-    """Write debug information to S3 bucket"""
+    """Write debug information to S3 bucket and console"""
+    timestamp = datetime.now().isoformat()
+    debug_message = f"[{timestamp}] {message}"
+    print(debug_message)
+    
     try:
-        timestamp = datetime.now().isoformat()
-        debug_message = f"[{timestamp}] {message}\n"
-        
         # First, try to read existing debug file
         try:
             response = s3_client.get_object(Bucket=S3_TEMP_BUCKET, Key=DEBUG_FILE)
@@ -60,17 +83,17 @@ def write_debug_info(message):
             # Keep only the last 50 lines to prevent the file from growing too large
             lines = existing_content.splitlines()[-50:]
             existing_content = '\n'.join(lines) + '\n'
-        except:
+        except Exception as e:
             existing_content = ""
         
         # Write updated content
         s3_client.put_object(
             Bucket=S3_TEMP_BUCKET,
             Key=DEBUG_FILE,
-            Body=existing_content + debug_message
+            Body=existing_content + debug_message + "\n"
         )
     except Exception as e:
-        print(f"Failed to write debug info: {e}")
+        print(f"Failed to write debug info to S3: {e}")
 
 def update_last_run():
     """Update the last run timestamp file"""
@@ -101,25 +124,34 @@ try:
         use_threads=True
     )
     
+    # Test S3 connection
+    try:
+        s3_client.list_buckets()
+        print("S3 connection successful!")
+    except Exception as e:
+        print(f"ERROR: Failed to connect to S3: {e}")
+        sys.exit(1)
+    
     # Write initial startup message
-    write_debug_info("Image processor started")
+    write_debug_info("Image processor started successfully")
     
 except Exception as e:
-    print(f"Failed to initialize S3 client: {e}")
+    print(f"ERROR: Failed to initialize S3 client: {e}")
     traceback.print_exc()
+    sys.exit(1)
 
-def list_images_in_temp_bucket(prefix="tmp_upload/", max_keys=10):
-    """List images in the temporary bucket"""
+def list_all_temp_images():
+    """List ALL images in the temporary bucket with any prefix"""
     try:
-        write_debug_info(f"Listing images in {S3_TEMP_BUCKET} with prefix {prefix}")
+        write_debug_info(f"Listing ALL images in {S3_TEMP_BUCKET}")
         
+        all_images = []
+        
+        # First try with the expected prefix
         response = s3_client.list_objects_v2(
             Bucket=S3_TEMP_BUCKET,
-            Prefix=prefix,
-            MaxKeys=max_keys
+            Prefix=TEMP_PREFIX
         )
-        
-        write_debug_info(f"List response: {response.get('KeyCount', 0)} objects found")
         
         if 'Contents' in response:
             # Return only files with image extensions
@@ -128,20 +160,43 @@ def list_images_in_temp_bucket(prefix="tmp_upload/", max_keys=10):
                 obj for obj in response['Contents']
                 if obj['Key'].lower().endswith(image_extensions)
             ]
-            write_debug_info(f"Found {len(images)} image files")
-            
-            # Log the first few images found for debugging
-            for idx, img in enumerate(images[:3]):
-                write_debug_info(f"Image {idx+1}: {img['Key']}")
-            
-            return images
+            all_images.extend(images)
+            write_debug_info(f"Found {len(images)} images with prefix '{TEMP_PREFIX}'")
+        else:
+            write_debug_info(f"No objects found with prefix '{TEMP_PREFIX}'")
         
-        write_debug_info("No objects found in bucket")
-        return []
+        # Try listing the root of the bucket to see if files are in a different location
+        if len(all_images) == 0:
+            write_debug_info("Checking bucket root for images")
+            response = s3_client.list_objects_v2(
+                Bucket=S3_TEMP_BUCKET,
+                Prefix=""
+            )
+            
+            if 'Contents' in response:
+                image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+                images = [
+                    obj for obj in response['Contents']
+                    if obj['Key'].lower().endswith(image_extensions) and not obj['Key'].startswith(DESTINATION_PREFIX)
+                ]
+                all_images.extend(images)
+                write_debug_info(f"Found {len(images)} images at bucket root")
+            else:
+                write_debug_info("No objects found at bucket root")
+        
+        # Log the first few images found for debugging
+        for idx, img in enumerate(all_images[:5]):
+            write_debug_info(f"Image {idx+1}: {img['Key']} ({img['Size']} bytes)")
+        
+        if len(all_images) == 0:
+            write_debug_info("No images found in any location in the temp bucket")
+        
+        return all_images
     except Exception as e:
         error_msg = f"Error listing objects in temp bucket: {e}"
         write_debug_info(error_msg)
         logger.error(error_msg)
+        traceback.print_exc()
         return []
 
 def process_image(s3_key):
@@ -154,7 +209,7 @@ def process_image(s3_key):
     5. Delete original from temp bucket
     """
     try:
-        write_debug_info(f"Processing image: {s3_key}")
+        write_debug_info(f"\n=== Processing image: {s3_key} ===")
         
         # Get the original filename without path
         filename = s3_key.split('/')[-1]
@@ -168,6 +223,14 @@ def process_image(s3_key):
         # Log the download
         write_debug_info(f"Downloaded {filename} ({len(file_data)} bytes) with content type {content_type}")
         
+        if len(file_data) == 0:
+            write_debug_info(f"ERROR: Downloaded file has zero bytes. Skipping.")
+            return {
+                'status': 'error',
+                'original_key': s3_key,
+                'message': "Downloaded file has zero bytes"
+            }
+        
         # Upload to Bytescale for processing
         headers = {
             'Authorization': f'Bearer {BYTESCALE_API_KEY}'
@@ -179,16 +242,30 @@ def process_image(s3_key):
         write_debug_info(f"Uploading {filename} to Bytescale for processing")
         with requests.Session() as session:
             # Upload to Bytescale
+            write_debug_info(f"POST request to {BYTESCALE_UPLOAD_URL}")
             upload_response = session.post(
                 BYTESCALE_UPLOAD_URL, 
                 headers=headers, 
                 files=files_data, 
                 timeout=60
             )
+            
+            if upload_response.status_code != 200:
+                error_msg = f"Bytescale upload returned status code {upload_response.status_code}"
+                write_debug_info(f"ERROR: {error_msg}")
+                write_debug_info(f"Response content: {upload_response.text[:500]}")
+                return {
+                    'status': 'error',
+                    'original_key': s3_key,
+                    'message': error_msg
+                }
+            
             upload_response.raise_for_status()
             
             # Parse response to get file URL
             json_response = upload_response.json()
+            write_debug_info(f"Bytescale response: {json_response}")
+            
             file_url = None
             for file_obj in json_response.get("files", []):
                 if file_obj.get("formDataFieldName") == "file":
@@ -196,7 +273,13 @@ def process_image(s3_key):
                     break
             
             if not file_url:
-                raise ValueError("Could not find file URL in Bytescale response")
+                error_msg = "Could not find file URL in Bytescale response"
+                write_debug_info(f"ERROR: {error_msg}")
+                return {
+                    'status': 'error',
+                    'original_key': s3_key,
+                    'message': error_msg
+                }
             
             write_debug_info(f"Bytescale upload successful, got URL: {file_url}")
             
@@ -210,6 +293,15 @@ def process_image(s3_key):
             
             # Download the processed image
             download_response = session.get(processed_url, stream=True, timeout=60)
+            if download_response.status_code != 200:
+                error_msg = f"Bytescale transformation returned status code {download_response.status_code}"
+                write_debug_info(f"ERROR: {error_msg}")
+                return {
+                    'status': 'error',
+                    'original_key': s3_key,
+                    'message': error_msg
+                }
+            
             download_response.raise_for_status()
             
             # Transform filename from "perf_id-ven_id" format to "perf_id.ven_id" format
@@ -220,10 +312,11 @@ def process_image(s3_key):
                 if len(parts) >= 2:
                     # Replace hyphen with dot between IDs
                     base_filename = '.'.join(parts)
+                    write_debug_info(f"Transformed filename from hyphen to dot format: {base_filename}")
             
-            upload_path = f"temp_performer_at_venue_images/{base_filename}.webp"
+            upload_path = f"{DESTINATION_PREFIX}{base_filename}.webp"
             
-            write_debug_info(f"Transformed filename from '{filename}' to '{os.path.basename(upload_path)}'")
+            write_debug_info(f"Final filename: {os.path.basename(upload_path)}")
             write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
             
             # Upload processed image to final destination
@@ -242,7 +335,7 @@ def process_image(s3_key):
                 Key=s3_key
             )
             
-            write_debug_info(f"Successfully processed {filename}")
+            write_debug_info(f"Successfully processed {filename}\n")
             return {
                 'status': 'success',
                 'original_key': s3_key,
@@ -251,7 +344,7 @@ def process_image(s3_key):
             }
     except Exception as e:
         error_msg = f"Error processing image {s3_key}: {str(e)}"
-        write_debug_info(error_msg)
+        write_debug_info(f"ERROR: {error_msg}")
         traceback.print_exc()
         logger.error(error_msg)
         return {
@@ -263,11 +356,11 @@ def process_image(s3_key):
 def process_next_batch():
     """Process the next batch of images from the temp bucket"""
     try:
-        write_debug_info("===== Starting new processing cycle =====")
+        write_debug_info("\n===== Starting new processing cycle =====")
         update_last_run()
         
-        # Get a list of images (limit to 10 per batch)
-        images = list_images_in_temp_bucket(max_keys=10)
+        # Get ALL images in the temp bucket (with any prefix)
+        images = list_all_temp_images()
         
         if not images:
             write_debug_info("No images found in temp bucket")
@@ -288,11 +381,11 @@ def process_next_batch():
             # Only process one image per run to avoid overloading
             break
         
-        write_debug_info("===== Completed processing cycle =====")
+        write_debug_info("===== Completed processing cycle =====\n")
         
     except Exception as e:
         error_msg = f"Error in process_next_batch: {str(e)}"
-        write_debug_info(error_msg)
+        write_debug_info(f"ERROR: {error_msg}")
         traceback.print_exc()
         logger.error(error_msg)
 

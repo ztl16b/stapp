@@ -122,7 +122,7 @@
     {% endwith %}
 
     <div class="sequential-upload-info">
-        <h5><i class="bi bi-info-circle"></i> Sequential Upload Mode</h5>
+        <h5><i class="bi bi-info-circle"></i>Upload</h5>
         <p>Files will be uploaded one at a time. The process will stop if any upload fails or takes longer than the specified timeout.</p>
         <div class="form-group mt-2">
             <label for="uploadTimeout">Upload Timeout (seconds):</label>
@@ -135,7 +135,7 @@
         <!-- Upload button at the top -->
         <div class="upload-button-container">
             <button type="button" class="btn btn-primary" id="startUploadButton" disabled>
-                <i class="bi bi-cloud-upload"></i> Start Sequential Upload
+                <i class="bi bi-cloud-upload"></i> Start Upload
             </button>
         </div>
 
@@ -173,7 +173,7 @@
 
     <!-- Sequential Upload Progress -->
     <div class="upload-progress" id="uploadProgress">
-        <h4>Sequential Upload Progress</h4>
+        <h4>Upload Progress</h4>
         <div class="progress" style="height: 25px;">
             <div class="progress-bar progress-bar-striped" role="progressbar" style="width: 0%" id="progressBar">0%</div>
         </div>
