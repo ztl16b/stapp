@@ -101,6 +101,19 @@ try:
         use_threads=True
     )
     
+    # Make sure required prefixes/directories exist
+    try:
+        # Create an empty object to ensure the issue_files/ prefix exists
+        if S3_ISSUE_BUCKET:
+            s3_client.put_object(
+                Bucket=S3_ISSUE_BUCKET,
+                Key="issue_files/.placeholder",
+                Body="Placeholder to ensure directory exists"
+            )
+            print(f"Ensured issue_files/ prefix exists in {S3_ISSUE_BUCKET}")
+    except Exception as e:
+        print(f"Warning: Could not initialize issue_files/ prefix: {e}")
+    
     # Write initial startup message
     write_debug_info("Image processor started")
     

@@ -658,6 +658,10 @@ def browse_bucket(bucket_name):
         
     bucket_info = buckets[bucket_name]
     try:
+        # Verify that the bucket and prefix exist
+        if not bucket_info['bucket']:
+            raise ValueError(f"Bucket name for '{bucket_name}' is not configured")
+            
         # Get page number, search query, sort order, and date filter from query parameters
         page = request.args.get('page', 1, type=int)
         search_query = request.args.get('search', '').lower()
@@ -671,20 +675,29 @@ def browse_bucket(bucket_name):
         
         # Get objects using the paginator with MaxKeys
         all_files = []
+        
+        # Make sure the prefix is a string
+        prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
+        
         for page_obj in paginator.paginate(
             Bucket=bucket_info['bucket'],
-            Prefix=bucket_info['prefix'],
+            Prefix=prefix,
             MaxKeys=per_page  # Limit the number of keys returned per request
         ):
             if 'Contents' in page_obj:
                 for item in page_obj['Contents']:
                     # Skip the prefix itself
-                    if item['Key'] != bucket_info['prefix']:
+                    if item['Key'] != prefix:
                         # Apply search filter if search query exists
                         if search_query == 'letters':
-                            # Get just the filename part (after the last slash) and remove the .webp extension
-                            filename = item['Key'].split('/')[-1].replace('.webp', '')
-                            if any(c.isalpha() for c in filename):
+                            # Get just the filename part (after the last slash)
+                            filename = item['Key'].split('/')[-1]
+                            # Remove extension for comparison
+                            base_filename = filename
+                            if '.' in filename:
+                                base_filename = filename.rsplit('.', 1)[0]
+                                
+                            if any(c.isalpha() for c in base_filename):
                                 # Apply date filter if dates are provided
                                 if apply_date_filter(item['LastModified'], date_from, date_to):
                                     all_files.append({
@@ -706,7 +719,7 @@ def browse_bucket(bucket_name):
         
         # Calculate pagination info
         total_files = len(all_files)
-        total_pages = (total_files + per_page - 1) // per_page
+        total_pages = (total_files + per_page - 1) // per_page if total_files > 0 else 1
         
         # Ensure page is within valid range
         if page < 1:
@@ -716,8 +729,8 @@ def browse_bucket(bucket_name):
         
         # Slice the files list to get only the current page
         start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        current_page_files = all_files[start_idx:end_idx]
+        end_idx = min(start_idx + per_page, total_files)
+        current_page_files = all_files[start_idx:end_idx] if total_files > 0 else []
         
         return render_template('browse_bucket.html', 
                              bucket=bucket_info,
@@ -731,7 +744,7 @@ def browse_bucket(bucket_name):
                              date_from=date_from,
                              date_to=date_to)
     except Exception as e:
-        app.logger.error(f"Error listing bucket contents: {e}")
+        app.logger.error(f"Error browsing bucket '{bucket_name}': {str(e)}")
         flash(f'Error accessing bucket: {str(e)}', 'danger')
         return redirect(url_for('browse_buckets'))
 
