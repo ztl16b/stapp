@@ -6,8 +6,10 @@ heroku logs --tail
 
 
 TROUBLESHOOTING WORKERS
-heroku ps:restart
+heroku ps
+
 heroku restart
+
 heroku ps:restart image_worker
 heroku ps:restart validation_worker
 

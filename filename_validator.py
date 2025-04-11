@@ -4,6 +4,8 @@ import time
 import boto3
 import logging
 import traceback
+import redis
+import hashlib
 from datetime import datetime
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
@@ -28,16 +30,37 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
 S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
+S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
+
+# Redis Configuration
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
 
 # Debug variables
 DEBUG_FILE = "validator_debug.txt"
 LAST_RUN_FILE = "validator_last_run.txt"
+
+# Redis prefixes
+REDIS_FILENAME_PREFIX = "filename:"
+REDIS_CACHE_EXPIRY = 60 * 60 * 24 * 7  # 7 days
+
+# Initialize Redis
+try:
+    redis_client = redis.from_url(REDIS_URL)
+    # Test connection
+    redis_client.ping()
+    print("Connected to Redis successfully")
+except Exception as e:
+    print(f"Warning: Redis connection failed: {e}")
+    redis_client = None
 
 # Print configuration for debugging
 print(f"Starting filename validator with configuration:")
 print(f"AWS_REGION: {AWS_REGION}")
 print(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
 print(f"S3_ISSUE_BUCKET: {S3_ISSUE_BUCKET}")
+print(f"S3_GOOD_BUCKET: {S3_GOOD_BUCKET}")
+print(f"REDIS_URL: {REDIS_URL}")
+print(f"Redis Connected: {redis_client is not None}")
 
 def write_debug_info(message):
     """Write debug information to S3 bucket"""
@@ -131,7 +154,66 @@ def check_filename_format(filename):
     except ValueError:
         return False
 
-def move_to_issue_bucket(object_key):
+def refresh_good_images_cache():
+    """
+    Refresh the Redis cache with all images in the good bucket
+    """
+    if not redis_client:
+        write_debug_info("Redis not available, skipping cache refresh")
+        return
+        
+    try:
+        write_debug_info("Refreshing Redis cache with good bucket images")
+        
+        # List all objects in the good bucket
+        paginator = s3_client.get_paginator('list_objects_v2')
+        good_prefix = 'images/performer-at-venue/detail/'
+        
+        # Start with a clean cache
+        pattern = f"{REDIS_FILENAME_PREFIX}*"
+        cursor = '0'
+        while cursor != 0:
+            cursor, keys = redis_client.scan(cursor=cursor, match=pattern, count=1000)
+            if keys:
+                redis_client.delete(*keys)
+            cursor = int(cursor)
+        
+        # Fill cache with good bucket files
+        count = 0
+        for page in paginator.paginate(Bucket=S3_GOOD_BUCKET, Prefix=good_prefix):
+            if 'Contents' in page:
+                for item in page['Contents']:
+                    filename = item['Key'].split('/')[-1]
+                    if filename.lower().endswith('.webp'):
+                        # Extract base name without extension and folder
+                        redis_key = f"{REDIS_FILENAME_PREFIX}{filename}"
+                        redis_client.set(redis_key, item['Key'], ex=REDIS_CACHE_EXPIRY)
+                        count += 1
+        
+        write_debug_info(f"Refreshed Redis cache with {count} images from good bucket")
+    except Exception as e:
+        error_msg = f"Error refreshing good images cache: {str(e)}"
+        write_debug_info(error_msg)
+        logger.error(error_msg)
+        traceback.print_exc()
+
+def is_duplicate(filename):
+    """
+    Check if a filename already exists in the good bucket
+    
+    Returns True if it's a duplicate, False otherwise
+    """
+    if not redis_client:
+        return False
+        
+    try:
+        redis_key = f"{REDIS_FILENAME_PREFIX}{filename}"
+        return redis_client.exists(redis_key) == 1
+    except Exception as e:
+        write_debug_info(f"Error checking Redis for duplicate: {str(e)}")
+        return False
+
+def move_to_issue_bucket(object_key, reason="improperly formatted"):
     """
     Move a file from the Upload bucket to the Issue bucket.
     """
@@ -140,7 +222,7 @@ def move_to_issue_bucket(object_key):
         filename = object_key.split('/')[-1]
         dest_key = f"issue_files/{filename}"
         
-        write_debug_info(f"Moving improperly formatted file {object_key} to issue bucket as {dest_key}")
+        write_debug_info(f"Moving {reason} file {object_key} to issue bucket as {dest_key}")
         
         # Copy to issue bucket
         copy_source = {'Bucket': S3_UPLOAD_BUCKET, 'Key': object_key}
@@ -167,14 +249,18 @@ def move_to_issue_bucket(object_key):
 
 def check_upload_bucket_filenames():
     """
-    Check all files in the Upload bucket for proper naming format.
+    Check all files in the Upload bucket for proper naming format and duplicates.
     Move improperly formatted files to the Issue bucket.
     """
     try:
         write_debug_info("===== Starting new validation cycle =====")
         update_last_run()
         
-        write_debug_info("Checking upload bucket for improperly formatted filenames")
+        # Step 1: Refresh Redis cache with good bucket images
+        if redis_client:
+            refresh_good_images_cache()
+        
+        write_debug_info("Checking upload bucket for improperly formatted filenames and duplicates")
         
         # List objects in the upload bucket
         prefix = 'temp_performer_at_venue_images/'
@@ -189,6 +275,7 @@ def check_upload_bucket_filenames():
             
         webp_files = [obj for obj in response['Contents'] if obj['Key'].lower().endswith('.webp')]
         issue_count = 0
+        duplicate_count = 0
         
         write_debug_info(f"Found {len(webp_files)} webp files in upload bucket to check")
         
@@ -196,13 +283,21 @@ def check_upload_bucket_filenames():
             object_key = obj['Key']
             filename = object_key.split('/')[-1]
             
-            # Check if the filename matches the required format
+            # First check if the filename matches the required format
             if not check_filename_format(filename):
                 write_debug_info(f"Found improperly formatted filename: {filename}")
-                if move_to_issue_bucket(object_key):
+                if move_to_issue_bucket(object_key, "improperly formatted"):
                     issue_count += 1
+                continue
+                
+            # Then check if it's a duplicate
+            if redis_client and is_duplicate(filename):
+                write_debug_info(f"Found duplicate filename: {filename}")
+                if move_to_issue_bucket(object_key, "duplicate"):
+                    duplicate_count += 1
         
         write_debug_info(f"Moved {issue_count} improperly formatted files to issue bucket")
+        write_debug_info(f"Moved {duplicate_count} duplicate files to issue bucket")
         write_debug_info("===== Completed validation cycle =====")
         
     except Exception as e:
