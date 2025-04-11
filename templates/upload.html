@@ -68,22 +68,40 @@
     margin: 1rem 0;
     border-left: 4px solid #0d6efd;
 }
-.loading-overlay {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(255, 255, 255, 0.8);
-    z-index: 1000;
-    justify-content: center;
-    align-items: center;
-    flex-direction: column;
+.sequential-upload-info {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    border-left: 4px solid #17a2b8;
 }
-.spinner-border {
-    width: 3rem;
-    height: 3rem;
+.upload-progress {
+    margin-top: 20px;
+    display: none;
+}
+.upload-log {
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+.log-success {
+    color: #28a745;
+}
+.log-error {
+    color: #dc3545;
+}
+.log-info {
+    color: #17a2b8;
+}
+.countdown-timer {
+    font-weight: bold;
+    color: #6c757d;
 }
 </style>
 {% endblock %}
@@ -103,15 +121,16 @@
       {% endif %}
     {% endwith %}
 
-    <div class="batch-info" id="batchInfo" style="display: none;">
-        <strong>Batch Upload:</strong> <span id="batchMessage"></span>
+    <div class="sequential-upload-info">
+        <h5><i class="bi bi-info-circle"></i> Sequential Upload Mode</h5>
+        <p>Files will be uploaded one at a time with a 30-second interval between uploads. The process will stop if any upload fails.</p>
     </div>
 
-    <form method="post" enctype="multipart/form-data" id="uploadForm">
+    <form id="uploadForm" enctype="multipart/form-data">
         <!-- Upload button at the top -->
         <div class="upload-button-container">
-            <button type="button" class="btn btn-primary" id="fixedUploadButton" disabled>
-                <i class="bi bi-cloud-upload"></i> Upload Files
+            <button type="button" class="btn btn-primary" id="startUploadButton" disabled>
+                <i class="bi bi-cloud-upload"></i> Start Sequential Upload
             </button>
         </div>
 
@@ -127,7 +146,6 @@
             </div>
             <p class="text-muted">Supported formats: JPG, PNG, GIF, WEBP</p>
             <p class="text-muted">Maximum file size: 5MB per file</p>
-            <p class="text-muted">Recommended maximum: 20 files per upload</p>
             <p class="alert alert-info mt-2">Images will be saved in their original format to a temporary storage area. <br>No resizing or reformatting will be applied at this stage.</p>
         </div>
 
@@ -146,49 +164,57 @@
                 </div>
             </div>
         </div>
-
-        <!-- Hidden submit button -->
-        <button type="submit" class="btn btn-primary hidden-button" id="uploadButton" disabled>
-            Upload Files
-        </button>
     </form>
-</div>
 
-<!-- Loading Overlay -->
-<div class="loading-overlay" id="loadingOverlay">
-    <div class="spinner-border text-primary mb-3" role="status">
-        <span class="visually-hidden">Loading...</span>
-    </div>
-    <h5>Uploading your images...</h5>
-    <p>Your images are being uploaded to temporary storage in their original format.</p>
-    <div class="progress mt-3" style="width: 300px;">
-        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+    <!-- Sequential Upload Progress -->
+    <div class="upload-progress" id="uploadProgress">
+        <h4>Sequential Upload Progress</h4>
+        <div class="progress" style="height: 25px;">
+            <div class="progress-bar progress-bar-striped" role="progressbar" style="width: 0%" id="progressBar">0%</div>
+        </div>
+        <div class="d-flex justify-content-between mt-2">
+            <div><strong>Uploaded:</strong> <span id="uploadedCount">0</span> of <span id="totalCount">0</span></div>
+            <div id="nextUploadTimer" class="countdown-timer">Next upload in: <span id="countdownTimer">30</span>s</div>
+        </div>
+        
+        <div class="upload-log" id="uploadLog"></div>
     </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    // File upload handling code
     document.addEventListener('DOMContentLoaded', function() {
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
         const filePreview = document.getElementById('filePreview');
-        const uploadButton = document.getElementById('uploadButton');
-        const fixedUploadButton = document.getElementById('fixedUploadButton');
+        const startUploadButton = document.getElementById('startUploadButton');
         const uploadForm = document.getElementById('uploadForm');
-        const loadingOverlay = document.getElementById('loadingOverlay');
         const uploadStats = document.getElementById('uploadStats');
         const validCount = document.getElementById('validCount');
         const sizeExceededCount = document.getElementById('sizeExceededCount');
         const invalidTypeCount = document.getElementById('invalidTypeCount');
-        const batchInfo = document.getElementById('batchInfo');
-        const batchMessage = document.getElementById('batchMessage');
+        
+        // Sequential upload elements
+        const uploadProgress = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('progressBar');
+        const uploadedCount = document.getElementById('uploadedCount');
+        const totalCount = document.getElementById('totalCount');
+        const nextUploadTimer = document.getElementById('nextUploadTimer');
+        const countdownTimer = document.getElementById('countdownTimer');
+        const uploadLog = document.getElementById('uploadLog');
         
         let files = [];
+        let validFiles = [];
         const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
-        const MAX_RECOMMENDED_FILES = 200;
         const VALID_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
+        
+        // Sequential upload variables
+        let isUploading = false;
+        let currentFileIndex = 0;
+        let uploadedFiles = 0;
+        let countdownInterval = null;
+        let secondsRemaining = 30;
 
         // Prevent default drag behaviors
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -211,20 +237,8 @@
         // Handle file input change
         fileInput.addEventListener('change', handleFiles, false);
 
-        // Handle fixed upload button click
-        fixedUploadButton.addEventListener('click', function() {
-            if (files.length > 0) {
-                loadingOverlay.style.display = 'flex';
-                setTimeout(() => {
-                    uploadForm.submit();
-                }, 100); // Small delay to ensure the overlay appears
-            }
-        });
-
-        // Handle form submission to show loading overlay
-        uploadForm.addEventListener('submit', function() {
-            loadingOverlay.style.display = 'flex';
-        });
+        // Handle start upload button click
+        startUploadButton.addEventListener('click', startSequentialUpload);
 
         function preventDefaults(e) {
             e.preventDefault();
@@ -249,7 +263,7 @@
             const newFiles = [...e.target.files];
             
             // Statistics
-            let validFiles = [];
+            let validFilesArr = [];
             let sizeExceededFiles = [];
             let invalidTypeFiles = [];
             
@@ -265,23 +279,16 @@
                 } else if (!isValidSize) {
                     sizeExceededFiles.push(file);
                 } else {
-                    validFiles.push(file);
+                    validFilesArr.push(file);
                 }
             });
             
             // Update files array with only valid files
-            files = validFiles;
-            
-            // Show batch info if needed
-            if (files.length > MAX_RECOMMENDED_FILES) {
-                batchInfo.style.display = 'block';
-                batchMessage.textContent = `You've selected ${files.length} files. We recommend uploading in batches of ${MAX_RECOMMENDED_FILES} for optimal performance`;
-            } else {
-                batchInfo.style.display = 'none';
-            }
+            files = validFilesArr;
+            validFiles = validFilesArr;
             
             // Update statistics
-            validCount.textContent = validFiles.length;
+            validCount.textContent = validFilesArr.length;
             sizeExceededCount.textContent = sizeExceededFiles.length;
             invalidTypeCount.textContent = invalidTypeFiles.length;
             uploadStats.style.display = 'block';
@@ -308,25 +315,11 @@
             filePreview.innerHTML = '';
             
             if (files.length === 0) {
-                uploadButton.disabled = true;
-                fixedUploadButton.disabled = true;
+                startUploadButton.disabled = true;
                 return;
             }
             
-            uploadButton.disabled = false;
-            fixedUploadButton.disabled = false;
-            
-            // Show a warning for very large uploads
-            if (files.length > 100) {
-                const warningEl = document.createElement('div');
-                warningEl.className = 'alert alert-warning mb-3';
-                warningEl.innerHTML = `
-                    <strong>Warning:</strong> You've selected ${files.length} files. 
-                    Processing a large number of images may take several minutes and could time out.
-                    Consider uploading in smaller batches if you encounter issues.
-                `;
-                filePreview.appendChild(warningEl);
-            }
+            startUploadButton.disabled = false;
             
             // Create a container for file stats
             const statsEl = document.createElement('div');
@@ -335,7 +328,7 @@
             filePreview.appendChild(statsEl);
             
             // For very large numbers of files, limit thumbnail generation
-            const showThumbnails = files.length <= 100;
+            const showThumbnails = files.length <= 50;
             
             // Create a scrollable container for file items 
             const filesContainer = document.createElement('div');
@@ -344,8 +337,8 @@
             filesContainer.style.overflowY = 'auto';
             filePreview.appendChild(filesContainer);
             
-            // Only render the first 100 thumbnails to avoid browser performance issues
-            const maxVisibleItems = 100;
+            // Only render the first 50 thumbnails to avoid browser performance issues
+            const maxVisibleItems = 50;
             const visibleFiles = files.slice(0, maxVisibleItems);
             
             visibleFiles.forEach((file, index) => {
@@ -369,15 +362,8 @@
                 removeButton.onclick = function(e) {
                     e.stopPropagation();
                     files.splice(index, 1);
+                    validFiles.splice(index, 1);
                     updateFilePreview();
-                    
-                    // Update batch info
-                    if (files.length > MAX_RECOMMENDED_FILES) {
-                        batchInfo.style.display = 'block';
-                        batchMessage.textContent = `You've selected ${files.length} files. We recommend uploading in batches of ${MAX_RECOMMENDED_FILES} for optimal performance`;
-                    } else {
-                        batchInfo.style.display = 'none';
-                    }
                     
                     // Update statistics
                     validCount.textContent = files.length;
@@ -424,6 +410,129 @@
             } else {
                 return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
             }
+        }
+
+        // Sequential Upload Functions
+        function startSequentialUpload() {
+            if (isUploading || validFiles.length === 0) return;
+            
+            isUploading = true;
+            currentFileIndex = 0;
+            uploadedFiles = 0;
+            
+            // Show progress UI
+            uploadProgress.style.display = 'block';
+            totalCount.textContent = validFiles.length;
+            uploadedCount.textContent = '0';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            uploadLog.innerHTML = '';
+            
+            // Hide file selection UI
+            dropZone.style.display = 'none';
+            filePreview.style.display = 'none';
+            startUploadButton.disabled = true;
+            
+            // Add initial log entry
+            addLogEntry(`Starting sequential upload of ${validFiles.length} files with 30-second intervals...`, 'info');
+            
+            // Start the first upload immediately
+            uploadCurrentFile();
+        }
+        
+        function uploadCurrentFile() {
+            if (currentFileIndex >= validFiles.length) {
+                // All files processed
+                isUploading = false;
+                addLogEntry(`Upload complete. Successfully uploaded ${uploadedFiles} of ${validFiles.length} files.`, 'info');
+                nextUploadTimer.style.display = 'none';
+                return;
+            }
+            
+            const file = validFiles[currentFileIndex];
+            addLogEntry(`Uploading file ${currentFileIndex + 1}/${validFiles.length}: ${file.name}`, 'info');
+            
+            // Create form data for this single file
+            const formData = new FormData();
+            formData.append('files', file);
+            
+            // Upload the file
+            fetch('/upload', {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Upload succeeded
+                    uploadedFiles++;
+                    addLogEntry(`Successfully uploaded ${file.name}`, 'success');
+                    
+                    // Update progress
+                    uploadedCount.textContent = uploadedFiles;
+                    const percentComplete = (uploadedFiles / validFiles.length) * 100;
+                    progressBar.style.width = `${percentComplete}%`;
+                    progressBar.textContent = `${Math.round(percentComplete)}%`;
+                    
+                    // Move to next file after 30 seconds
+                    currentFileIndex++;
+                    
+                    if (currentFileIndex < validFiles.length) {
+                        // Start countdown for next upload
+                        secondsRemaining = 30;
+                        countdownTimer.textContent = secondsRemaining;
+                        nextUploadTimer.style.display = 'block';
+                        
+                        if (countdownInterval) {
+                            clearInterval(countdownInterval);
+                        }
+                        
+                        countdownInterval = setInterval(() => {
+                            secondsRemaining--;
+                            countdownTimer.textContent = secondsRemaining;
+                            
+                            if (secondsRemaining <= 0) {
+                                clearInterval(countdownInterval);
+                                uploadCurrentFile();
+                            }
+                        }, 1000);
+                    } else {
+                        // No more files
+                        addLogEntry('All files processed successfully!', 'success');
+                        isUploading = false;
+                        nextUploadTimer.style.display = 'none';
+                    }
+                } else {
+                    // Upload failed
+                    addLogEntry(`Failed to upload ${file.name}: ${data.message}. Stopping.`, 'error');
+                    isUploading = false;
+                    nextUploadTimer.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                addLogEntry(`Error uploading ${file.name}: ${error.message}. Stopping.`, 'error');
+                isUploading = false;
+                nextUploadTimer.style.display = 'none';
+            });
+        }
+        
+        function addLogEntry(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-${type}`;
+            
+            // Add timestamp
+            const now = new Date();
+            const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            
+            entry.textContent = `[${timestamp}] ${message}`;
+            uploadLog.appendChild(entry);
+            
+            // Scroll to bottom
+            uploadLog.scrollTop = uploadLog.scrollHeight;
         }
     });
 </script>

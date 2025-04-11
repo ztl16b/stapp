@@ -244,78 +244,41 @@ def upload():
             flash('No selected files', 'warning')
             return redirect(request.url)
         
-        # Define your limits
-        max_batch_size = 1000
-        valid_files = []
+        # When using client-side sequential uploads, we'll receive just one file at a time
+        file = files[0]  # Process just the first file
         
-        # First pass - validate and collect valid files
-        for file in files:
-            # Skip files that exceed size limit (5MB)
-            if file.content_length and file.content_length > 5 * 1024 * 1024:
-                continue
-            
-            # Read file content 
-            file_data = file.read()
-            if not file_data:
-                continue
-                
-            # Store valid files with their data
-            valid_files.append({
-                'data': file_data,
-                'name': secure_filename(file.filename),
-                'type': file.content_type
-            })
-            
-            # Reset file pointer so we can read it again later if needed
-            file.seek(0)
-            
-            # Apply batch size limit
-            if len(valid_files) >= max_batch_size:
-                break
-        
-        if not valid_files:
-            flash('No valid files to upload', 'warning')
+        # Validate file size
+        if file.content_length and file.content_length > 5 * 1024 * 1024:
+            flash(f'File {file.filename} exceeds 5MB size limit', 'danger')
             return redirect(request.url)
-            
-        # Create a batch ID
-        batch_id = str(uuid.uuid4())
-        total_files = len(valid_files)
         
-        # Store batch info in Redis
-        redis_conn.set(f"batch:{batch_id}:total", total_files)
-        redis_conn.set(f"batch:{batch_id}:progress", 0)
-        redis_conn.set(f"batch:{batch_id}:status", "processing")
-        redis_conn.expire(f"batch:{batch_id}:total", 86400)  # 24 hours TTL
-        redis_conn.expire(f"batch:{batch_id}:progress", 86400)
-        redis_conn.expire(f"batch:{batch_id}:status", 86400)
+        # Read file data
+        file_data = file.read()
+        if not file_data:
+            flash(f'File {file.filename} is empty', 'danger')
+            return redirect(request.url)
         
-        # Store the batch ID in the session
-        session['current_batch_id'] = batch_id
-        session['batch_total'] = total_files
+        # Process the file
+        filename = secure_filename(file.filename)
+        content_type = file.content_type
         
-        # Queue all files for processing 
-        for i, file_info in enumerate(valid_files):
-            # Convert binary data to base64 for safe transport through Redis
-            file_data_b64 = base64.b64encode(file_info['data']).decode('utf-8')
-            
-            # Queue the task
-            upload_queue.enqueue(
-                process_image_task,
-                file_data_b64,
-                file_info['name'],
-                file_info['type'],
-                batch_id,
-                job_id=f"{batch_id}:{i}",
-                ttl=3600,  # 1 hour timeout
-                result_ttl=results_ttl
-            )
-            
-            # Free memory
-            del file_info['data']
+        # Process the single file directly
+        result = process_image(file_data, filename, content_type)
         
-        # Send user to status page
-        flash(f'Processing batch of {total_files} files. You can check the status or continue using the site.', 'info')
-        return redirect(url_for('batch_status', batch_id=batch_id))
+        if result['status'] == 'success':
+            flash(f'Successfully uploaded {filename}', 'success')
+        else:
+            flash(f'Failed to upload {filename}: {result["message"]}', 'danger')
+        
+        # For AJAX requests, return a simplified page
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'status': result['status'],
+                'message': result['message'],
+                'filename': filename
+            })
+        
+        return redirect(request.url)
     
     return render_template('upload.html')
 
