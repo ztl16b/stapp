@@ -12,6 +12,11 @@ from requests.exceptions import RequestException
 import uuid
 import time
 from io import BytesIO
+import redis
+from rq import Queue
+import threading
+import json
+import base64
 
 load_dotenv()
 
@@ -45,6 +50,127 @@ BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
+
+# Redis connection and queue setup
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
+redis_conn = redis.from_url(REDIS_URL)
+upload_queue = Queue('uploads', connection=redis_conn)
+results_ttl = 3600  # Results will stay in Redis for 1 hour
+
+# Thread local storage for S3 clients
+thread_local = threading.local()
+
+def get_s3_client():
+    """Get thread-local S3 client to improve connection reuse"""
+    if not hasattr(thread_local, 's3_client'):
+        thread_local.s3_client = boto3.client(
+            's3',
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            region_name=AWS_REGION
+        )
+    return thread_local.s3_client
+
+# Main S3 client for non-worker operations
+try:
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_REGION
+    )
+    
+    # Create a reusable S3 upload configuration 
+    s3_upload_config = boto3.s3.transfer.TransferConfig(
+        multipart_threshold=8 * 1024 * 1024,  # 8MB
+        max_concurrency=10,
+        multipart_chunksize=8 * 1024 * 1024,  # 8MB
+        use_threads=True
+    )
+except NoCredentialsError:
+    raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
+except Exception as e:
+    raise ValueError(f"Error initializing S3 client: {e}")
+
+# Cache for image format validation
+VALID_IMAGE_SIGNATURES = {
+    b'\xff\xd8\xff': 'JPEG',    # JPEG
+    b'\x89\x50\x4e\x47': 'PNG', # PNG
+    b'\x47\x49\x46': 'GIF',     # GIF
+    b'\x42\x4d': 'BMP',         # BMP
+    b'\x52\x49\x46\x46': 'WEBP' # WEBP
+}
+
+# Background processing function for RQ
+def process_image_task(file_data_b64, filename, content_type, batch_id):
+    """
+    Worker function that will be called by RQ worker processes
+    """
+    try:
+        # Decode base64 file data
+        file_data = base64.b64decode(file_data_b64)
+        
+        # Get thread-local S3 client
+        s3 = get_s3_client()
+        
+        # Quick validation of file format using first few bytes
+        file_start = file_data[:8]  # First 8 bytes is enough for all formats
+        is_valid_image = any(file_start.startswith(sig) for sig in VALID_IMAGE_SIGNATURES)
+                
+        if not is_valid_image:
+            return {
+                'status': 'error',
+                'message': 'Invalid image format',
+                'filename': filename,
+                'batch_id': batch_id
+            }
+        
+        # Generate unique upload path to prevent overwrites
+        timestamp = int(time.time() * 1000)  # millisecond precision
+        random_suffix = str(uuid.uuid4())[:8]
+        upload_path = f"tmp_upload/{batch_id}/{timestamp}_{random_suffix}_{filename}"
+        
+        # Upload to S3 directly from memory
+        file_obj = BytesIO(file_data)
+        
+        s3.upload_fileobj(
+            file_obj,
+            S3_TEMP_BUCKET,
+            upload_path,
+            ExtraArgs={'ContentType': content_type},
+            Config=s3_upload_config
+        )
+        
+        file_obj.close()
+        
+        # Update the batch progress in Redis
+        update_batch_progress(batch_id)
+        
+        return {
+            'status': 'success',
+            'message': 'Upload successful',
+            's3_path': upload_path,
+            'filename': filename,
+            'batch_id': batch_id
+        }
+    except Exception as e:
+        print(f"Error processing {filename}: {str(e)}")
+        return {
+            'status': 'error',
+            'message': str(e),
+            'filename': filename,
+            'batch_id': batch_id
+        }
+
+def update_batch_progress(batch_id):
+    """Update the progress counter for a batch"""
+    key = f"batch:{batch_id}:progress"
+    completed = redis_conn.incr(key)
+    total = redis_conn.get(f"batch:{batch_id}:total")
+    if total:
+        total = int(total)
+        if completed >= total:
+            redis_conn.set(f"batch:{batch_id}:status", "complete")
 
 def login_required(f):
     @wraps(f)
@@ -101,35 +227,6 @@ def before_request():
     app.logger.debug(f"Request path: {request.path}")
     app.logger.debug(f"Session data: {dict(session)}")
 
-try:
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION
-    )
-    
-    # Create a reusable S3 upload configuration 
-    s3_upload_config = boto3.s3.transfer.TransferConfig(
-        multipart_threshold=8 * 1024 * 1024,  # 8MB
-        max_concurrency=10,
-        multipart_chunksize=8 * 1024 * 1024,  # 8MB
-        use_threads=True
-    )
-except NoCredentialsError:
-    raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
-except Exception as e:
-    raise ValueError(f"Error initializing S3 client: {e}")
-
-# Cache for image format validation
-VALID_IMAGE_SIGNATURES = {
-    b'\xff\xd8\xff': 'JPEG',    # JPEG
-    b'\x89\x50\x4e\x47': 'PNG', # PNG
-    b'\x47\x49\x46': 'GIF',     # GIF
-    b'\x42\x4d': 'BMP',         # BMP
-    b'\x52\x49\x46\x46': 'WEBP' # WEBP
-}
-
 @app.route('/')
 def index():
     return redirect(url_for('upload'))
@@ -148,45 +245,136 @@ def upload():
             return redirect(request.url)
         
         # Define your limits
-        max_batch_size = 500
-        total_count = len(files)
-        if total_count > max_batch_size:
-            files = files[:max_batch_size]
-            skipped_count = total_count - max_batch_size
-            flash(f'Processing {max_batch_size} files. {skipped_count} additional files were skipped.', 'warning')
-        else:
-            skipped_count = 0
+        max_batch_size = 1000
+        valid_files = []
         
-        # Instead of processing inline, queue each file as a Celery task.
-        task_ids = []
-        start_time = time.time()
+        # First pass - validate and collect valid files
         for file in files:
             # Skip files that exceed size limit (5MB)
             if file.content_length and file.content_length > 5 * 1024 * 1024:
-                app.logger.info(f"Skipping large file: {file.filename}")
                 continue
-
-            # Read file content and validate
+            
+            # Read file content 
             file_data = file.read()
             if not file_data:
-                app.logger.info(f"Skipping empty file: {file.filename}")
                 continue
-
-            filename = secure_filename(file.filename)
-            # Queue asynchronous processing
-            task = process_file_task.delay(file_data, filename, file.content_type)
-            task_ids.append(task.id)
+                
+            # Store valid files with their data
+            valid_files.append({
+                'data': file_data,
+                'name': secure_filename(file.filename),
+                'type': file.content_type
+            })
+            
+            # Reset file pointer so we can read it again later if needed
+            file.seek(0)
+            
+            # Apply batch size limit
+            if len(valid_files) >= max_batch_size:
+                break
         
-        elapsed = time.time() - start_time
-        app.logger.info(f"Queued {len(task_ids)} tasks in {elapsed:.1f} seconds.")
-        flash(f"Queued {len(task_ids)} file processing tasks.", 'success')
-        return redirect(url_for('upload'))
+        if not valid_files:
+            flash('No valid files to upload', 'warning')
+            return redirect(request.url)
+            
+        # Create a batch ID
+        batch_id = str(uuid.uuid4())
+        total_files = len(valid_files)
+        
+        # Store batch info in Redis
+        redis_conn.set(f"batch:{batch_id}:total", total_files)
+        redis_conn.set(f"batch:{batch_id}:progress", 0)
+        redis_conn.set(f"batch:{batch_id}:status", "processing")
+        redis_conn.expire(f"batch:{batch_id}:total", 86400)  # 24 hours TTL
+        redis_conn.expire(f"batch:{batch_id}:progress", 86400)
+        redis_conn.expire(f"batch:{batch_id}:status", 86400)
+        
+        # Store the batch ID in the session
+        session['current_batch_id'] = batch_id
+        session['batch_total'] = total_files
+        
+        # Queue all files for processing 
+        for i, file_info in enumerate(valid_files):
+            # Convert binary data to base64 for safe transport through Redis
+            file_data_b64 = base64.b64encode(file_info['data']).decode('utf-8')
+            
+            # Queue the task
+            upload_queue.enqueue(
+                process_image_task,
+                file_data_b64,
+                file_info['name'],
+                file_info['type'],
+                batch_id,
+                job_id=f"{batch_id}:{i}",
+                ttl=3600,  # 1 hour timeout
+                result_ttl=results_ttl
+            )
+            
+            # Free memory
+            del file_info['data']
+        
+        # Send user to status page
+        flash(f'Processing batch of {total_files} files. You can check the status or continue using the site.', 'info')
+        return redirect(url_for('batch_status', batch_id=batch_id))
     
     return render_template('upload.html')
+
+@app.route('/batch-status/<batch_id>')
+def batch_status(batch_id):
+    # Get batch information from Redis
+    total = redis_conn.get(f"batch:{batch_id}:total")
+    progress = redis_conn.get(f"batch:{batch_id}:progress")
+    status = redis_conn.get(f"batch:{batch_id}:status")
+    
+    if not total:
+        flash('Batch not found or has expired', 'warning')
+        return redirect(url_for('upload'))
+    
+    total = int(total)
+    progress = int(progress or 0)
+    status = status.decode('utf-8') if status else 'unknown'
+    
+    percent_complete = (progress / total) * 100 if total > 0 else 0
+    
+    return render_template(
+        'batch_status.html',
+        batch_id=batch_id,
+        total=total,
+        progress=progress,
+        percent_complete=percent_complete,
+        status=status
+    )
+
+@app.route('/api/batch-progress/<batch_id>')
+def batch_progress_api(batch_id):
+    """API endpoint to check batch progress via AJAX"""
+    total = redis_conn.get(f"batch:{batch_id}:total")
+    progress = redis_conn.get(f"batch:{batch_id}:progress")
+    status = redis_conn.get(f"batch:{batch_id}:status")
+    
+    if not total:
+        return jsonify({
+            'error': 'Batch not found or expired'
+        }), 404
+    
+    total = int(total)
+    progress = int(progress or 0)
+    status = status.decode('utf-8') if status else 'processing'
+    
+    return jsonify({
+        'batch_id': batch_id,
+        'total': total,
+        'progress': progress,
+        'percent_complete': (progress / total) * 100 if total > 0 else 0,
+        'status': status,
+        'is_complete': status == 'complete'
+    })
 
 def process_image(file_data, filename, content_type, timeout=None):
     """
     Upload an image directly to the S3 temp bucket in its original format.
+    Note: This is used for single image uploads or testing, batch uploads
+    use the process_image_task function above.
     
     Args:
         file_data: The file data as bytes
