@@ -58,8 +58,8 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(days=30),  # 30 days
 )
 
-# Dictionary to store upload status
-upload_status = {}
+# Remove the in-memory upload_status dictionary
+# upload_status = {}
 
 # AWS Configuration
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -172,88 +172,85 @@ def upload():
             task = process_image.delay(file_data, filename, content_type)
             task_ids.append(task.id)
             
-            # Initialize status for this task
-            upload_status[task.id] = {
-                'status': 'PENDING',
-                'filename': filename,
-                'message': 'Task queued'
-            }
+            # Remove initialization of status for this task in the dictionary
+            # upload_status[task.id] = {
+            #     'status': 'PENDING',
+            #     'filename': filename,
+            #     'message': 'Task queued'
+            # }
         
         # Store task IDs in session for status checking
         session['upload_task_ids'] = task_ids
         
         flash(f'{len(files)} files queued for processing. You can check the status below.', 'info')
-        return redirect(url_for('upload_status'))
+        # Redirect directly to the status route
+        return redirect(url_for('upload_status_route')) # Renamed for clarity
         
     return render_template('upload.html')
 
+# Renamed route function for clarity
 @app.route('/upload-status')
+@login_required # Ensure user is logged in to see status
 def upload_status_route():
+    # Fetch task IDs from session
     task_ids = session.get('upload_task_ids', [])
-    tasks = []
-    
-    for task_id in task_ids:
-        if task_id in upload_status:
-            task_info = upload_status[task_id]
-            
-            # If task is still pending, check its status
-            if task_info['status'] == 'PENDING':
-                task = celery.AsyncResult(task_id)
-                
-                if task.ready():
-                    result = task.result
-                    if result['status'] == 'success':
-                        task_info['status'] = 'SUCCESS'
-                        task_info['message'] = result['message']
-                    else:
-                        task_info['status'] = 'FAILED'
-                        task_info['message'] = result['message']
-                elif task.state == 'PROCESSING':
-                    task_info['status'] = 'PROCESSING'
-                    task_info['message'] = task.info.get('status', 'Processing')
-            
-            tasks.append({
-                'id': task_id,
-                'filename': task_info['filename'],
-                'status': task_info['status'],
-                'message': task_info['message']
-            })
-    
-    return render_template('upload_status.html', tasks=tasks)
+    # Render the template; status will be loaded via JavaScript
+    return render_template('upload_status.html', tasks=[]) # Pass empty list initially
 
 @app.route('/check-upload-status')
+@login_required # Ensure user is logged in to check status
 def check_upload_status():
     task_ids = session.get('upload_task_ids', [])
-    tasks = []
+    tasks_status = []
     
     for task_id in task_ids:
-        if task_id in upload_status:
-            task_info = upload_status[task_id]
+        task = celery.AsyncResult(task_id)
+        status = task.state
+        info = task.info # Contains metadata like filename and messages
+        filename = "Unknown" # Default filename
+        message = "Fetching status..."
+        
+        if isinstance(info, dict):
+            filename = info.get('filename', filename) # Get filename if available
+            message = info.get('message', 'Processing...') # Get message if available
+
+        if status == 'PENDING':
+            message = 'Task queued, waiting to start.'
+        elif status == 'STARTED':
+            message = 'Task started by worker.'
+        elif status == 'PROCESSING':
+            # Use the message set by the task itself if available
+            message = info.get('status', 'Processing...') 
+        elif status == 'SUCCESS':
+            result = task.result
+            if isinstance(result, dict):
+                message = result.get('message', 'Task completed successfully.')
+                filename = result.get('filename', filename) # Update filename from result if needed
+            else:
+                message = 'Task completed successfully.'
+        elif status == 'FAILURE':
+            # Attempt to get a specific error message
+            try:
+                result = task.result
+                if isinstance(result, dict):
+                     message = f"Task failed: {result.get('message', 'Unknown error')}"
+                else:
+                    # Try to get traceback or error details
+                    message = f"Task failed: {str(task.result)}"
+            except Exception as e:
+                 message = f"Task failed: Could not retrieve error details ({e})"
+            status = 'FAILED' # Standardize the status string
+        elif status == 'RETRY':
+            message = 'Task is being retried.'
             
-            # If task is still pending, check its status
-            if task_info['status'] == 'PENDING':
-                task = celery.AsyncResult(task_id)
-                
-                if task.ready():
-                    result = task.result
-                    if result['status'] == 'success':
-                        task_info['status'] = 'SUCCESS'
-                        task_info['message'] = result['message']
-                    else:
-                        task_info['status'] = 'FAILED'
-                        task_info['message'] = result['message']
-                elif task.state == 'PROCESSING':
-                    task_info['status'] = 'PROCESSING'
-                    task_info['message'] = task.info.get('status', 'Processing')
-            
-            tasks.append({
-                'id': task_id,
-                'filename': task_info['filename'],
-                'status': task_info['status'],
-                'message': task_info['message']
-            })
+        tasks_status.append({
+            'id': task_id,
+            'filename': filename, # Use the filename from task info
+            'status': status, # Use the direct Celery status
+            'message': message
+        })
     
-    return jsonify({'tasks': tasks})
+    return jsonify({'tasks': tasks_status})
 
 def get_random_image_key(bucket_name):
     """Gets a random object key from the specified bucket."""
