@@ -1,4 +1,7 @@
 git add .
 git commit -m "insert_text"
 git push heroku master
+
 heroku ps:restart worker
+
+heroku restart
