@@ -22,13 +22,16 @@ app = Flask(__name__, template_folder=template_dir)
 # Generate a consistent secret key
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 
-# Session configuration
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)  # Set to 24 hours
-app.config['SESSION_COOKIE_SECURE'] = True  # Set to True for HTTPS
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_REFRESH_EACH_REQUEST'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Add SameSite attribute
-app.config['SESSION_COOKIE_NAME'] = 'image_interface_session'  # Custom cookie name
+# Session configuration - simplified for better persistence
+app.config.update(
+    PERMANENT_SESSION_LIFETIME=timedelta(days=7),  # Extend to 7 days for better persistence
+    SESSION_COOKIE_SECURE=True,  # Set to True for HTTPS
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_REFRESH_EACH_REQUEST=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_NAME='image_interface_session',
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024  # 16MB max file size
+)
 
 # Dictionary to store upload status
 upload_status = {}
@@ -36,33 +39,9 @@ upload_status = {}
 # Add a before_request handler to refresh the session on each request
 @app.before_request
 def before_request():
-    # Make the session permanent for all requests
-    session.permanent = True
-    
-    # If user is logged in, check if the session is still valid
+    session.permanent = True  # Make the session permanent
     if session.get('logged_in'):
-        # Get the login time
-        login_time_str = session.get('login_time')
-        if login_time_str:
-            try:
-                login_time = datetime.fromisoformat(login_time_str)
-                current_time = datetime.now()
-                
-                # Check if the session is still valid (within 24 hours)
-                if (current_time - login_time) < timedelta(days=1):
-                    # Update last activity time
-                    session['last_activity'] = current_time.isoformat()
-                    app.logger.debug(f"Session valid, last activity updated: {session['last_activity']}")
-                else:
-                    # Session expired, clear it
-                    app.logger.info(f"Session expired after 24 hours, clearing session")
-                    session.clear()
-                    flash('Your session has expired. Please log in again.', 'warning')
-                    return redirect(url_for('login'))
-            except (ValueError, TypeError) as e:
-                app.logger.error(f"Error parsing login time: {e}")
-                session.clear()
-                return redirect(url_for('login'))
+        session.modified = True  # Mark the session as modified to ensure it's saved
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -108,15 +87,16 @@ def login():
             # Clear any existing session data
             session.clear()
             
-            # Set up a new session
+            # Set up a new session with a more robust approach
             session.permanent = True  # Make the session permanent
             session['logged_in'] = True
             session['login_time'] = datetime.now().isoformat()
             session['user_id'] = str(uuid.uuid4())  # Add a unique user ID
             session['last_activity'] = datetime.now().isoformat()
             
-            # Log successful login
+            # Log successful login with more details
             app.logger.info(f"User logged in successfully at {session['login_time']}")
+            app.logger.info(f"Session ID: {session.sid if hasattr(session, 'sid') else 'No session ID'}")
             
             flash('Login successful!', 'success')
             
@@ -125,10 +105,13 @@ def login():
             
             # If the next URL is the review page, redirect there
             if next_url and 'review' in next_url:
+                app.logger.info(f"Redirecting to review page after login")
                 return redirect(url_for('review_image_route'))
             elif next_url:
+                app.logger.info(f"Redirecting to {next_url} after login")
                 return redirect(next_url)
             else:
+                app.logger.info(f"Redirecting to browse_buckets after login")
                 return redirect(url_for('browse_buckets'))
         else:
             flash('Invalid password. Please try again.', 'error')
