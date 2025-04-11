@@ -115,7 +115,88 @@ except Exception as e:
 def index():
     return redirect(url_for('upload'))
 
-def process_image(file_data, filename, content_type):
+@app.route('/upload', methods=['GET', 'POST'])
+def upload():
+    if request.method == 'POST':
+        if 'files' not in request.files:
+            flash('No files part', 'warning')
+            return redirect(request.url)
+            
+        files = request.files.getlist('files')
+        if not files or all(file.filename == '' for file in files):
+            flash('No selected files', 'warning')
+            return redirect(request.url)
+        
+        # Limit number of files processed at once to prevent crashes
+        max_files_per_batch = 10
+        
+        # Process files directly, but with better handling
+        successful_uploads = []
+        failed_uploads = []
+        skipped_files = []
+        
+        # Calculate total number of files
+        total_files = len(files)
+        
+        # Check if we need to limit the batch
+        if total_files > max_files_per_batch:
+            files_to_process = files[:max_files_per_batch]
+            skipped_files = [f.filename for f in files[max_files_per_batch:]]
+            flash(f'Processing the first {max_files_per_batch} files. The remaining {total_files - max_files_per_batch} files will be skipped.', 'warning')
+        else:
+            files_to_process = files
+        
+        # Set a larger timeout for requests to external services
+        processing_timeout = 120  # 2 minutes
+        
+        for file in files_to_process:
+            try:
+                # Apply size limit (5MB)
+                if file.content_length and file.content_length > 5 * 1024 * 1024:
+                    failed_uploads.append((file.filename, "File exceeds 5MB size limit"))
+                    continue
+                
+                # Read file data
+                file_data = file.read()
+                
+                # Skip empty files
+                if not file_data:
+                    failed_uploads.append((file.filename, "Empty file"))
+                    continue
+                    
+                filename = secure_filename(file.filename)  # Sanitize filename
+                content_type = file.content_type
+                
+                # Process the image with increased timeout
+                result = process_image(file_data, filename, content_type, timeout=processing_timeout)
+                
+                if result['status'] == 'success':
+                    successful_uploads.append(filename)
+                else:
+                    failed_uploads.append((filename, result['message']))
+            except Exception as e:
+                app.logger.error(f"Unexpected error during file upload processing: {str(e)}")
+                failed_uploads.append((file.filename, f"Unexpected error: {str(e)}"))
+        
+        # Flash messages about the results
+        if successful_uploads:
+            flash(f'Successfully processed {len(successful_uploads)} files.', 'success')
+        
+        if failed_uploads:
+            for filename, error in failed_uploads[:5]:  # Limit to first 5 errors to avoid excessive messages
+                flash(f'Failed to process {filename}: {error}', 'error')
+            
+            if len(failed_uploads) > 5:
+                flash(f'... and {len(failed_uploads) - 5} more files failed.', 'error')
+        
+        if skipped_files:
+            flash(f'Skipped {len(skipped_files)} files due to batch size limit. Please upload them separately.', 'warning')
+        
+        return redirect(url_for('upload'))
+        
+    return render_template('upload.html')
+
+def process_image(file_data, filename, content_type, timeout=60):
     """
     Process an image using Bytescale API and upload to S3.
     
@@ -123,12 +204,43 @@ def process_image(file_data, filename, content_type):
         file_data: The file data as bytes
         filename: The original filename
         content_type: The content type of the file
+        timeout: Timeout for external API requests
         
     Returns:
         dict: Status information about the processing
     """
     try:
         app.logger.info(f"Processing image: {filename}")
+        
+        # Validate file size again (5MB limit)
+        if len(file_data) > 5 * 1024 * 1024:
+            return {
+                'status': 'error',
+                'message': 'File size exceeds the 5MB limit',
+                'filename': filename
+            }
+        
+        # Validate file type by checking first few bytes (magic numbers)
+        valid_image_signatures = {
+            b'\xff\xd8\xff': 'JPEG',
+            b'\x89\x50\x4e\x47': 'PNG',
+            b'\x47\x49\x46': 'GIF',
+            b'\x42\x4d': 'BMP',
+            b'\x52\x49\x46\x46': 'WEBP'
+        }
+        
+        is_valid_image = False
+        for signature in valid_image_signatures:
+            if file_data.startswith(signature):
+                is_valid_image = True
+                break
+                
+        if not is_valid_image:
+            return {
+                'status': 'error',
+                'message': 'Invalid image format. Only JPEG, PNG, GIF, BMP and WEBP are supported.',
+                'filename': filename
+            }
         
         headers = {
             'Authorization': f'Bearer {BYTESCALE_API_KEY}'
@@ -137,9 +249,9 @@ def process_image(file_data, filename, content_type):
             'file': (filename, file_data, content_type)
         }
         
-        # Upload to Bytescale
+        # Upload to Bytescale with configurable timeout
         app.logger.info(f"Uploading {filename} to Bytescale")
-        upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data, timeout=60)
+        upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data, timeout=timeout)
         upload_response.raise_for_status()
         
         json_response = upload_response.json()
@@ -155,19 +267,28 @@ def process_image(file_data, filename, content_type):
         app.logger.info(f"Downloading processed image for {filename}")
         processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
         
-        # Download the processed image
-        download_response = requests.get(processed_url, stream=True, timeout=60)
+        # Download the processed image with configurable timeout
+        download_response = requests.get(processed_url, stream=True, timeout=timeout)
         download_response.raise_for_status()
         
-        # Upload to S3
+        # Upload to S3 with progress tracking
         app.logger.info(f"Uploading {filename} to S3")
         upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
+        
+        # Additional S3 upload configuration with retry
+        s3_config = boto3.s3.transfer.TransferConfig(
+            multipart_threshold=5 * 1024 * 1024,  # 5MB
+            max_concurrency=10,
+            multipart_chunksize=5 * 1024 * 1024,  # 5MB
+            use_threads=True
+        )
         
         s3_client.upload_fileobj(
             download_response.raw,
             S3_UPLOAD_BUCKET,
             upload_path,
-            ExtraArgs={'ContentType': 'image/webp'}
+            ExtraArgs={'ContentType': 'image/webp'},
+            Config=s3_config
         )
         
         return {
@@ -205,48 +326,6 @@ def process_image(file_data, filename, content_type):
             'message': f'Unexpected error: {str(e)}',
             'filename': filename
         }
-
-@app.route('/upload', methods=['GET', 'POST'])
-def upload():
-    if request.method == 'POST':
-        if 'files' not in request.files:
-            flash('No files part', 'warning')
-            return redirect(request.url)
-            
-        files = request.files.getlist('files')
-        if not files or all(file.filename == '' for file in files):
-            flash('No selected files', 'warning')
-            return redirect(request.url)
-        
-        # Process files directly (no Celery)
-        successful_uploads = []
-        failed_uploads = []
-        
-        for file in files:
-            # Read file data
-            file_data = file.read()
-            filename = file.filename
-            content_type = file.content_type
-            
-            # Process the image directly
-            result = process_image(file_data, filename, content_type)
-            
-            if result['status'] == 'success':
-                successful_uploads.append(filename)
-            else:
-                failed_uploads.append((filename, result['message']))
-        
-        # Flash messages about the results
-        if successful_uploads:
-            flash(f'Successfully processed {len(successful_uploads)} files: {", ".join(successful_uploads)}', 'success')
-        
-        if failed_uploads:
-            for filename, error in failed_uploads:
-                flash(f'Failed to process {filename}: {error}', 'error')
-        
-        return redirect(url_for('upload'))
-        
-    return render_template('upload.html')
 
 def get_random_image_key(bucket_name):
     """Gets a random object key from the specified bucket."""

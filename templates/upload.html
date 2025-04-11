@@ -50,6 +50,41 @@
     font-weight: bold;
     margin-top: 0.5rem;
 }
+.file-type-warning {
+    color: #dc3545;
+    font-size: 0.9rem;
+    margin-top: 0.25rem;
+}
+.upload-stats {
+    margin-top: 1rem;
+    padding: 0.5rem;
+    border-radius: 4px;
+    background-color: #f8f9fa;
+}
+.batch-info {
+    background-color: #e9ecef;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+    border-left: 4px solid #0d6efd;
+}
+.loading-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.8);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+}
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
 </style>
 {% endblock %}
 
@@ -68,16 +103,20 @@
       {% endif %}
     {% endwith %}
 
+    <div class="batch-info" id="batchInfo" style="display: none;">
+        <strong>Batch Upload:</strong> <span id="batchMessage"></span>
+    </div>
+
     <form method="post" enctype="multipart/form-data" id="uploadForm">
         <!-- Upload button at the top -->
         <div class="upload-button-container">
             <button type="button" class="btn btn-primary" id="fixedUploadButton" disabled>
-                Upload Files
+                <i class="bi bi-cloud-upload"></i> Upload Files
             </button>
         </div>
 
         <div class="upload-area" id="dropZone">
-            <input type="file" name="files" id="fileInput" multiple accept="image/*" style="display: none;">
+            <input type="file" name="files" id="fileInput" multiple accept="image/jpeg,image/png,image/gif,image/webp" style="display: none;">
             <div class="mb-3">
                 <i class="bi bi-cloud-upload" style="font-size: 3rem;"></i>
                 <h4>Drag & Drop files here</h4>
@@ -86,17 +125,41 @@
                     Select Files
                 </button>
             </div>
-            <p class="text-muted">Supported formats: JPG, PNG, GIF</p>
+            <p class="text-muted">Supported formats: JPG, PNG, GIF, WEBP</p>
             <p class="text-muted">Maximum file size: 5MB per file</p>
+            <p class="text-muted">Recommended maximum: 10 files per upload</p>
         </div>
 
         <div id="filePreview" class="file-preview"></div>
+
+        <div class="upload-stats" id="uploadStats" style="display: none;">
+            <div class="row">
+                <div class="col-md-4">
+                    <strong>Valid Files:</strong> <span id="validCount">0</span>
+                </div>
+                <div class="col-md-4">
+                    <strong>Size Limit Exceeded:</strong> <span id="sizeExceededCount">0</span>
+                </div>
+                <div class="col-md-4">
+                    <strong>Invalid Types:</strong> <span id="invalidTypeCount">0</span>
+                </div>
+            </div>
+        </div>
 
         <!-- Hidden submit button -->
         <button type="submit" class="btn btn-primary hidden-button" id="uploadButton" disabled>
             Upload Files
         </button>
     </form>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner-border text-primary mb-3" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <h5>Processing your images...</h5>
+    <p>This may take a moment. Please don't close the page.</p>
 </div>
 {% endblock %}
 
@@ -109,8 +172,19 @@
         const filePreview = document.getElementById('filePreview');
         const uploadButton = document.getElementById('uploadButton');
         const fixedUploadButton = document.getElementById('fixedUploadButton');
+        const uploadForm = document.getElementById('uploadForm');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const uploadStats = document.getElementById('uploadStats');
+        const validCount = document.getElementById('validCount');
+        const sizeExceededCount = document.getElementById('sizeExceededCount');
+        const invalidTypeCount = document.getElementById('invalidTypeCount');
+        const batchInfo = document.getElementById('batchInfo');
+        const batchMessage = document.getElementById('batchMessage');
+        
         let files = [];
         const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+        const MAX_RECOMMENDED_FILES = 10;
+        const VALID_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
 
         // Prevent default drag behaviors
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -135,10 +209,20 @@
 
         // Handle fixed upload button click
         fixedUploadButton.addEventListener('click', function() {
-            document.getElementById('uploadForm').submit();
+            if (files.length > 0) {
+                loadingOverlay.style.display = 'flex';
+                setTimeout(() => {
+                    uploadForm.submit();
+                }, 100); // Small delay to ensure the overlay appears
+            }
         });
 
-        function preventDefaults (e) {
+        // Handle form submission to show loading overlay
+        uploadForm.addEventListener('submit', function() {
+            loadingOverlay.style.display = 'flex';
+        });
+
+        function preventDefaults(e) {
             e.preventDefault();
             e.stopPropagation();
         }
@@ -159,22 +243,60 @@
 
         function handleFiles(e) {
             const newFiles = [...e.target.files];
-            const validFiles = [];
-            const invalidFiles = [];
+            
+            // Statistics
+            let validFiles = [];
+            let sizeExceededFiles = [];
+            let invalidTypeFiles = [];
             
             newFiles.forEach(file => {
-                if (file.size <= MAX_FILE_SIZE) {
-                    validFiles.push(file);
+                // Check file type
+                const isValidType = VALID_MIME_TYPES.includes(file.type);
+                
+                // Check file size
+                const isValidSize = file.size <= MAX_FILE_SIZE;
+                
+                if (!isValidType) {
+                    invalidTypeFiles.push(file);
+                } else if (!isValidSize) {
+                    sizeExceededFiles.push(file);
                 } else {
-                    invalidFiles.push(file);
+                    validFiles.push(file);
                 }
             });
             
-            if (invalidFiles.length > 0) {
-                alert(`The following files exceed the 5MB size limit and will not be uploaded:\n${invalidFiles.map(f => f.name).join('\n')}`);
+            // Update files array with only valid files
+            files = validFiles;
+            
+            // Show batch info if needed
+            if (files.length > MAX_RECOMMENDED_FILES) {
+                batchInfo.style.display = 'block';
+                batchMessage.textContent = `You've selected ${files.length} files. Only the first ${MAX_RECOMMENDED_FILES} will be processed in this batch.`;
+            } else {
+                batchInfo.style.display = 'none';
             }
             
-            files = validFiles;
+            // Update statistics
+            validCount.textContent = validFiles.length;
+            sizeExceededCount.textContent = sizeExceededFiles.length;
+            invalidTypeCount.textContent = invalidTypeFiles.length;
+            uploadStats.style.display = 'block';
+            
+            // Show warnings for invalid files
+            if (sizeExceededFiles.length > 0 || invalidTypeFiles.length > 0) {
+                let warningMessage = '';
+                
+                if (sizeExceededFiles.length > 0) {
+                    warningMessage += `${sizeExceededFiles.length} files exceed the 5MB size limit and will not be uploaded.\n`;
+                }
+                
+                if (invalidTypeFiles.length > 0) {
+                    warningMessage += `${invalidTypeFiles.length} files have unsupported formats and will not be uploaded.`;
+                }
+                
+                alert(warningMessage);
+            }
+            
             updateFilePreview();
         }
 
@@ -194,26 +316,67 @@
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 
+                // Create file icon based on type
+                const fileIcon = document.createElement('i');
+                fileIcon.className = 'bi bi-file-earmark-image me-2';
+                
                 const fileName = document.createElement('span');
                 fileName.textContent = file.name;
                 
                 const fileSize = document.createElement('span');
                 fileSize.className = 'ms-2 text-muted';
-                fileSize.textContent = `(${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+                fileSize.textContent = `(${formatFileSize(file.size)})`;
                 
                 const removeButton = document.createElement('span');
                 removeButton.className = 'remove-file';
                 removeButton.innerHTML = '&times;';
-                removeButton.onclick = function() {
+                removeButton.onclick = function(e) {
+                    e.stopPropagation();
                     files.splice(index, 1);
                     updateFilePreview();
+                    
+                    // Update batch info
+                    if (files.length > MAX_RECOMMENDED_FILES) {
+                        batchInfo.style.display = 'block';
+                        batchMessage.textContent = `You've selected ${files.length} files. Only the first ${MAX_RECOMMENDED_FILES} will be processed in this batch.`;
+                    } else {
+                        batchInfo.style.display = 'none';
+                    }
+                    
+                    // Update statistics
+                    validCount.textContent = files.length;
                 };
                 
+                fileItem.appendChild(fileIcon);
                 fileItem.appendChild(fileName);
                 fileItem.appendChild(fileSize);
                 fileItem.appendChild(removeButton);
                 filePreview.appendChild(fileItem);
+                
+                // Add preview thumbnail for images (optional)
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        img.className = 'img-thumbnail mt-2';
+                        img.style.maxHeight = '100px';
+                        img.style.maxWidth = '100px';
+                        fileItem.appendChild(img);
+                    };
+                    reader.readAsDataURL(file);
+                }
             });
+        }
+        
+        function formatFileSize(bytes) {
+            if (bytes < 1024) {
+                return bytes + ' B';
+            } else if (bytes < 1024 * 1024) {
+                return (bytes / 1024).toFixed(1) + ' KB';
+            } else {
+                return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+            }
         }
     });
 </script>
