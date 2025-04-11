@@ -1,2 +1,3 @@
 web: gunicorn app:app --log-file=- --timeout 300
-worker: python image_processor.py
+image_worker: python image_processor.py
+validation_worker: python filename_validator.py
