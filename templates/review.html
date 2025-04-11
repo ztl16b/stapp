@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 
+{% block title %}Review Images - Image Interface{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
     <h1 class="mt-5">Review Image</h1>
@@ -45,10 +47,13 @@
 
 {% block extra_js %}
 <script>
-    // Print image_key to console for debugging
+    // Print session information to console for debugging
     document.addEventListener('DOMContentLoaded', function() {
         const imageKey = "{{ image_key }}";
         console.log("Current image key:", imageKey);
+        
+        // Add a timestamp to help with debugging
+        console.log("Page loaded at:", new Date().toISOString());
     });
 </script>
 {% endblock %} 

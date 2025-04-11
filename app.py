@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 import ssl
 from celery import Celery
 import uuid
+import time
 
 load_dotenv()
 
@@ -22,7 +23,7 @@ app = Flask(__name__, template_folder=template_dir)
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 
 # Session configuration
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=365)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)  # Set to 24 hours
 app.config['SESSION_COOKIE_SECURE'] = True  # Set to True for HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
@@ -38,9 +39,30 @@ def before_request():
     # Make the session permanent for all requests
     session.permanent = True
     
-    # If user is logged in, refresh the login time
+    # If user is logged in, check if the session is still valid
     if session.get('logged_in'):
-        session['login_time'] = datetime.now().isoformat()
+        # Get the login time
+        login_time_str = session.get('login_time')
+        if login_time_str:
+            try:
+                login_time = datetime.fromisoformat(login_time_str)
+                current_time = datetime.now()
+                
+                # Check if the session is still valid (within 24 hours)
+                if (current_time - login_time) < timedelta(days=1):
+                    # Update last activity time
+                    session['last_activity'] = current_time.isoformat()
+                    app.logger.debug(f"Session valid, last activity updated: {session['last_activity']}")
+                else:
+                    # Session expired, clear it
+                    app.logger.info(f"Session expired after 24 hours, clearing session")
+                    session.clear()
+                    flash('Your session has expired. Please log in again.', 'warning')
+                    return redirect(url_for('login'))
+            except (ValueError, TypeError) as e:
+                app.logger.error(f"Error parsing login time: {e}")
+                session.clear()
+                return redirect(url_for('login'))
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -65,9 +87,6 @@ def login_required(f):
             session['next'] = request.url
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('login'))
-        
-        # Update last activity time
-        session['last_activity'] = datetime.now().isoformat()
         
         # Log access for debugging
         app.logger.debug(f"User {session.get('user_id', 'unknown')} accessed {request.url}")
@@ -103,7 +122,14 @@ def login():
             
             # Redirect to the stored URL or default to browse_buckets
             next_url = session.pop('next', None)
-            return redirect(next_url or url_for('browse_buckets'))
+            
+            # If the next URL is the review page, redirect there
+            if next_url and 'review' in next_url:
+                return redirect(url_for('review_image_route'))
+            elif next_url:
+                return redirect(next_url)
+            else:
+                return redirect(url_for('browse_buckets'))
         else:
             flash('Invalid password. Please try again.', 'error')
     return render_template('login.html')
@@ -334,6 +360,10 @@ def get_presigned_url(bucket_name, object_key, expiration=3600):
 @app.route('/review')
 @login_required
 def review_image_route():
+    # Log session information for debugging
+    app.logger.info(f"Review page accessed by user {session.get('user_id', 'unknown')}")
+    app.logger.info(f"Session data: logged_in={session.get('logged_in')}, login_time={session.get('login_time')}")
+    
     image_key = get_random_image_key(S3_UPLOAD_BUCKET)
     image_url = None
     if image_key:
