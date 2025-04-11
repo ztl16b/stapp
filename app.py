@@ -285,11 +285,34 @@ def get_random_image_key(bucket_name):
                     if obj['Key'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
                 ]
             else:
-                # For upload bucket, keep original webp filter
-                image_objects = [
-                    obj for obj in all_objects
-                    if obj['Key'].lower().endswith(('.webp'))
-                ]
+                # For upload bucket, keep only webp files and make sure they match the expected format
+                # Format should be numeric_id.numeric_id.webp
+                image_objects = []
+                for obj in all_objects:
+                    filename = obj['Key'].split('/')[-1]
+                    # Skip files that don't end with .webp
+                    if not filename.lower().endswith('.webp'):
+                        continue
+                        
+                    # Skip files that are marked as duplicates (ending with _dupe.webp)
+                    if "_dupe." in filename:
+                        continue
+                        
+                    # Skip files that don't match numeric_id.numeric_id.webp format
+                    base_name = os.path.splitext(filename)[0]  # Remove .webp
+                    parts = base_name.split('.')
+                    
+                    # Must have one dot separating two parts
+                    if len(parts) != 2:
+                        continue
+                        
+                    # Both parts must be numeric
+                    try:
+                        int(parts[0])
+                        int(parts[1])
+                        image_objects.append(obj)
+                    except ValueError:
+                        continue
                 
             if image_objects:
                 return random.choice(image_objects)['Key']

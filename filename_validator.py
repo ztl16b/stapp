@@ -180,14 +180,27 @@ def refresh_good_images_cache():
         
         # Fill cache with good bucket files
         count = 0
+        # Dictionary to store normalized base filenames (without extension)
+        good_files = set()
+        
         for page in paginator.paginate(Bucket=S3_GOOD_BUCKET, Prefix=good_prefix):
             if 'Contents' in page:
                 for item in page['Contents']:
                     filename = item['Key'].split('/')[-1]
                     if filename.lower().endswith('.webp'):
                         # Extract base name without extension and folder
+                        base_name = os.path.splitext(filename)[0]
+                        
+                        # Cache the full filename for exact matching
                         redis_key = f"{REDIS_FILENAME_PREFIX}{filename}"
                         redis_client.set(redis_key, item['Key'], ex=REDIS_CACHE_EXPIRY)
+                        
+                        # Also cache just the IDs part for base comparison
+                        if '.' in base_name:  # If it has performer.venue format
+                            good_files.add(base_name)
+                            cache_key = f"{REDIS_FILENAME_PREFIX}base:{base_name}"
+                            redis_client.set(cache_key, "1", ex=REDIS_CACHE_EXPIRY)
+                        
                         count += 1
         
         write_debug_info(f"Refreshed Redis cache with {count} images from good bucket")
@@ -199,7 +212,8 @@ def refresh_good_images_cache():
 
 def is_duplicate(filename):
     """
-    Check if a filename already exists in the good bucket
+    Check if a filename already exists in the good bucket.
+    Checks both exact filename match and ID-based match.
     
     Returns True if it's a duplicate, False otherwise
     """
@@ -207,8 +221,21 @@ def is_duplicate(filename):
         return False
         
     try:
+        # First check exact filename match
         redis_key = f"{REDIS_FILENAME_PREFIX}{filename}"
-        return redis_client.exists(redis_key) == 1
+        if redis_client.exists(redis_key) == 1:
+            write_debug_info(f"Found exact duplicate: {filename}")
+            return True
+            
+        # Then check ID-based match by extracting base name (without extension)
+        base_name = os.path.splitext(filename)[0]
+        if '.' in base_name:  # If it has performer.venue format
+            base_key = f"{REDIS_FILENAME_PREFIX}base:{base_name}"
+            if redis_client.exists(base_key) == 1:
+                write_debug_info(f"Found ID-based duplicate: {base_name}")
+                return True
+                
+        return False
     except Exception as e:
         write_debug_info(f"Error checking Redis for duplicate: {str(e)}")
         return False
@@ -216,10 +243,17 @@ def is_duplicate(filename):
 def move_to_issue_bucket(object_key, reason="improperly formatted"):
     """
     Move a file from the Upload bucket to the Issue bucket.
+    If it's a duplicate, add "_dupe" to the filename.
     """
     try:
         # Keep the same filename in the issue bucket
         filename = object_key.split('/')[-1]
+        
+        # If it's a duplicate, add "_dupe" to the filename
+        if reason == "duplicate":
+            name_part, ext_part = os.path.splitext(filename)
+            filename = f"{name_part}_dupe{ext_part}"
+        
         dest_key = f"issue_files/{filename}"
         
         write_debug_info(f"Moving {reason} file {object_key} to issue bucket as {dest_key}")
@@ -239,7 +273,7 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
             Key=object_key
         )
         
-        write_debug_info(f"Successfully moved {object_key} to issue bucket")
+        write_debug_info(f"Successfully moved {object_key} to issue bucket as {dest_key}")
         return True
     except Exception as e:
         error_msg = f"Error moving {object_key} to issue bucket: {str(e)}"
