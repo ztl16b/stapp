@@ -214,7 +214,11 @@ def process_image(s3_key):
             
             # Upload processed image to final destination
             base_filename = os.path.splitext(filename)[0]
-            upload_path = f"temp_performer_at_venue_images/{base_filename}.webp"
+            upload_path = f"temp_performer_at_venue_images/{filename}"
+            
+            # Change the extension to webp for the processed file
+            if not upload_path.lower().endswith('.webp'):
+                upload_path = os.path.splitext(upload_path)[0] + '.webp'
             
             write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
             s3_client.upload_fileobj(
@@ -289,10 +293,10 @@ def process_next_batch():
 def run_scheduler():
     """Run the scheduler to process images periodically"""
     print("Starting image processing service")
-    write_debug_info("Scheduler started - will run every minute")
+    write_debug_info("Scheduler started - will run every 30 seconds")
     
-    # Schedule the processing job to run every minute
-    schedule.every(1).minutes.do(process_next_batch)
+    # Schedule the processing job to run every 30 seconds
+    schedule.every(30).seconds.do(process_next_batch)
     
     # Run once immediately on startup
     try:

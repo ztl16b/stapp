@@ -336,8 +336,6 @@ def batch_progress_api(batch_id):
 def process_image(file_data, filename, content_type, timeout=None):
     """
     Upload an image directly to the S3 temp bucket in its original format.
-    Note: This is used for single image uploads or testing, batch uploads
-    use the process_image_task function above.
     
     Args:
         file_data: The file data as bytes
@@ -360,10 +358,8 @@ def process_image(file_data, filename, content_type, timeout=None):
                 'filename': filename
             }
         
-        # Generate unique upload path to prevent overwrites
-        timestamp = int(time.time() * 1000)  # millisecond precision
-        random_suffix = str(uuid.uuid4())[:8]
-        upload_path = f"tmp_upload/{timestamp}_{random_suffix}_{filename}"
+        # Use original filename directly without adding timestamp or UUID
+        upload_path = f"tmp_upload/{filename}"
         
         # Upload to S3 using BytesIO for memory efficiency
         file_obj = BytesIO(file_data)
