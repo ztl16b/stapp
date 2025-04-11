@@ -5,7 +5,6 @@ import boto3
 import logging
 import traceback
 import redis
-import hashlib
 from datetime import datetime
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
@@ -48,22 +47,44 @@ try:
     redis_client = redis.from_url(REDIS_URL)
     # Test connection
     redis_client.ping()
-    print("Connected to Redis successfully")
+    logger.info("Connected to Redis successfully")
 except Exception as e:
-    print(f"Warning: Redis connection failed: {e}")
+    logger.warning(f"Warning: Redis connection failed: {e}")
     redis_client = None
 
 # Print configuration for debugging
-print(f"Starting filename validator with configuration:")
-print(f"AWS_REGION: {AWS_REGION}")
-print(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
-print(f"S3_ISSUE_BUCKET: {S3_ISSUE_BUCKET}")
-print(f"S3_GOOD_BUCKET: {S3_GOOD_BUCKET}")
-print(f"REDIS_URL: {REDIS_URL}")
-print(f"Redis Connected: {redis_client is not None}")
+logger.info(f"Starting filename validator with configuration:")
+logger.info(f"AWS_REGION: {AWS_REGION}")
+logger.info(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
+logger.info(f"S3_ISSUE_BUCKET: {S3_ISSUE_BUCKET}")
+logger.info(f"S3_GOOD_BUCKET: {S3_GOOD_BUCKET}")
+logger.info(f"REDIS_URL: {REDIS_URL}")
+logger.info(f"Redis Connected: {redis_client is not None}")
+
+# Initialize S3 client
+try:
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_REGION
+    )
+    
+    # Make sure required prefixes/directories exist
+    if S3_ISSUE_BUCKET:
+        s3_client.put_object(
+            Bucket=S3_ISSUE_BUCKET,
+            Key="issue_files/.placeholder",
+            Body="Placeholder to ensure directory exists"
+        )
+        logger.info(f"Ensured issue_files/ prefix exists in {S3_ISSUE_BUCKET}")
+    
+except Exception as e:
+    logger.error(f"Failed to initialize S3 client: {e}")
+    traceback.print_exc()
 
 def write_debug_info(message):
-    """Write debug information to S3 bucket"""
+    """Write debug information to S3 bucket and log"""
     try:
         timestamp = datetime.now().isoformat()
         debug_message = f"[{timestamp}] {message}\n"
@@ -84,8 +105,11 @@ def write_debug_info(message):
             Key=DEBUG_FILE,
             Body=existing_content + debug_message
         )
+        
+        # Also log the message
+        logger.info(message)
     except Exception as e:
-        print(f"Failed to write debug info: {e}")
+        logger.error(f"Failed to write debug info: {e}")
 
 def update_last_run():
     """Update the last run timestamp file"""
@@ -97,36 +121,7 @@ def update_last_run():
             Body=f"Last run: {timestamp}"
         )
     except Exception as e:
-        print(f"Failed to update last run timestamp: {e}")
-
-try:
-    # Initialize S3 client
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION
-    )
-    
-    # Make sure required prefixes/directories exist
-    try:
-        # Create an empty object to ensure the issue_files/ prefix exists
-        if S3_ISSUE_BUCKET:
-            s3_client.put_object(
-                Bucket=S3_ISSUE_BUCKET,
-                Key="issue_files/.placeholder",
-                Body="Placeholder to ensure directory exists"
-            )
-            print(f"Ensured issue_files/ prefix exists in {S3_ISSUE_BUCKET}")
-    except Exception as e:
-        print(f"Warning: Could not initialize issue_files/ prefix: {e}")
-    
-    # Write initial startup message
-    write_debug_info("Filename validator started")
-    
-except Exception as e:
-    print(f"Failed to initialize S3 client: {e}")
-    traceback.print_exc()
+        logger.error(f"Failed to update last run timestamp: {e}")
 
 def check_filename_format(filename):
     """
@@ -156,20 +151,21 @@ def check_filename_format(filename):
 
 def refresh_good_images_cache():
     """
-    Refresh the Redis cache with all images in the good bucket
+    Refresh the Redis cache with all images in the good bucket.
+    This is a critical function for ensuring duplicates are identified.
     """
     if not redis_client:
         write_debug_info("Redis not available, skipping cache refresh")
         return
         
     try:
-        write_debug_info("Refreshing Redis cache with good bucket images")
+        write_debug_info("Starting Redis cache refresh with good bucket images")
         
         # List all objects in the good bucket
         paginator = s3_client.get_paginator('list_objects_v2')
         good_prefix = 'images/performer-at-venue/detail/'
         
-        # Start with a clean cache
+        # Clear existing cache for a fresh start
         pattern = f"{REDIS_FILENAME_PREFIX}*"
         cursor = '0'
         while cursor != 0:
@@ -177,33 +173,43 @@ def refresh_good_images_cache():
             if keys:
                 redis_client.delete(*keys)
             cursor = int(cursor)
+            
+        write_debug_info("Cleared existing Redis cache, now rebuilding")
         
         # Fill cache with good bucket files
         count = 0
-        # Dictionary to store normalized base filenames (without extension)
-        good_files = set()
+        batch_size = 0
         
         for page in paginator.paginate(Bucket=S3_GOOD_BUCKET, Prefix=good_prefix):
             if 'Contents' in page:
+                batch_size = len(page['Contents'])
+                write_debug_info(f"Processing batch of {batch_size} files from good bucket")
+                
+                # Prepare batch operations
+                pipeline = redis_client.pipeline()
+                
                 for item in page['Contents']:
                     filename = item['Key'].split('/')[-1]
                     if filename.lower().endswith('.webp'):
-                        # Extract base name without extension and folder
+                        # Extract base name without extension
                         base_name = os.path.splitext(filename)[0]
                         
                         # Cache the full filename for exact matching
                         redis_key = f"{REDIS_FILENAME_PREFIX}{filename}"
-                        redis_client.set(redis_key, item['Key'], ex=REDIS_CACHE_EXPIRY)
+                        pipeline.set(redis_key, item['Key'], ex=REDIS_CACHE_EXPIRY)
                         
                         # Also cache just the IDs part for base comparison
                         if '.' in base_name:  # If it has performer.venue format
-                            good_files.add(base_name)
                             cache_key = f"{REDIS_FILENAME_PREFIX}base:{base_name}"
-                            redis_client.set(cache_key, "1", ex=REDIS_CACHE_EXPIRY)
+                            pipeline.set(cache_key, "1", ex=REDIS_CACHE_EXPIRY)
                         
                         count += 1
+                
+                # Execute batch redis operations
+                pipeline.execute()
+                write_debug_info(f"Added batch of {batch_size} files to Redis cache")
         
-        write_debug_info(f"Refreshed Redis cache with {count} images from good bucket")
+        write_debug_info(f"Completed Redis cache refresh with {count} images from good bucket")
     except Exception as e:
         error_msg = f"Error refreshing good images cache: {str(e)}"
         write_debug_info(error_msg)
@@ -218,6 +224,7 @@ def is_duplicate(filename):
     Returns True if it's a duplicate, False otherwise
     """
     if not redis_client:
+        logger.warning("Redis not available for duplicate check")
         return False
         
     try:
@@ -237,7 +244,9 @@ def is_duplicate(filename):
                 
         return False
     except Exception as e:
-        write_debug_info(f"Error checking Redis for duplicate: {str(e)}")
+        error_msg = f"Error checking Redis for duplicate: {str(e)}"
+        write_debug_info(error_msg)
+        logger.error(error_msg)
         return False
 
 def move_to_issue_bucket(object_key, reason="improperly formatted"):
@@ -246,7 +255,7 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
     If it's a duplicate, add "_dupe" to the filename.
     """
     try:
-        # Keep the same filename in the issue bucket
+        # Get the filename from the object key
         filename = object_key.split('/')[-1]
         
         # If it's a duplicate, add "_dupe" to the filename
@@ -283,54 +292,59 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
 
 def check_upload_bucket_filenames():
     """
-    Check all files in the Upload bucket for proper naming format and duplicates.
-    Move improperly formatted files to the Issue bucket.
+    Check all files in the Upload bucket:
+    1. First validate filename format
+    2. If valid format, check against Good bucket for duplicates
+    3. Move invalid format or duplicates to Issue bucket
     """
     try:
         write_debug_info("===== Starting new validation cycle =====")
         update_last_run()
         
-        # Step 1: Refresh Redis cache with good bucket images
+        # Step 1: Ensure the good bucket cache is up-to-date
         if redis_client:
             refresh_good_images_cache()
+        else:
+            write_debug_info("WARNING: Redis not available, duplicate detection will not work")
         
         write_debug_info("Checking upload bucket for improperly formatted filenames and duplicates")
         
         # List objects in the upload bucket
         prefix = 'temp_performer_at_venue_images/'
-        response = s3_client.list_objects_v2(
-            Bucket=S3_UPLOAD_BUCKET,
-            Prefix=prefix
-        )
+        paginator = s3_client.get_paginator('list_objects_v2')
         
-        if 'Contents' not in response:
-            write_debug_info("No files found in upload bucket")
-            return
-            
-        webp_files = [obj for obj in response['Contents'] if obj['Key'].lower().endswith('.webp')]
-        issue_count = 0
+        format_issue_count = 0
         duplicate_count = 0
+        total_files = 0
         
-        write_debug_info(f"Found {len(webp_files)} webp files in upload bucket to check")
-        
-        for obj in webp_files:
-            object_key = obj['Key']
-            filename = object_key.split('/')[-1]
-            
-            # First check if the filename matches the required format
-            if not check_filename_format(filename):
-                write_debug_info(f"Found improperly formatted filename: {filename}")
-                if move_to_issue_bucket(object_key, "improperly formatted"):
-                    issue_count += 1
+        for page in paginator.paginate(Bucket=S3_UPLOAD_BUCKET, Prefix=prefix):
+            if 'Contents' not in page:
                 continue
                 
-            # Then check if it's a duplicate
-            if redis_client and is_duplicate(filename):
-                write_debug_info(f"Found duplicate filename: {filename}")
-                if move_to_issue_bucket(object_key, "duplicate"):
-                    duplicate_count += 1
+            webp_files = [obj for obj in page['Contents'] if obj['Key'].lower().endswith('.webp')]
+            total_files += len(webp_files)
+            
+            write_debug_info(f"Processing batch of {len(webp_files)} webp files from upload bucket")
+            
+            for obj in webp_files:
+                object_key = obj['Key']
+                filename = object_key.split('/')[-1]
+                
+                # Step 2: First check if the filename matches the required format
+                if not check_filename_format(filename):
+                    write_debug_info(f"Found improperly formatted filename: {filename}")
+                    if move_to_issue_bucket(object_key, "improperly formatted"):
+                        format_issue_count += 1
+                    continue
+                    
+                # Step 3: If format is correct, check if it's a duplicate
+                if redis_client and is_duplicate(filename):
+                    write_debug_info(f"Found duplicate filename: {filename}")
+                    if move_to_issue_bucket(object_key, "duplicate"):
+                        duplicate_count += 1
         
-        write_debug_info(f"Moved {issue_count} improperly formatted files to issue bucket")
+        write_debug_info(f"Validation summary: Processed {total_files} files total")
+        write_debug_info(f"Moved {format_issue_count} improperly formatted files to issue bucket")
         write_debug_info(f"Moved {duplicate_count} duplicate files to issue bucket")
         write_debug_info("===== Completed validation cycle =====")
         
@@ -342,7 +356,7 @@ def check_upload_bucket_filenames():
 
 def run_scheduler():
     """Run the scheduler to validate filenames periodically"""
-    print("Starting filename validation service")
+    logger.info("Starting filename validation service")
     write_debug_info("Scheduler started - will run every 30 seconds")
     
     # Schedule the validation job to run every 30 seconds
@@ -352,7 +366,7 @@ def run_scheduler():
     try:
         check_upload_bucket_filenames()
     except Exception as e:
-        print(f"Error in initial run: {e}")
+        logger.error(f"Error in initial run: {e}")
         write_debug_info(f"Error in initial run: {e}")
         traceback.print_exc()
     
@@ -362,7 +376,7 @@ def run_scheduler():
             schedule.run_pending()
             time.sleep(1)
         except Exception as e:
-            print(f"Error in scheduler loop: {e}")
+            logger.error(f"Error in scheduler loop: {e}")
             write_debug_info(f"Error in scheduler loop: {e}")
             traceback.print_exc()
             time.sleep(60)  # Wait a bit longer if there's an error
@@ -371,6 +385,6 @@ if __name__ == "__main__":
     try:
         run_scheduler()
     except Exception as e:
-        print(f"Fatal error in main: {e}")
+        logger.error(f"Fatal error in main: {e}")
         write_debug_info(f"Fatal error in main: {e}")
         traceback.print_exc() 
