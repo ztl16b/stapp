@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 from requests.exceptions import RequestException
 import uuid
 import time
+from io import BytesIO
 
 load_dotenv()
 
@@ -107,10 +108,27 @@ try:
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
         region_name=AWS_REGION
     )
+    
+    # Create a reusable S3 upload configuration 
+    s3_upload_config = boto3.s3.transfer.TransferConfig(
+        multipart_threshold=8 * 1024 * 1024,  # 8MB
+        max_concurrency=10,
+        multipart_chunksize=8 * 1024 * 1024,  # 8MB
+        use_threads=True
+    )
 except NoCredentialsError:
     raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
+
+# Cache for image format validation
+VALID_IMAGE_SIGNATURES = {
+    b'\xff\xd8\xff': 'JPEG',    # JPEG
+    b'\x89\x50\x4e\x47': 'PNG', # PNG
+    b'\x47\x49\x46': 'GIF',     # GIF
+    b'\x42\x4d': 'BMP',         # BMP
+    b'\x52\x49\x46\x46': 'WEBP' # WEBP
+}
 
 @app.route('/')
 def index():
@@ -128,101 +146,82 @@ def upload():
             flash('No selected files', 'warning')
             return redirect(request.url)
         
-        # Limit number of files processed at once to prevent crashes
-        max_files_per_batch = 300
+        # Maximum batch size - increase if needed
+        max_batch_size = 500
         
-        # Process files directly, but with better handling
-        successful_uploads = []
-        failed_uploads = []
-        skipped_files = []
+        # Simple counters instead of storing lists
+        success_count = 0
+        error_count = 0
+        skipped_count = 0
+        total_count = len(files)
         
-        # Calculate total number of files
-        total_files = len(files)
+        # Limit batch size if needed
+        if total_count > max_batch_size:
+            files = files[:max_batch_size]
+            skipped_count = total_count - max_batch_size
+            flash(f'Processing {max_batch_size} files. {skipped_count} additional files were skipped.', 'warning')
         
-        # Check if we need to limit the batch
-        if total_files > max_files_per_batch:
-            files_to_process = files[:max_files_per_batch]
-            skipped_files = [f.filename for f in files[max_files_per_batch:]]
-            flash(f'Processing the first {max_files_per_batch} files. The remaining {total_files - max_files_per_batch} files will be skipped.', 'warning')
-        else:
-            files_to_process = files
+        # Process in manageable chunks
+        chunk_size = 50
+        processed = 0
         
-        # Set a larger timeout for requests to external services
-        processing_timeout = 180  # 3 minutes
+        # Start timing for performance monitoring
+        start_time = time.time()
         
-        # Process in smaller chunks to provide feedback and manage memory better
-        chunk_size = 25  # Process 25 files at a time for better progress feedback
-        total_to_process = len(files_to_process)
-        processed_count = 0
-        
-        for i in range(0, total_to_process, chunk_size):
-            chunk = files_to_process[i:i+chunk_size]
-            chunk_processed = 0
+        # Process files in chunks
+        for i in range(0, len(files), chunk_size):
+            chunk = files[i:i+chunk_size]
             
             for file in chunk:
                 try:
-                    # Apply size limit (5MB)
-                    content_length = getattr(file, 'content_length', None) or 0
-                    if content_length and content_length > 5 * 1024 * 1024:
-                        failed_uploads.append((file.filename, "File exceeds 5MB size limit"))
+                    # Skip files that exceed size limit (5MB)
+                    if file.content_length and file.content_length > 5 * 1024 * 1024:
+                        error_count += 1
                         continue
                     
-                    # Read file data
+                    # Get the file data
                     file_data = file.read()
-                    
-                    # Skip empty files
-                    if not file_data:
-                        failed_uploads.append((file.filename, "Empty file"))
+                    if not file_data:  # Skip empty files
+                        error_count += 1
                         continue
                         
-                    filename = secure_filename(file.filename)  # Sanitize filename
-                    content_type = file.content_type
+                    # Process the file
+                    filename = secure_filename(file.filename)
+                    result = process_image(file_data, filename, file.content_type)
                     
-                    # Process the image with increased timeout
-                    result = process_image(file_data, filename, content_type, timeout=processing_timeout)
-                    
+                    # Count successes and failures
                     if result['status'] == 'success':
-                        successful_uploads.append(filename)
+                        success_count += 1
                     else:
-                        failed_uploads.append((filename, result['message']))
+                        error_count += 1
                         
-                    # Clear file data reference to help with memory management
+                    # Free memory immediately
                     del file_data
                     
-                    # Update processed count
-                    processed_count += 1
-                    chunk_processed += 1
-                    
-                except Exception as e:
-                    app.logger.error(f"Unexpected error during file upload processing: {str(e)}")
-                    failed_uploads.append((file.filename, f"Unexpected error: {str(e)}"))
+                except Exception:
+                    # Just count errors without storing details
+                    error_count += 1
             
-            # Show progress after each chunk
-            if i + chunk_size < total_to_process:
-                app.logger.info(f"Processed {processed_count}/{total_to_process} files...")
+            # Update progress
+            processed += len(chunk)
+            if processed < len(files):
+                elapsed = time.time() - start_time
+                rate = processed / elapsed if elapsed > 0 else 0
+                estimated = (len(files) - processed) / rate if rate > 0 else 0
+                app.logger.info(f"Progress: {processed}/{len(files)} files ({rate:.1f} files/sec, ~{estimated:.1f}s remaining)")
         
-        # Flash messages about the results
-        if successful_uploads:
-            flash(f'Successfully processed {len(successful_uploads)} files.', 'success')
+        # Calculate total processing time
+        total_time = time.time() - start_time
         
-        if failed_uploads:
-            failure_count = len(failed_uploads)
-            # Show first 5 errors with details
-            for filename, error in failed_uploads[:5]:
-                flash(f'Failed to process {filename}: {error}', 'error')
-            
-            # For larger batches, summarize remaining errors
-            if failure_count > 5:
-                flash(f'... and {failure_count - 5} more files failed. Check logs for details.', 'error')
-        
-        if skipped_files:
-            flash(f'Skipped {len(skipped_files)} files due to batch size limit. Please upload them separately.', 'warning')
+        # Show a simple summary
+        flash(f'Upload complete: {success_count} successful, {error_count} failed, {skipped_count} skipped in {total_time:.1f} seconds.', 
+              'success' if error_count == 0 else 'warning')
         
         return redirect(url_for('upload'))
-        
+    
     return render_template('upload.html')
 
-def process_image(file_data, filename, content_type, timeout=60):
+def process_image(file_data, filename, content_type, timeout=None):
     """
     Upload an image directly to the S3 temp bucket in its original format.
     
@@ -230,122 +229,86 @@ def process_image(file_data, filename, content_type, timeout=60):
         file_data: The file data as bytes
         filename: The original filename
         content_type: The content type of the file
-        timeout: Timeout for S3 operations (not used with direct upload)
+        timeout: Kept for backwards compatibility
         
     Returns:
         dict: Status information about the processing
     """
     try:
-        app.logger.info(f"Processing image: {filename}")
-        
-        # Validate file size (5MB limit)
-        if len(file_data) > 5 * 1024 * 1024:
-            return {
-                'status': 'error',
-                'message': 'File size exceeds the 5MB limit',
-                'filename': filename
-            }
-        
-        # Quick validation of file type by checking first few bytes (magic numbers)
-        # This avoids uploading non-image files
-        valid_image_signatures = {
-            b'\xff\xd8\xff': 'JPEG',
-            b'\x89\x50\x4e\x47': 'PNG',
-            b'\x47\x49\x46': 'GIF',
-            b'\x42\x4d': 'BMP',
-            b'\x52\x49\x46\x46': 'WEBP'
-        }
-        
-        is_valid_image = False
-        for signature in valid_image_signatures:
-            if file_data.startswith(signature):
-                is_valid_image = True
-                break
+        # Quick validation of file format using first few bytes
+        file_start = file_data[:8]  # First 8 bytes is enough for all formats
+        is_valid_image = any(file_start.startswith(sig) for sig in VALID_IMAGE_SIGNATURES)
                 
         if not is_valid_image:
             return {
                 'status': 'error',
-                'message': 'Invalid image format. Only JPEG, PNG, GIF, BMP and WEBP are supported.',
+                'message': 'Invalid image format',
                 'filename': filename
             }
         
-        # Upload directly to S3 temp bucket without any processing
-        app.logger.info(f"Uploading {filename} to S3 temp bucket in original format")
+        # Generate unique upload path to prevent overwrites
+        timestamp = int(time.time() * 1000)  # millisecond precision
+        random_suffix = str(uuid.uuid4())[:8]
+        upload_path = f"tmp_upload/{timestamp}_{random_suffix}_{filename}"
         
-        # Create a unique path in the tmp_upload/ directory
-        # Keep the original file extension
-        upload_path = f"tmp_upload/{filename}"
-        
-        # Create a file-like object from the bytes data
-        from io import BytesIO
+        # Upload to S3 using BytesIO for memory efficiency
         file_obj = BytesIO(file_data)
-        
-        # Optimized S3 upload configuration for better performance
-        s3_config = boto3.s3.transfer.TransferConfig(
-            multipart_threshold=8 * 1024 * 1024,  # 8MB
-            max_concurrency=10,
-            multipart_chunksize=8 * 1024 * 1024,  # 8MB
-            use_threads=True
-        )
         
         s3_client.upload_fileobj(
             file_obj,
             S3_TEMP_BUCKET,
             upload_path,
             ExtraArgs={'ContentType': content_type},
-            Config=s3_config
+            Config=s3_upload_config
         )
         
-        # Clean up
         file_obj.close()
-        del file_data
         
         return {
             'status': 'success',
-            'message': f'Successfully uploaded {filename} to temp bucket',
+            'message': 'Upload successful',
             's3_path': upload_path,
             'filename': filename
         }
-        
-    except ClientError as e:
-        app.logger.error(f"S3 upload error for {filename}: {e}")
-        return {
-            'status': 'error',
-            'message': f'S3 Upload Error: {str(e)}',
-            'filename': filename
-        }
-    except NoCredentialsError:
-        app.logger.error(f"AWS credentials not found when processing {filename}")
-        return {
-            'status': 'error',
-            'message': 'AWS credentials not found',
-            'filename': filename
-        }
     except Exception as e:
-        app.logger.error(f"Unexpected error processing {filename}: {e}")
+        app.logger.error(f"Error processing {filename}: {str(e)}")
         return {
             'status': 'error',
-            'message': f'Unexpected error: {str(e)}',
+            'message': str(e),
             'filename': filename
         }
 
 def get_random_image_key(bucket_name):
     """Gets a random object key from the specified bucket."""
     try:
+        # Different prefix depending on which bucket we're using
+        prefix = None
         if bucket_name == S3_UPLOAD_BUCKET:
-            response = s3_client.list_objects_v2(
-                Bucket=bucket_name,
-                Prefix='temp_performer_at_venue_images/'
-            )
-        else:
-            response = s3_client.list_objects_v2(Bucket=bucket_name)
+            prefix = 'temp_performer_at_venue_images/'
+        elif bucket_name == S3_TEMP_BUCKET:
+            prefix = 'tmp_upload/'
             
-        if 'Contents' in response:
+        # Get list of objects with the appropriate prefix
+        response = s3_client.list_objects_v2(
+            Bucket=bucket_name,
+            Prefix=prefix if prefix else ''
+        )
+            
+        if 'Contents' in response and response['Contents']:
             all_objects = response['Contents']
-            image_objects = [
-                obj for obj in all_objects
-                if obj['Key'].lower().endswith(('.webp'))
-            ]
+            # For temp bucket, accept all image file types
+            if bucket_name == S3_TEMP_BUCKET:
+                image_objects = [
+                    obj for obj in all_objects
+                    if obj['Key'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
+                ]
+            else:
+                # For upload bucket, keep original webp filter
+                image_objects = [
+                    obj for obj in all_objects
+                    if obj['Key'].lower().endswith(('.webp'))
+                ]
+                
             if image_objects:
                 return random.choice(image_objects)['Key']
     except ClientError as e:
@@ -361,28 +324,41 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
     dest_key = object_key
     original_key = object_key
     
+    # Extract the filename from the path, handling both old and new formats
+    filename = object_key.split('/')[-1]
+    
+    # Remove any timestamp prefixes for the destination
+    if '_' in filename:
+        # Handle new timestamp_uuid_filename.ext format
+        parts = filename.split('_', 2)
+        if len(parts) >= 3:
+            filename = parts[2]  # Get just the original filename part
+    
     if destination == 'bad' or (dest_bucket == S3_BAD_BUCKET and destination is None):
-        if object_key.startswith('temp_performer_at_venue_images/'):
-            object_key = object_key.replace('temp_performer_at_venue_images/', '', 1)
-        dest_key = f"bad_images/{object_key}"
+        dest_key = f"bad_images/{filename}"
     elif destination == 'good' or (dest_bucket == S3_GOOD_BUCKET and destination is None):
-        if object_key.startswith('temp_performer_at_venue_images/'):
-            object_key = object_key.replace('temp_performer_at_venue_images/', '', 1)
-        dest_key = f"images/performer-at-venue/detail/{object_key}"
+        dest_key = f"images/performer-at-venue/detail/{filename}"
     elif destination == 'incredible' or (dest_bucket == S3_INCREDIBLE_BUCKET and destination is None):
-        if object_key.startswith('temp_performer_at_venue_images/'):
-            object_key = object_key.replace('temp_performer_at_venue_images/', '', 1)
-        dest_key = f"incredible_images/{object_key}"
+        dest_key = f"incredible_images/{filename}"
     
     copy_source = {'Bucket': source_bucket, 'Key': original_key}
     try:
-        extra_args = {'ContentType': 'image/webp' if object_key.endswith('.webp') else 'image/jpeg'}
+        # Determine content type based on file extension
+        content_type = 'image/jpeg'  # Default
+        if filename.lower().endswith('.png'):
+            content_type = 'image/png'
+        elif filename.lower().endswith('.gif'):
+            content_type = 'image/gif'
+        elif filename.lower().endswith('.webp'):
+            content_type = 'image/webp'
+        elif filename.lower().endswith(('.jpg', '.jpeg')):
+            content_type = 'image/jpeg'
             
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
             Key=dest_key,
-            **extra_args
+            ContentType=content_type
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
 
@@ -419,16 +395,22 @@ def get_presigned_url(bucket_name, object_key, expiration=3600):
 def review_image_route():
     # Log session information for debugging
     app.logger.info(f"Review page accessed by user {session.get('user_id', 'unknown')}")
-    app.logger.info(f"Session data: logged_in={session.get('logged_in')}, login_time={session.get('login_time')}")
     
-    image_key = get_random_image_key(S3_UPLOAD_BUCKET)
+    # First check the temp bucket for any images
+    image_key = get_random_image_key(S3_TEMP_BUCKET)
+    source_bucket = S3_TEMP_BUCKET
+    
+    # If no images in temp bucket, check the upload bucket
+    if not image_key:
+        image_key = get_random_image_key(S3_UPLOAD_BUCKET)
+        source_bucket = S3_UPLOAD_BUCKET
+    
     image_url = None
     if image_key:
-        image_url = get_presigned_url(S3_UPLOAD_BUCKET, image_key)
-        # Print image key to console for debugging
-        app.logger.info(f"Loading image for review: {image_key}")
+        image_url = get_presigned_url(source_bucket, image_key)
+        app.logger.info(f"Loading image for review: {image_key} from {source_bucket}")
 
-    return render_template('review.html', image_url=image_url, image_key=image_key)
+    return render_template('review.html', image_url=image_url, image_key=image_key, source_bucket=source_bucket)
 
 @app.route('/move/<action>/<path:image_key>', methods=['POST'])
 @login_required
@@ -437,8 +419,11 @@ def move_image_route(action, image_key):
         flash("No image key provided for move operation.", "danger")
         return redirect(url_for('review_image_route'))
 
-    # Print image key to console for debugging
-    app.logger.info(f"Moving image with key: {image_key} to {action} bucket")
+    # Get the source bucket from the form data
+    source_bucket = request.form.get('source_bucket', S3_UPLOAD_BUCKET)
+    
+    # Log the action
+    app.logger.info(f"Moving image with key: {image_key} from {source_bucket} to {action} bucket")
 
     success = False
     if action == 'incredible':
@@ -446,13 +431,13 @@ def move_image_route(action, image_key):
         # until both copies are successful
         
         # First, copy to the good bucket without deleting the original
-        if copy_s3_object(S3_UPLOAD_BUCKET, S3_GOOD_BUCKET, image_key, destination='good'):
+        if copy_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good'):
             # If first copy succeeds, copy to incredible bucket
-            if copy_s3_object(S3_UPLOAD_BUCKET, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
+            if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
                 # Now that both copies are successful, delete the original
                 try:
-                    s3_client.delete_object(Bucket=S3_UPLOAD_BUCKET, Key=image_key)
-                    app.logger.info(f"Deleted {image_key} from {S3_UPLOAD_BUCKET} after successful copies")
+                    s3_client.delete_object(Bucket=source_bucket, Key=image_key)
+                    app.logger.info(f"Deleted {image_key} from {source_bucket} after successful copies")
                     success = True
                     flash(f"Image '{image_key}' moved to both good and incredible buckets.", "success")
                 except Exception as e:
@@ -462,12 +447,12 @@ def move_image_route(action, image_key):
     else:
         # For good and bad actions, use the original logic
         destination_bucket = S3_GOOD_BUCKET if action == 'good' else S3_BAD_BUCKET
-        if move_s3_object(S3_UPLOAD_BUCKET, destination_bucket, image_key, destination=action):
+        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action):
             success = True
             flash(f"Image '{image_key}' moved to {action} bucket.", "success")
 
     if not success:
-        pass
+        flash(f"Failed to move image '{image_key}' to {action} bucket.", "danger")
 
     return redirect(url_for('review_image_route'))
 
@@ -476,28 +461,41 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
     dest_key = object_key
     original_key = object_key
     
+    # Extract the filename from the path, handling both old and new formats
+    filename = object_key.split('/')[-1]
+    
+    # Remove any timestamp prefixes for the destination
+    if '_' in filename:
+        # Handle new timestamp_uuid_filename.ext format
+        parts = filename.split('_', 2)
+        if len(parts) >= 3:
+            filename = parts[2]  # Get just the original filename part
+    
     if destination == 'bad' or (dest_bucket == S3_BAD_BUCKET and destination is None):
-        if object_key.startswith('temp_performer_at_venue_images/'):
-            object_key = object_key.replace('temp_performer_at_venue_images/', '', 1)
-        dest_key = f"bad_images/{object_key}"
+        dest_key = f"bad_images/{filename}"
     elif destination == 'good' or (dest_bucket == S3_GOOD_BUCKET and destination is None):
-        if object_key.startswith('temp_performer_at_venue_images/'):
-            object_key = object_key.replace('temp_performer_at_venue_images/', '', 1)
-        dest_key = f"images/performer-at-venue/detail/{object_key}"
+        dest_key = f"images/performer-at-venue/detail/{filename}"
     elif destination == 'incredible' or (dest_bucket == S3_INCREDIBLE_BUCKET and destination is None):
-        if object_key.startswith('temp_performer_at_venue_images/'):
-            object_key = object_key.replace('temp_performer_at_venue_images/', '', 1)
-        dest_key = f"incredible_images/{object_key}"
+        dest_key = f"incredible_images/{filename}"
     
     copy_source = {'Bucket': source_bucket, 'Key': original_key}
     try:
-        extra_args = {'ContentType': 'image/webp' if object_key.endswith('.webp') else 'image/jpeg'}
+        # Determine content type based on file extension
+        content_type = 'image/jpeg'  # Default
+        if filename.lower().endswith('.png'):
+            content_type = 'image/png'
+        elif filename.lower().endswith('.gif'):
+            content_type = 'image/gif'
+        elif filename.lower().endswith('.webp'):
+            content_type = 'image/webp'
+        elif filename.lower().endswith(('.jpg', '.jpeg')):
+            content_type = 'image/jpeg'
             
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
             Key=dest_key,
-            **extra_args
+            ContentType=content_type
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
         return True
