@@ -30,7 +30,7 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
-
+S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
 # Bytescale Configuration
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
@@ -214,12 +214,17 @@ def process_image(s3_key):
             
             # Upload processed image to final destination
             base_filename = os.path.splitext(filename)[0]
-            upload_path = f"temp_performer_at_venue_images/{filename}"
             
-            # Change the extension to webp for the processed file
-            if not upload_path.lower().endswith('.webp'):
-                upload_path = os.path.splitext(upload_path)[0] + '.webp'
+            # Transform filename from "perf_id-ven_id" format to "perf_id.ven_id" format
+            if '-' in base_filename:
+                parts = base_filename.split('-')
+                if len(parts) >= 2:
+                    # Replace hyphen with dot between IDs
+                    base_filename = '.'.join(parts)
             
+            upload_path = f"temp_performer_at_venue_images/{base_filename}.webp"
+            
+            write_debug_info(f"Transformed filename from '{filename}' to '{os.path.basename(upload_path)}'")
             write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
             s3_client.upload_fileobj(
                 download_response.raw,
@@ -254,6 +259,106 @@ def process_image(s3_key):
             'message': str(e)
         }
 
+def check_filename_format(filename):
+    """
+    Check if a filename matches the required format: {perf_id}.{ven_id}.webp
+    where perf_id and ven_id are numeric.
+    
+    Returns True if the format is correct, False otherwise.
+    """
+    if not filename.lower().endswith('.webp'):
+        return False
+        
+    # Remove the .webp extension
+    base_name = filename[:-5] if filename.lower().endswith('.webp') else filename
+    
+    # Split by dot and check if we have exactly two parts
+    parts = base_name.split('.')
+    if len(parts) != 2:
+        return False
+        
+    # Check if both parts are numeric
+    try:
+        int(parts[0])  # perf_id should be a number
+        int(parts[1])  # ven_id should be a number
+        return True
+    except ValueError:
+        return False
+
+def move_to_issue_bucket(object_key):
+    """
+    Move a file from the Upload bucket to the Issue bucket.
+    """
+    try:
+        # Keep the same filename in the issue bucket
+        filename = object_key.split('/')[-1]
+        dest_key = f"issue_files/{filename}"
+        
+        write_debug_info(f"Moving improperly formatted file {object_key} to issue bucket as {dest_key}")
+        
+        # Copy to issue bucket
+        copy_source = {'Bucket': S3_UPLOAD_BUCKET, 'Key': object_key}
+        
+        s3_client.copy_object(
+            CopySource=copy_source,
+            Bucket=S3_ISSUE_BUCKET,
+            Key=dest_key
+        )
+        
+        # Delete from upload bucket
+        s3_client.delete_object(
+            Bucket=S3_UPLOAD_BUCKET,
+            Key=object_key
+        )
+        
+        write_debug_info(f"Successfully moved {object_key} to issue bucket")
+        return True
+    except Exception as e:
+        error_msg = f"Error moving {object_key} to issue bucket: {str(e)}"
+        write_debug_info(error_msg)
+        logger.error(error_msg)
+        return False
+
+def check_upload_bucket_filenames():
+    """
+    Check all files in the Upload bucket for proper naming format.
+    Move improperly formatted files to the Issue bucket.
+    """
+    try:
+        write_debug_info("Checking upload bucket for improperly formatted filenames")
+        
+        # List objects in the upload bucket
+        prefix = 'temp_performer_at_venue_images/'
+        response = s3_client.list_objects_v2(
+            Bucket=S3_UPLOAD_BUCKET,
+            Prefix=prefix
+        )
+        
+        if 'Contents' not in response:
+            write_debug_info("No files found in upload bucket")
+            return
+            
+        webp_files = [obj for obj in response['Contents'] if obj['Key'].lower().endswith('.webp')]
+        issue_count = 0
+        
+        write_debug_info(f"Found {len(webp_files)} webp files in upload bucket to check")
+        
+        for obj in webp_files:
+            object_key = obj['Key']
+            filename = object_key.split('/')[-1]
+            
+            # Check if the filename matches the required format
+            if not check_filename_format(filename):
+                write_debug_info(f"Found improperly formatted filename: {filename}")
+                if move_to_issue_bucket(object_key):
+                    issue_count += 1
+        
+        write_debug_info(f"Moved {issue_count} improperly formatted files to issue bucket")
+    except Exception as e:
+        error_msg = f"Error checking upload bucket filenames: {str(e)}"
+        write_debug_info(error_msg)
+        logger.error(error_msg)
+
 def process_next_batch():
     """Process the next batch of images from the temp bucket"""
     try:
@@ -265,6 +370,8 @@ def process_next_batch():
         
         if not images:
             write_debug_info("No images found in temp bucket")
+            # Even if no new images to process, check existing ones for format issues
+            check_upload_bucket_filenames()
             return
         
         write_debug_info(f"Found {len(images)} images in temp bucket")
@@ -281,6 +388,9 @@ def process_next_batch():
             
             # Only process one image per run to avoid overloading
             break
+        
+        # After processing new images, check for improperly formatted filenames
+        check_upload_bucket_filenames()
         
         write_debug_info("===== Completed processing cycle =====")
         

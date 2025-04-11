@@ -44,6 +44,7 @@ S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
 S3_BAD_BUCKET = os.getenv("S3_BAD_BUCKET")
 S3_INCREDIBLE_BUCKET = os.getenv("S3_INCREDIBLE_BUCKET")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
+S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
 
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
@@ -339,7 +340,7 @@ def process_image(file_data, filename, content_type, timeout=None):
     
     Args:
         file_data: The file data as bytes
-        filename: The original filename
+        filename: The original filename (with perf_id-ven_id format)
         content_type: The content type of the file
         timeout: Kept for backwards compatibility
         
@@ -358,7 +359,7 @@ def process_image(file_data, filename, content_type, timeout=None):
                 'filename': filename
             }
         
-        # Use original filename directly without adding timestamp or UUID
+        # Use original filename exactly as provided - the image_processor.py will handle format conversion
         upload_path = f"tmp_upload/{filename}"
         
         # Upload to S3 using BytesIO for memory efficiency
@@ -626,13 +627,15 @@ def browse_buckets():
     app.logger.info(f"S3_INCREDIBLE_BUCKET: {S3_INCREDIBLE_BUCKET}")
     app.logger.info(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
     app.logger.info(f"S3_TEMP_BUCKET: {S3_TEMP_BUCKET}")
+    app.logger.info(f"S3_ISSUE_BUCKET: {S3_ISSUE_BUCKET}")
     
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
-        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'}
+        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
+        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
     }
     app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
@@ -645,7 +648,8 @@ def browse_bucket(bucket_name):
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
-        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'}
+        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
+        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
     }
     
     if bucket_name not in buckets:
@@ -764,7 +768,8 @@ def delete_object_route(bucket_name, object_key):
         'bad': S3_BAD_BUCKET,
         'incredible': S3_INCREDIBLE_BUCKET,
         'upload': S3_UPLOAD_BUCKET,
-        'temp': S3_TEMP_BUCKET
+        'temp': S3_TEMP_BUCKET,
+        'issue': S3_ISSUE_BUCKET
     }
     
     if bucket_name not in buckets:
@@ -791,7 +796,8 @@ def delete_all_objects_route(bucket_name):
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
-        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'}
+        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
+        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
     }
     
     if bucket_name not in buckets:
