@@ -37,6 +37,7 @@ S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
 S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
 S3_BAD_BUCKET = os.getenv("S3_BAD_BUCKET")
 S3_INCREDIBLE_BUCKET = os.getenv("S3_INCREDIBLE_BUCKET")
+S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
@@ -137,7 +138,6 @@ def upload():
         
         # Calculate total number of files
         total_files = len(files)
-        app.logger.info(f"Upload started with {total_files} files")
         
         # Check if we need to limit the batch
         if total_files > max_files_per_batch:
@@ -148,23 +148,16 @@ def upload():
             files_to_process = files
         
         # Set a larger timeout for requests to external services
-        processing_timeout = 240  # 4 minutes (increased from 3)
+        processing_timeout = 180  # 3 minutes
         
         # Process in smaller chunks to provide feedback and manage memory better
-        # For 200+ files, use a larger chunk size to reduce overhead
-        chunk_size = min(50, max(25, total_files // 10))  # Adaptive chunking
+        chunk_size = 25  # Process 25 files at a time for better progress feedback
         total_to_process = len(files_to_process)
         processed_count = 0
-        
-        # Log the upload plan
-        app.logger.info(f"Processing {total_to_process} files in chunks of {chunk_size} with a timeout of {processing_timeout}s")
         
         for i in range(0, total_to_process, chunk_size):
             chunk = files_to_process[i:i+chunk_size]
             chunk_processed = 0
-            chunk_size_actual = len(chunk)
-            
-            app.logger.info(f"Starting chunk {i//chunk_size + 1} with {chunk_size_actual} files")
             
             for file in chunk:
                 try:
@@ -201,18 +194,12 @@ def upload():
                     chunk_processed += 1
                     
                 except Exception as e:
-                    app.logger.error(f"Unexpected error processing {file.filename}: {str(e)}")
+                    app.logger.error(f"Unexpected error during file upload processing: {str(e)}")
                     failed_uploads.append((file.filename, f"Unexpected error: {str(e)}"))
             
-            # Show progress after each chunk and force garbage collection
+            # Show progress after each chunk
             if i + chunk_size < total_to_process:
-                app.logger.info(f"Chunk {i//chunk_size + 1} complete: Processed {processed_count}/{total_to_process} files ({chunk_processed} in this chunk)")
-                # Force garbage collection to free memory
-                import gc
-                gc.collect()
-        
-        # Final log of results
-        app.logger.info(f"Upload complete: {len(successful_uploads)} successful, {len(failed_uploads)} failed, {len(skipped_files)} skipped")
+                app.logger.info(f"Processed {processed_count}/{total_to_process} files...")
         
         # Flash messages about the results
         if successful_uploads:
@@ -237,22 +224,21 @@ def upload():
 
 def process_image(file_data, filename, content_type, timeout=60):
     """
-    Process an image using Bytescale API and upload to S3.
+    Upload an image directly to the S3 temp bucket in its original format.
     
     Args:
         file_data: The file data as bytes
         filename: The original filename
         content_type: The content type of the file
-        timeout: Timeout for external API requests
+        timeout: Timeout for S3 operations (not used with direct upload)
         
     Returns:
         dict: Status information about the processing
     """
-    start_time = time.time()
     try:
-        app.logger.info(f"Processing image: {filename} ({len(file_data)/1024:.1f} KB)")
+        app.logger.info(f"Processing image: {filename}")
         
-        # Validate file size again (5MB limit)
+        # Validate file size (5MB limit)
         if len(file_data) > 5 * 1024 * 1024:
             return {
                 'status': 'error',
@@ -261,7 +247,7 @@ def process_image(file_data, filename, content_type, timeout=60):
             }
         
         # Quick validation of file type by checking first few bytes (magic numbers)
-        # This avoids doing expensive operations on non-image files
+        # This avoids uploading non-image files
         valid_image_signatures = {
             b'\xff\xd8\xff': 'JPEG',
             b'\x89\x50\x4e\x47': 'PNG',
@@ -283,145 +269,44 @@ def process_image(file_data, filename, content_type, timeout=60):
                 'filename': filename
             }
         
-        # Set up headers and files for the Bytescale API
-        headers = {
-            'Authorization': f'Bearer {BYTESCALE_API_KEY}'
-        }
-        files_data = {
-            'file': (filename, file_data, content_type)
-        }
+        # Upload directly to S3 temp bucket without any processing
+        app.logger.info(f"Uploading {filename} to S3 temp bucket in original format")
         
-        # Track timing of each step for performance analysis
-        steps_timing = {}
+        # Create a unique path in the tmp_upload/ directory
+        # Keep the original file extension
+        upload_path = f"tmp_upload/{filename}"
         
-        # Upload to Bytescale with configurable timeout
-        app.logger.info(f"Uploading {filename} to Bytescale")
-        upload_start = time.time()
+        # Create a file-like object from the bytes data
+        from io import BytesIO
+        file_obj = BytesIO(file_data)
         
-        # Use a session for better connection pooling when processing multiple files
-        with requests.Session() as session:
-            # Configure session timeouts and retries
-            session.mount('https://', requests.adapters.HTTPAdapter(
-                max_retries=3,
-                pool_connections=10,
-                pool_maxsize=10
-            ))
-            
-            # Upload to Bytescale
-            try:
-                upload_response = session.post(
-                    BYTESCALE_UPLOAD_URL, 
-                    headers=headers, 
-                    files=files_data, 
-                    timeout=timeout
-                )
-                upload_response.raise_for_status()
-            except Exception as e:
-                app.logger.error(f"Bytescale upload failed for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'Bytescale API Error: {str(e)}',
-                    'filename': filename
-                }
-            
-            steps_timing['bytescale_upload'] = time.time() - upload_start
-            
-            # Parse response to get file URL
-            try:
-                json_response = upload_response.json()
-                file_url = None
-                for file_obj in json_response.get("files", []):
-                    if file_obj.get("formDataFieldName") == "file":
-                        file_url = file_obj.get("fileUrl")
-                        break
-            except Exception as e:
-                app.logger.error(f"Failed to parse Bytescale response for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'Failed to parse API response: {str(e)}',
-                    'filename': filename
-                }
-            
-            if not file_url:
-                return {
-                    'status': 'error',
-                    'message': 'Could not find file URL in Bytescale response',
-                    'filename': filename
-                }
-            
-            # We don't need the original file data anymore
-            del file_data
-            del files_data
-            
-            # Download the processed image
-            app.logger.info(f"Downloading processed image for {filename}")
-            download_start = time.time()
-            processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
-            
-            # Download the processed image with configurable timeout
-            try:
-                download_response = session.get(processed_url, stream=True, timeout=timeout)
-                download_response.raise_for_status()
-            except Exception as e:
-                app.logger.error(f"Failed to download processed image for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'Download Error: {str(e)}',
-                    'filename': filename
-                }
-                
-            steps_timing['download'] = time.time() - download_start
-            
-            # Upload to S3
-            app.logger.info(f"Uploading {filename} to S3")
-            s3_upload_start = time.time()
-            upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
-            
-            # Optimized S3 upload configuration for better performance
-            s3_config = boto3.s3.transfer.TransferConfig(
-                multipart_threshold=8 * 1024 * 1024,  # 8MB
-                max_concurrency=10,
-                multipart_chunksize=8 * 1024 * 1024,  # 8MB
-                use_threads=True
-            )
-            
-            try:
-                s3_client.upload_fileobj(
-                    download_response.raw,
-                    S3_UPLOAD_BUCKET,
-                    upload_path,
-                    ExtraArgs={'ContentType': 'image/webp'},
-                    Config=s3_config
-                )
-            except Exception as e:
-                app.logger.error(f"S3 upload failed for {filename}: {str(e)}")
-                return {
-                    'status': 'error',
-                    'message': f'S3 Upload Error: {str(e)}',
-                    'filename': filename
-                }
-            
-            steps_timing['s3_upload'] = time.time() - s3_upload_start
+        # Optimized S3 upload configuration for better performance
+        s3_config = boto3.s3.transfer.TransferConfig(
+            multipart_threshold=8 * 1024 * 1024,  # 8MB
+            max_concurrency=10,
+            multipart_chunksize=8 * 1024 * 1024,  # 8MB
+            use_threads=True
+        )
         
-        total_time = time.time() - start_time
-        app.logger.info(f"Successfully processed {filename} in {total_time:.2f}s (Bytescale: {steps_timing.get('bytescale_upload', 0):.2f}s, Download: {steps_timing.get('download', 0):.2f}s, S3: {steps_timing.get('s3_upload', 0):.2f}s)")
+        s3_client.upload_fileobj(
+            file_obj,
+            S3_TEMP_BUCKET,
+            upload_path,
+            ExtraArgs={'ContentType': content_type},
+            Config=s3_config
+        )
+        
+        # Clean up
+        file_obj.close()
+        del file_data
         
         return {
             'status': 'success',
-            'message': f'Successfully processed and uploaded {filename}',
+            'message': f'Successfully uploaded {filename} to temp bucket',
             's3_path': upload_path,
-            'filename': filename,
-            'timing': steps_timing,
-            'total_time': total_time
-        }
-        
-    except RequestException as e:
-        app.logger.error(f"Network error processing {filename}: {e}")
-        return {
-            'status': 'error',
-            'message': f'Network Error: {str(e)}',
             'filename': filename
         }
+        
     except ClientError as e:
         app.logger.error(f"S3 upload error for {filename}: {e}")
         return {
@@ -632,12 +517,14 @@ def browse_buckets():
     app.logger.info(f"S3_BAD_BUCKET: {S3_BAD_BUCKET}")
     app.logger.info(f"S3_INCREDIBLE_BUCKET: {S3_INCREDIBLE_BUCKET}")
     app.logger.info(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
+    app.logger.info(f"S3_TEMP_BUCKET: {S3_TEMP_BUCKET}")
     
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
-        'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'}
+        'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
+        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'}
     }
     app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
@@ -649,7 +536,8 @@ def browse_bucket(bucket_name):
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
-        'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'}
+        'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
+        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'}
     }
     
     if bucket_name not in buckets:
@@ -767,7 +655,8 @@ def delete_object_route(bucket_name, object_key):
         'good': S3_GOOD_BUCKET,
         'bad': S3_BAD_BUCKET,
         'incredible': S3_INCREDIBLE_BUCKET,
-        'upload': S3_UPLOAD_BUCKET
+        'upload': S3_UPLOAD_BUCKET,
+        'temp': S3_TEMP_BUCKET
     }
     
     if bucket_name not in buckets:
@@ -793,7 +682,8 @@ def delete_all_objects_route(bucket_name):
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
-        'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'}
+        'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
+        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'}
     }
     
     if bucket_name not in buckets:
@@ -855,6 +745,7 @@ if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')
     # For local development
-    app.run(debug=True)    
+    app.run(debug=True)
+    
 # Set higher timeout for Gunicorn when running on Heroku
 # Usage: gunicorn --timeout 300 app:app
