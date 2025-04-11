@@ -19,46 +19,21 @@ load_dotenv()
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
 
-# Generate a consistent secret key from environment or use a default for development
-app.secret_key = os.environ.get('SECRET_KEY')
-if not app.secret_key:
-    # Generate a random key for development
-    app.secret_key = os.urandom(24)
-    app.logger.warning('No SECRET_KEY set in environment. Using random key - sessions will not persist across restarts!')
+# Set a fixed secret key for session management
+app.secret_key = os.environ.get('SECRET_KEY', 'your-fixed-secret-key-for-development')
 
-# Determine if we're running on Heroku
-is_heroku = os.environ.get('DYNO') is not None
-
-# Session configuration optimized for Heroku
+# SIMPLIFIED SESSION CONFIGURATION
 app.config.update(
-    PERMANENT_SESSION_LIFETIME=timedelta(days=7),  # 7 day sessions
-    SESSION_COOKIE_SECURE=is_heroku,  # Only use secure cookies on Heroku (HTTPS)
+    SESSION_COOKIE_SECURE=False,  # Set to False to allow HTTP in development
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_NAME='image_interface_session',
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB max file size
-    # Disable Flask's default permanent session feature
-    PERMANENT_SESSIONS=False
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),  # 30 days
 )
 
 # Dictionary to store upload status
 upload_status = {}
 
-def init_session():
-    """Initialize or refresh session data"""
-    if 'logged_in' not in session:
-        session['logged_in'] = False
-    if session.get('logged_in') and 'login_time' not in session:
-        session['login_time'] = datetime.now().isoformat()
-        session['user_id'] = str(uuid.uuid4())
-
-@app.before_request
-def before_request():
-    init_session()
-    # Log request details for debugging
-    app.logger.debug(f"Request path: {request.path}")
-    app.logger.debug(f"Session data: {dict(session)}")
-
+# AWS Configuration
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
@@ -91,14 +66,10 @@ def login():
         admin_password = os.getenv('ADMIN_PASSWORD')
         
         if password == browse_password or password == admin_password:
-            # Set up session
-            session.clear()
+            # Simple session setup
             session['logged_in'] = True
-            session['login_time'] = datetime.now().isoformat()
-            session['user_id'] = str(uuid.uuid4())
+            session.permanent = True  # Make the session permanent
             
-            # Log successful login
-            app.logger.info(f"Successful login - User ID: {session['user_id']}")
             flash('Login successful!', 'success')
             
             # Handle redirect
@@ -117,13 +88,20 @@ def logout():
     flash('You have been logged out.', 'info')
     return redirect(url_for('login'))
 
-required_env_vars = [
-    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION",
-    "S3_UPLOAD_BUCKET", "S3_GOOD_BUCKET", "S3_BAD_BUCKET"
-]
-missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-if missing_vars:
-    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+def init_session():
+    """Initialize or refresh session data"""
+    if 'logged_in' not in session:
+        session['logged_in'] = False
+    if session.get('logged_in') and 'login_time' not in session:
+        session['login_time'] = datetime.now().isoformat()
+        session['user_id'] = str(uuid.uuid4())
+
+@app.before_request
+def before_request():
+    init_session()
+    # Log request details for debugging
+    app.logger.debug(f"Request path: {request.path}")
+    app.logger.debug(f"Session data: {dict(session)}")
 
 try:
     s3_client = boto3.client(
