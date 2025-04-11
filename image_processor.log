@@ -1,0 +1,13 @@
+2025-04-11 11:09:53,762 - image_processor - INFO - Starting image processing service
+2025-04-11 11:09:53,762 - image_processor - INFO - Checking for images in temp bucket...
+2025-04-11 11:09:54,049 - image_processor - INFO - No images found in temp bucket
+2025-04-11 11:10:16,686 - image_processor - INFO - Starting image processing service
+2025-04-11 11:10:16,686 - image_processor - INFO - Checking for images in temp bucket...
+2025-04-11 11:10:16,977 - image_processor - INFO - Found 1 images in temp bucket
+2025-04-11 11:10:16,977 - image_processor - INFO - Processing image: tmp_upload/1744391405239_95164143_18-1136test.png
+2025-04-11 11:10:17,490 - image_processor - INFO - Downloaded 1744391405239_95164143_18-1136test.png (1785841 bytes) from etickets-content-test-bucket
+2025-04-11 11:10:17,491 - image_processor - INFO - Uploading 1744391405239_95164143_18-1136test.png to Bytescale for processing
+2025-04-11 11:10:18,299 - image_processor - INFO - Applying transformations to 1744391405239_95164143_18-1136test.png
+2025-04-11 11:10:18,883 - image_processor - INFO - Uploading processed image to etickets-content-test-bucket/temp_performer_at_venue_images/1744391405239_95164143_18-1136test.webp
+2025-04-11 11:10:19,358 - image_processor - INFO - Deleting original image from etickets-content-test-bucket/tmp_upload/1744391405239_95164143_18-1136test.png
+2025-04-11 11:10:19,441 - image_processor - INFO - Successfully processed tmp_upload/1744391405239_95164143_18-1136test.png
