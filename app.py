@@ -12,12 +12,40 @@ import ssl
 from celery import Celery
 import uuid
 import time
+from tasks import process_image  # Import the process_image task
 
 load_dotenv()
 
 # Get the absolute path to the templates directory
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
+
+# Create Celery instance
+broker_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+result_backend = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
+broker_use_ssl = {
+    'ssl_cert_reqs': ssl.CERT_NONE
+} if broker_url.startswith('rediss://') else None
+
+result_backend_use_ssl = {
+    'ssl_cert_reqs': ssl.CERT_NONE
+} if result_backend.startswith('rediss://') else None
+
+celery = Celery('image_interface',
+                broker=broker_url,
+                backend=result_backend)
+
+celery.conf.update(
+    broker_use_ssl=broker_use_ssl,
+    redis_backend_use_ssl=result_backend_use_ssl,
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
+    broker_connection_retry_on_startup=True
+)
 
 # Set a fixed secret key for session management
 app.secret_key = os.environ.get('SECRET_KEY', 'your-fixed-secret-key-for-development')
