@@ -123,7 +123,12 @@
 
     <div class="sequential-upload-info">
         <h5><i class="bi bi-info-circle"></i> Sequential Upload Mode</h5>
-        <p>Files will be uploaded one at a time with a 30-second interval between uploads. The process will stop if any upload fails.</p>
+        <p>Files will be uploaded one at a time. The process will stop if any upload fails or takes longer than the specified timeout.</p>
+        <div class="form-group mt-2">
+            <label for="uploadTimeout">Upload Timeout (seconds):</label>
+            <input type="number" id="uploadTimeout" class="form-control" min="5" max="300" value="30" style="width: 120px;">
+            <small class="form-text text-muted">Maximum time allowed for each file upload before timing out.</small>
+        </div>
     </div>
 
     <form id="uploadForm" enctype="multipart/form-data">
@@ -174,7 +179,7 @@
         </div>
         <div class="d-flex justify-content-between mt-2">
             <div><strong>Uploaded:</strong> <span id="uploadedCount">0</span> of <span id="totalCount">0</span></div>
-            <div id="nextUploadTimer" class="countdown-timer">Next upload in: <span id="countdownTimer">30</span>s</div>
+            <div><strong>Status:</strong> <span id="uploadStatus">Ready</span></div>
         </div>
         
         <div class="upload-log" id="uploadLog"></div>
@@ -200,8 +205,7 @@
         const progressBar = document.getElementById('progressBar');
         const uploadedCount = document.getElementById('uploadedCount');
         const totalCount = document.getElementById('totalCount');
-        const nextUploadTimer = document.getElementById('nextUploadTimer');
-        const countdownTimer = document.getElementById('countdownTimer');
+        const uploadTimeoutInput = document.getElementById('uploadTimeout');
         const uploadLog = document.getElementById('uploadLog');
         
         let files = [];
@@ -213,8 +217,7 @@
         let isUploading = false;
         let currentFileIndex = 0;
         let uploadedFiles = 0;
-        let countdownInterval = null;
-        let secondsRemaining = 30;
+        let currentAbortController = null;
 
         // Prevent default drag behaviors
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -426,6 +429,7 @@
             uploadedCount.textContent = '0';
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
+            document.getElementById('uploadStatus').textContent = 'Uploading...';
             uploadLog.innerHTML = '';
             
             // Hide file selection UI
@@ -434,27 +438,43 @@
             startUploadButton.disabled = true;
             
             // Add initial log entry
-            addLogEntry(`Starting sequential upload of ${validFiles.length} files with 30-second intervals...`, 'info');
+            addLogEntry(`Starting sequential upload of ${validFiles.length} files with ${uploadTimeoutInput.value}s timeout per file...`, 'info');
             
             // Start the first upload immediately
             uploadCurrentFile();
         }
         
         function uploadCurrentFile() {
+            const uploadStatus = document.getElementById('uploadStatus');
+            
             if (currentFileIndex >= validFiles.length) {
                 // All files processed
                 isUploading = false;
+                uploadStatus.textContent = 'Complete';
                 addLogEntry(`Upload complete. Successfully uploaded ${uploadedFiles} of ${validFiles.length} files.`, 'info');
-                nextUploadTimer.style.display = 'none';
                 return;
             }
             
             const file = validFiles[currentFileIndex];
-            addLogEntry(`Uploading file ${currentFileIndex + 1}/${validFiles.length}: ${file.name}`, 'info');
+            const timeout = parseInt(uploadTimeoutInput.value) * 1000; // Convert to milliseconds
+            
+            // Update status to show which file is being uploaded
+            uploadStatus.textContent = `Uploading file ${currentFileIndex + 1}/${validFiles.length}`;
+            
+            addLogEntry(`Uploading file ${currentFileIndex + 1}/${validFiles.length}: ${file.name} (timeout: ${timeout/1000}s)`, 'info');
             
             // Create form data for this single file
             const formData = new FormData();
             formData.append('files', file);
+            
+            // Set up abort controller for timeout
+            currentAbortController = new AbortController();
+            const timeoutId = setTimeout(() => {
+                currentAbortController.abort();
+                uploadStatus.textContent = 'Failed - Timeout';
+                addLogEntry(`Upload of ${file.name} timed out after ${timeout/1000} seconds. Stopping.`, 'error');
+                isUploading = false;
+            }, timeout);
             
             // Upload the file
             fetch('/upload', {
@@ -462,10 +482,13 @@
                 headers: {
                     'X-Requested-With': 'XMLHttpRequest'
                 },
-                body: formData
+                body: formData,
+                signal: currentAbortController.signal
             })
             .then(response => response.json())
             .then(data => {
+                clearTimeout(timeoutId); // Clear the timeout since we got a response
+                
                 if (data.status === 'success') {
                     // Upload succeeded
                     uploadedFiles++;
@@ -477,46 +500,28 @@
                     progressBar.style.width = `${percentComplete}%`;
                     progressBar.textContent = `${Math.round(percentComplete)}%`;
                     
-                    // Move to next file after 30 seconds
+                    // Move to next file immediately
                     currentFileIndex++;
-                    
-                    if (currentFileIndex < validFiles.length) {
-                        // Start countdown for next upload
-                        secondsRemaining = 30;
-                        countdownTimer.textContent = secondsRemaining;
-                        nextUploadTimer.style.display = 'block';
-                        
-                        if (countdownInterval) {
-                            clearInterval(countdownInterval);
-                        }
-                        
-                        countdownInterval = setInterval(() => {
-                            secondsRemaining--;
-                            countdownTimer.textContent = secondsRemaining;
-                            
-                            if (secondsRemaining <= 0) {
-                                clearInterval(countdownInterval);
-                                uploadCurrentFile();
-                            }
-                        }, 1000);
-                    } else {
-                        // No more files
-                        addLogEntry('All files processed successfully!', 'success');
-                        isUploading = false;
-                        nextUploadTimer.style.display = 'none';
-                    }
+                    uploadCurrentFile();
                 } else {
                     // Upload failed
+                    uploadStatus.textContent = 'Failed - Error';
                     addLogEntry(`Failed to upload ${file.name}: ${data.message}. Stopping.`, 'error');
                     isUploading = false;
-                    nextUploadTimer.style.display = 'none';
                 }
             })
             .catch(error => {
+                clearTimeout(timeoutId); // Clear the timeout
+                
+                if (error.name === 'AbortError') {
+                    // Already handled by the timeout callback
+                    return;
+                }
+                
                 console.error('Error:', error);
+                uploadStatus.textContent = 'Failed - Network Error';
                 addLogEntry(`Error uploading ${file.name}: ${error.message}. Stopping.`, 'error');
                 isUploading = false;
-                nextUploadTimer.style.display = 'none';
             });
         }
         
