@@ -629,6 +629,14 @@ def browse_buckets():
     app.logger.info(f"S3_TEMP_BUCKET: {S3_TEMP_BUCKET}")
     app.logger.info(f"S3_ISSUE_BUCKET: {S3_ISSUE_BUCKET}")
     
+    # Clear success messages related to uploads from session
+    flashed_messages = session.get('_flashes', [])
+    if flashed_messages:
+        # Keep only non-success messages or messages that don't contain "uploaded"
+        filtered_messages = [(category, message) for category, message in flashed_messages 
+                            if category != 'success' or 'uploaded' not in message.lower()]
+        session['_flashes'] = filtered_messages
+    
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
@@ -643,6 +651,14 @@ def browse_buckets():
 @app.route('/browse/<bucket_name>')
 @login_required
 def browse_bucket(bucket_name):
+    # Clear success messages related to uploads from session
+    flashed_messages = session.get('_flashes', [])
+    if flashed_messages:
+        # Keep only non-success messages or messages that don't contain "uploaded"
+        filtered_messages = [(category, message) for category, message in flashed_messages 
+                            if category != 'success' or 'uploaded' not in message.lower()]
+        session['_flashes'] = filtered_messages
+        
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
