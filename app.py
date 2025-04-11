@@ -550,6 +550,7 @@ def move_image_route(action, image_key):
                     s3_client.delete_object(Bucket=source_bucket, Key=image_key)
                     app.logger.info(f"Deleted {image_key} from {source_bucket} after successful copies")
                     success = True
+                    # Only use the dismissable flash message, not a static one
                     flash(f"Image '{image_key}' moved to both good and incredible buckets.", "success")
                 except Exception as e:
                     app.logger.error(f"Error deleting original file after copies: {e}")
@@ -560,7 +561,11 @@ def move_image_route(action, image_key):
         destination_bucket = S3_GOOD_BUCKET if action == 'good' else S3_BAD_BUCKET
         if move_s3_object(source_bucket, destination_bucket, image_key, destination=action):
             success = True
-            flash(f"Image '{image_key}' moved to {action} bucket.", "success")
+            # Only log to the app logger, don't use flash messages twice
+            app.logger.info(f"Image '{image_key}' moved to {action} bucket.")
+            # Use a single flash message
+            filename = image_key.split('/')[-1]
+            flash(f"Image '{filename}' moved to {action} bucket.", "success")
 
     if not success:
         flash(f"Failed to move image '{image_key}' to {action} bucket.", "danger")
@@ -806,11 +811,17 @@ def delete_object_route(bucket_name, object_key):
         return redirect(url_for('browse_buckets'))
         
     try:
+        # Extract just the filename for the message
+        filename = object_key.split('/')[-1]
+        
         s3_client.delete_object(
             Bucket=buckets[bucket_name],
             Key=object_key
         )
-        flash(f'File {object_key} deleted successfully', 'success')
+        
+        # Log the full path but only flash the filename in the message
+        app.logger.info(f"Deleted {object_key} from {buckets[bucket_name]}")
+        flash(f'File "{filename}" deleted successfully', 'success')
     except Exception as e:
         app.logger.error(f"Error deleting object: {e}")
         flash(f'Error deleting file: {str(e)}', 'danger')
@@ -874,8 +885,12 @@ def delete_all_objects_route(bucket_name):
                 error_count += len(batch)
         
         if error_count == 0:
+            # Log details to the application log
+            app.logger.info(f"Successfully deleted {deleted_count} files from {bucket_info['bucket']}")
+            # Use a simplified message for the flash notification
             flash(f'Successfully deleted {deleted_count} files from {bucket_info["name"]}', 'success')
         else:
+            app.logger.warning(f"Deleted {deleted_count} files, but encountered {error_count} errors in {bucket_info['bucket']}")
             flash(f'Deleted {deleted_count} files, but encountered {error_count} errors', 'warning')
             
     except Exception as e:

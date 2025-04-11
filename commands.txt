@@ -2,6 +2,7 @@ git add .
 git commit -m "insert_text"
 git push heroku master
 
-heroku ps:restart worker
+heroku ps:restart image_worker
+heroku ps:restart validation_worker
 
 heroku restart
