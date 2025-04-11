@@ -6,6 +6,7 @@ import requests
 import logging
 import traceback
 import sys
+import concurrent.futures
 from io import BytesIO
 from datetime import datetime
 from botocore.exceptions import ClientError
@@ -36,6 +37,10 @@ S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
+# Parallel Processing Configuration
+MAX_WORKERS = 5  # Process up to 5 images at a time
+BATCH_SIZE = 5   # Number of images to process in each batch
+
 # Debug variables
 DEBUG_FILE = "processor_debug.txt"
 LAST_RUN_FILE = "last_run.txt"
@@ -51,6 +56,8 @@ print(f"BYTESCALE API KEY set: {'Yes' if BYTESCALE_API_KEY else 'No'}")
 print(f"BYTESCALE UPLOAD URL set: {'Yes' if BYTESCALE_UPLOAD_URL else 'No'}")
 print(f"TEMP_PREFIX: {TEMP_PREFIX}")
 print(f"DESTINATION_PREFIX: {DESTINATION_PREFIX}")
+print(f"MAX_WORKERS: {MAX_WORKERS}")
+print(f"BATCH_SIZE: {BATCH_SIZE}")
 print(f"====================================\n")
 
 # Validate configuration
@@ -354,7 +361,7 @@ def process_image(s3_key):
         }
 
 def process_next_batch():
-    """Process the next batch of images from the temp bucket"""
+    """Process multiple images in parallel"""
     try:
         write_debug_info("\n===== Starting new processing cycle =====")
         update_last_run()
@@ -366,21 +373,34 @@ def process_next_batch():
             write_debug_info("No images found in temp bucket")
             return
         
-        write_debug_info(f"Found {len(images)} images in temp bucket")
+        # Take up to BATCH_SIZE images to process
+        batch = images[:BATCH_SIZE]
+        write_debug_info(f"Processing batch of {len(batch)} images (from {len(images)} total)")
         
-        # Process one image at a time
-        for image in images:
-            s3_key = image['Key']
-            result = process_image(s3_key)
-            
-            if result['status'] == 'success':
-                write_debug_info(f"Successfully processed {s3_key}")
-            else:
-                write_debug_info(f"Failed to process {s3_key}: {result['message']}")
-            
-            # Only process one image per run to avoid overloading
-            break
+        # Create a thread pool and process images in parallel
+        successful = 0
+        failed = 0
         
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # Submit all jobs
+            future_to_key = {executor.submit(process_image, image['Key']): image['Key'] for image in batch}
+            
+            # Process as they complete
+            for future in concurrent.futures.as_completed(future_to_key):
+                key = future_to_key[future]
+                try:
+                    result = future.result()
+                    if result['status'] == 'success':
+                        successful += 1
+                        write_debug_info(f"✓ Successfully processed {key}")
+                    else:
+                        failed += 1
+                        write_debug_info(f"✗ Failed to process {key}: {result['message']}")
+                except Exception as e:
+                    failed += 1
+                    write_debug_info(f"✗ Exception processing {key}: {str(e)}")
+        
+        write_debug_info(f"Batch processing complete: {successful} successful, {failed} failed")
         write_debug_info("===== Completed processing cycle =====\n")
         
     except Exception as e:
