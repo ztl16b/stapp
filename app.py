@@ -26,9 +26,21 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=365)
 app.config['SESSION_COOKIE_SECURE'] = True  # Set to True for HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Add SameSite attribute
+app.config['SESSION_COOKIE_NAME'] = 'image_interface_session'  # Custom cookie name
 
 # Dictionary to store upload status
 upload_status = {}
+
+# Add a before_request handler to refresh the session on each request
+@app.before_request
+def before_request():
+    # Make the session permanent for all requests
+    session.permanent = True
+    
+    # If user is logged in, refresh the login time
+    if session.get('logged_in'):
+        session['login_time'] = datetime.now().isoformat()
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -47,11 +59,19 @@ BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # Check if user is logged in
         if not session.get('logged_in'):
             # Store the URL the user was trying to access
             session['next'] = request.url
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('login'))
+        
+        # Update last activity time
+        session['last_activity'] = datetime.now().isoformat()
+        
+        # Log access for debugging
+        app.logger.debug(f"User {session.get('user_id', 'unknown')} accessed {request.url}")
+        
         return f(*args, **kwargs)
     return decorated_function
 
@@ -66,9 +86,19 @@ def login():
         app.logger.info(f"Login attempt - Browse password set: {bool(browse_password)}, Admin password set: {bool(admin_password)}")
         
         if password == browse_password or password == admin_password:
+            # Clear any existing session data
+            session.clear()
+            
+            # Set up a new session
             session.permanent = True  # Make the session permanent
             session['logged_in'] = True
             session['login_time'] = datetime.now().isoformat()
+            session['user_id'] = str(uuid.uuid4())  # Add a unique user ID
+            session['last_activity'] = datetime.now().isoformat()
+            
+            # Log successful login
+            app.logger.info(f"User logged in successfully at {session['login_time']}")
+            
             flash('Login successful!', 'success')
             
             # Redirect to the stored URL or default to browse_buckets
