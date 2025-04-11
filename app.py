@@ -8,44 +8,15 @@ from botocore.exceptions import NoCredentialsError, ClientError
 from functools import wraps
 from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
-import ssl
-from celery import Celery
+from requests.exceptions import RequestException
 import uuid
 import time
-from tasks import process_image  # Import the process_image task
 
 load_dotenv()
 
 # Get the absolute path to the templates directory
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
-
-# Create Celery instance
-broker_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-result_backend = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-
-broker_use_ssl = {
-    'ssl_cert_reqs': ssl.CERT_NONE
-} if broker_url.startswith('rediss://') else None
-
-result_backend_use_ssl = {
-    'ssl_cert_reqs': ssl.CERT_NONE
-} if result_backend.startswith('rediss://') else None
-
-celery = Celery('image_interface',
-                broker=broker_url,
-                backend=result_backend)
-
-celery.conf.update(
-    broker_use_ssl=broker_use_ssl,
-    redis_backend_use_ssl=result_backend_use_ssl,
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
-    broker_connection_retry_on_startup=True
-)
 
 # Set a fixed secret key for session management
 app.secret_key = os.environ.get('SECRET_KEY', 'your-fixed-secret-key-for-development')
@@ -57,9 +28,6 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(days=30),  # 30 days
 )
-
-# Remove the in-memory upload_status dictionary
-# upload_status = {}
 
 # AWS Configuration
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -147,6 +115,97 @@ except Exception as e:
 def index():
     return redirect(url_for('upload'))
 
+def process_image(file_data, filename, content_type):
+    """
+    Process an image using Bytescale API and upload to S3.
+    
+    Args:
+        file_data: The file data as bytes
+        filename: The original filename
+        content_type: The content type of the file
+        
+    Returns:
+        dict: Status information about the processing
+    """
+    try:
+        app.logger.info(f"Processing image: {filename}")
+        
+        headers = {
+            'Authorization': f'Bearer {BYTESCALE_API_KEY}'
+        }
+        files_data = {
+            'file': (filename, file_data, content_type)
+        }
+        
+        # Upload to Bytescale
+        app.logger.info(f"Uploading {filename} to Bytescale")
+        upload_response = requests.post(BYTESCALE_UPLOAD_URL, headers=headers, files=files_data, timeout=60)
+        upload_response.raise_for_status()
+        
+        json_response = upload_response.json()
+        file_url = None
+        for file_obj in json_response.get("files", []):
+            if file_obj.get("formDataFieldName") == "file":
+                file_url = file_obj.get("fileUrl")
+                break
+        
+        if not file_url:
+            raise ValueError("Could not find file URL in Bytescale response")
+        
+        app.logger.info(f"Downloading processed image for {filename}")
+        processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
+        
+        # Download the processed image
+        download_response = requests.get(processed_url, stream=True, timeout=60)
+        download_response.raise_for_status()
+        
+        # Upload to S3
+        app.logger.info(f"Uploading {filename} to S3")
+        upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
+        
+        s3_client.upload_fileobj(
+            download_response.raw,
+            S3_UPLOAD_BUCKET,
+            upload_path,
+            ExtraArgs={'ContentType': 'image/webp'}
+        )
+        
+        return {
+            'status': 'success',
+            'message': f'Successfully processed and uploaded {filename}',
+            's3_path': upload_path,
+            'filename': filename
+        }
+        
+    except RequestException as e:
+        app.logger.error(f"Network error processing {filename}: {e}")
+        return {
+            'status': 'error',
+            'message': f'Network Error: {str(e)}',
+            'filename': filename
+        }
+    except ClientError as e:
+        app.logger.error(f"S3 upload error for {filename}: {e}")
+        return {
+            'status': 'error',
+            'message': f'S3 Upload Error: {str(e)}',
+            'filename': filename
+        }
+    except NoCredentialsError:
+        app.logger.error(f"AWS credentials not found when processing {filename}")
+        return {
+            'status': 'error',
+            'message': 'AWS credentials not found',
+            'filename': filename
+        }
+    except Exception as e:
+        app.logger.error(f"Unexpected error processing {filename}: {e}")
+        return {
+            'status': 'error',
+            'message': f'Unexpected error: {str(e)}',
+            'filename': filename
+        }
+
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
     if request.method == 'POST':
@@ -159,8 +218,9 @@ def upload():
             flash('No selected files', 'warning')
             return redirect(request.url)
         
-        # Store file information for processing
-        task_ids = []
+        # Process files directly (no Celery)
+        successful_uploads = []
+        failed_uploads = []
         
         for file in files:
             # Read file data
@@ -168,89 +228,25 @@ def upload():
             filename = file.filename
             content_type = file.content_type
             
-            # Submit task to Celery
-            task = process_image.delay(file_data, filename, content_type)
-            task_ids.append(task.id)
+            # Process the image directly
+            result = process_image(file_data, filename, content_type)
             
-            # Remove initialization of status for this task in the dictionary
-            # upload_status[task.id] = {
-            #     'status': 'PENDING',
-            #     'filename': filename,
-            #     'message': 'Task queued'
-            # }
+            if result['status'] == 'success':
+                successful_uploads.append(filename)
+            else:
+                failed_uploads.append((filename, result['message']))
         
-        # Store task IDs in session for status checking
-        session['upload_task_ids'] = task_ids
+        # Flash messages about the results
+        if successful_uploads:
+            flash(f'Successfully processed {len(successful_uploads)} files: {", ".join(successful_uploads)}', 'success')
         
-        flash(f'{len(files)} files queued for processing. You can check the status below.', 'info')
-        # Redirect directly to the status route
-        return redirect(url_for('upload_status_route')) # Renamed for clarity
+        if failed_uploads:
+            for filename, error in failed_uploads:
+                flash(f'Failed to process {filename}: {error}', 'error')
+        
+        return redirect(url_for('upload'))
         
     return render_template('upload.html')
-
-# Renamed route function for clarity
-@app.route('/upload-status')
-@login_required # Ensure user is logged in to see status
-def upload_status_route():
-    # Fetch task IDs from session
-    task_ids = session.get('upload_task_ids', [])
-    # Render the template; status will be loaded via JavaScript
-    return render_template('upload_status.html', tasks=[]) # Pass empty list initially
-
-@app.route('/check-upload-status')
-@login_required # Ensure user is logged in to check status
-def check_upload_status():
-    task_ids = session.get('upload_task_ids', [])
-    tasks_status = []
-    
-    for task_id in task_ids:
-        task = celery.AsyncResult(task_id)
-        status = task.state
-        info = task.info # Contains metadata like filename and messages
-        filename = "Unknown" # Default filename
-        message = "Fetching status..."
-        
-        if isinstance(info, dict):
-            filename = info.get('filename', filename) # Get filename if available
-            message = info.get('message', 'Processing...') # Get message if available
-
-        if status == 'PENDING':
-            message = 'Task queued, waiting to start.'
-        elif status == 'STARTED':
-            message = 'Task started by worker.'
-        elif status == 'PROCESSING':
-            # Use the message set by the task itself if available
-            message = info.get('status', 'Processing...') 
-        elif status == 'SUCCESS':
-            result = task.result
-            if isinstance(result, dict):
-                message = result.get('message', 'Task completed successfully.')
-                filename = result.get('filename', filename) # Update filename from result if needed
-            else:
-                message = 'Task completed successfully.'
-        elif status == 'FAILURE':
-            # Attempt to get a specific error message
-            try:
-                result = task.result
-                if isinstance(result, dict):
-                     message = f"Task failed: {result.get('message', 'Unknown error')}"
-                else:
-                    # Try to get traceback or error details
-                    message = f"Task failed: {str(task.result)}"
-            except Exception as e:
-                 message = f"Task failed: Could not retrieve error details ({e})"
-            status = 'FAILED' # Standardize the status string
-        elif status == 'RETRY':
-            message = 'Task is being retried.'
-            
-        tasks_status.append({
-            'id': task_id,
-            'filename': filename, # Use the filename from task info
-            'status': status, # Use the direct Celery status
-            'message': message
-        })
-    
-    return jsonify({'tasks': tasks_status})
 
 def get_random_image_key(bucket_name):
     """Gets a random object key from the specified bucket."""
