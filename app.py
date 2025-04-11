@@ -128,7 +128,7 @@ def upload():
             return redirect(request.url)
         
         # Limit number of files processed at once to prevent crashes
-        max_files_per_batch = 10
+        max_files_per_batch = 100
         
         # Process files directly, but with better handling
         successful_uploads = []
