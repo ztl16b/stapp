@@ -127,7 +127,7 @@
             </div>
             <p class="text-muted">Supported formats: JPG, PNG, GIF, WEBP</p>
             <p class="text-muted">Maximum file size: 5MB per file</p>
-            <p class="text-muted">Recommended maximum: 50 files per upload</p>
+            <p class="text-muted">Recommended maximum: 200 files per upload</p>
         </div>
 
         <div id="filePreview" class="file-preview"></div>
@@ -159,7 +159,10 @@
         <span class="visually-hidden">Loading...</span>
     </div>
     <h5>Processing your images...</h5>
-    <p>This may take a moment. Please don't close the page.</p>
+    <p>This may take several minutes for large batches (200+ images). Please don't close the page.</p>
+    <div class="progress mt-3" style="width: 300px;">
+        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+    </div>
 </div>
 {% endblock %}
 
@@ -183,7 +186,7 @@
         
         let files = [];
         const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
-        const MAX_RECOMMENDED_FILES = 50;
+        const MAX_RECOMMENDED_FILES = 200;
         const VALID_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
 
         // Prevent default drag behaviors
@@ -271,7 +274,7 @@
             // Show batch info if needed
             if (files.length > MAX_RECOMMENDED_FILES) {
                 batchInfo.style.display = 'block';
-                batchMessage.textContent = `You've selected ${files.length} files. We recommend uploading in batches of ${MAX_RECOMMENDED_FILES} for optimal performance, but the system can handle up to 500 files at once.`;
+                batchMessage.textContent = `You've selected ${files.length} files. We recommend uploading in batches of ${MAX_RECOMMENDED_FILES} for optimal performance`;
             } else {
                 batchInfo.style.display = 'none';
             }
@@ -370,7 +373,7 @@
                     // Update batch info
                     if (files.length > MAX_RECOMMENDED_FILES) {
                         batchInfo.style.display = 'block';
-                        batchMessage.textContent = `You've selected ${files.length} files. We recommend uploading in batches of ${MAX_RECOMMENDED_FILES} for optimal performance, but the system can handle up to 500 files at once.`;
+                        batchMessage.textContent = `You've selected ${files.length} files. We recommend uploading in batches of ${MAX_RECOMMENDED_FILES} for optimal performance`;
                     } else {
                         batchInfo.style.display = 'none';
                     }

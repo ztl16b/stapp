@@ -128,7 +128,7 @@ def upload():
             return redirect(request.url)
         
         # Limit number of files processed at once to prevent crashes
-        max_files_per_batch = 500
+        max_files_per_batch = 300
         
         # Process files directly, but with better handling
         successful_uploads = []
@@ -137,6 +137,7 @@ def upload():
         
         # Calculate total number of files
         total_files = len(files)
+        app.logger.info(f"Upload started with {total_files} files")
         
         # Check if we need to limit the batch
         if total_files > max_files_per_batch:
@@ -147,16 +148,23 @@ def upload():
             files_to_process = files
         
         # Set a larger timeout for requests to external services
-        processing_timeout = 180  # 3 minutes
+        processing_timeout = 240  # 4 minutes (increased from 3)
         
         # Process in smaller chunks to provide feedback and manage memory better
-        chunk_size = 25  # Process 25 files at a time for better progress feedback
+        # For 200+ files, use a larger chunk size to reduce overhead
+        chunk_size = min(50, max(25, total_files // 10))  # Adaptive chunking
         total_to_process = len(files_to_process)
         processed_count = 0
+        
+        # Log the upload plan
+        app.logger.info(f"Processing {total_to_process} files in chunks of {chunk_size} with a timeout of {processing_timeout}s")
         
         for i in range(0, total_to_process, chunk_size):
             chunk = files_to_process[i:i+chunk_size]
             chunk_processed = 0
+            chunk_size_actual = len(chunk)
+            
+            app.logger.info(f"Starting chunk {i//chunk_size + 1} with {chunk_size_actual} files")
             
             for file in chunk:
                 try:
@@ -193,12 +201,18 @@ def upload():
                     chunk_processed += 1
                     
                 except Exception as e:
-                    app.logger.error(f"Unexpected error during file upload processing: {str(e)}")
+                    app.logger.error(f"Unexpected error processing {file.filename}: {str(e)}")
                     failed_uploads.append((file.filename, f"Unexpected error: {str(e)}"))
             
-            # Show progress after each chunk
+            # Show progress after each chunk and force garbage collection
             if i + chunk_size < total_to_process:
-                app.logger.info(f"Processed {processed_count}/{total_to_process} files...")
+                app.logger.info(f"Chunk {i//chunk_size + 1} complete: Processed {processed_count}/{total_to_process} files ({chunk_processed} in this chunk)")
+                # Force garbage collection to free memory
+                import gc
+                gc.collect()
+        
+        # Final log of results
+        app.logger.info(f"Upload complete: {len(successful_uploads)} successful, {len(failed_uploads)} failed, {len(skipped_files)} skipped")
         
         # Flash messages about the results
         if successful_uploads:
@@ -234,8 +248,9 @@ def process_image(file_data, filename, content_type, timeout=60):
     Returns:
         dict: Status information about the processing
     """
+    start_time = time.time()
     try:
-        app.logger.info(f"Processing image: {filename}")
+        app.logger.info(f"Processing image: {filename} ({len(file_data)/1024:.1f} KB)")
         
         # Validate file size again (5MB limit)
         if len(file_data) > 5 * 1024 * 1024:
@@ -276,44 +291,90 @@ def process_image(file_data, filename, content_type, timeout=60):
             'file': (filename, file_data, content_type)
         }
         
+        # Track timing of each step for performance analysis
+        steps_timing = {}
+        
         # Upload to Bytescale with configurable timeout
         app.logger.info(f"Uploading {filename} to Bytescale")
+        upload_start = time.time()
         
         # Use a session for better connection pooling when processing multiple files
         with requests.Session() as session:
+            # Configure session timeouts and retries
+            session.mount('https://', requests.adapters.HTTPAdapter(
+                max_retries=3,
+                pool_connections=10,
+                pool_maxsize=10
+            ))
+            
             # Upload to Bytescale
-            upload_response = session.post(
-                BYTESCALE_UPLOAD_URL, 
-                headers=headers, 
-                files=files_data, 
-                timeout=timeout
-            )
-            upload_response.raise_for_status()
+            try:
+                upload_response = session.post(
+                    BYTESCALE_UPLOAD_URL, 
+                    headers=headers, 
+                    files=files_data, 
+                    timeout=timeout
+                )
+                upload_response.raise_for_status()
+            except Exception as e:
+                app.logger.error(f"Bytescale upload failed for {filename}: {str(e)}")
+                return {
+                    'status': 'error',
+                    'message': f'Bytescale API Error: {str(e)}',
+                    'filename': filename
+                }
+            
+            steps_timing['bytescale_upload'] = time.time() - upload_start
             
             # Parse response to get file URL
-            json_response = upload_response.json()
-            file_url = None
-            for file_obj in json_response.get("files", []):
-                if file_obj.get("formDataFieldName") == "file":
-                    file_url = file_obj.get("fileUrl")
-                    break
+            try:
+                json_response = upload_response.json()
+                file_url = None
+                for file_obj in json_response.get("files", []):
+                    if file_obj.get("formDataFieldName") == "file":
+                        file_url = file_obj.get("fileUrl")
+                        break
+            except Exception as e:
+                app.logger.error(f"Failed to parse Bytescale response for {filename}: {str(e)}")
+                return {
+                    'status': 'error',
+                    'message': f'Failed to parse API response: {str(e)}',
+                    'filename': filename
+                }
             
             if not file_url:
-                raise ValueError("Could not find file URL in Bytescale response")
+                return {
+                    'status': 'error',
+                    'message': 'Could not find file URL in Bytescale response',
+                    'filename': filename
+                }
             
             # We don't need the original file data anymore
             del file_data
             del files_data
             
+            # Download the processed image
             app.logger.info(f"Downloading processed image for {filename}")
+            download_start = time.time()
             processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=center"
             
             # Download the processed image with configurable timeout
-            download_response = session.get(processed_url, stream=True, timeout=timeout)
-            download_response.raise_for_status()
+            try:
+                download_response = session.get(processed_url, stream=True, timeout=timeout)
+                download_response.raise_for_status()
+            except Exception as e:
+                app.logger.error(f"Failed to download processed image for {filename}: {str(e)}")
+                return {
+                    'status': 'error',
+                    'message': f'Download Error: {str(e)}',
+                    'filename': filename
+                }
+                
+            steps_timing['download'] = time.time() - download_start
             
-            # Upload to S3 with progress tracking
+            # Upload to S3
             app.logger.info(f"Uploading {filename} to S3")
+            s3_upload_start = time.time()
             upload_path = f"temp_performer_at_venue_images/{filename.rsplit('.', 1)[0]}.webp"
             
             # Optimized S3 upload configuration for better performance
@@ -324,19 +385,34 @@ def process_image(file_data, filename, content_type, timeout=60):
                 use_threads=True
             )
             
-            s3_client.upload_fileobj(
-                download_response.raw,
-                S3_UPLOAD_BUCKET,
-                upload_path,
-                ExtraArgs={'ContentType': 'image/webp'},
-                Config=s3_config
-            )
+            try:
+                s3_client.upload_fileobj(
+                    download_response.raw,
+                    S3_UPLOAD_BUCKET,
+                    upload_path,
+                    ExtraArgs={'ContentType': 'image/webp'},
+                    Config=s3_config
+                )
+            except Exception as e:
+                app.logger.error(f"S3 upload failed for {filename}: {str(e)}")
+                return {
+                    'status': 'error',
+                    'message': f'S3 Upload Error: {str(e)}',
+                    'filename': filename
+                }
+            
+            steps_timing['s3_upload'] = time.time() - s3_upload_start
+        
+        total_time = time.time() - start_time
+        app.logger.info(f"Successfully processed {filename} in {total_time:.2f}s (Bytescale: {steps_timing.get('bytescale_upload', 0):.2f}s, Download: {steps_timing.get('download', 0):.2f}s, S3: {steps_timing.get('s3_upload', 0):.2f}s)")
         
         return {
             'status': 'success',
             'message': f'Successfully processed and uploaded {filename}',
             's3_path': upload_path,
-            'filename': filename
+            'filename': filename,
+            'timing': steps_timing,
+            'total_time': total_time
         }
         
     except RequestException as e:
@@ -587,8 +663,8 @@ def browse_bucket(bucket_name):
         search_query = request.args.get('search', '').lower()
         sort_order = request.args.get('sort', 'desc')  # Default to descending order
         date_from = request.args.get('date_from', '')  # Date filter from
-        date_to = request.args.get('date_to', '')      # Date filter to
-        per_page = 100  # Reduced from 500 to 100 for better performance
+        date_to = request.args.get('date_to', '')
+        per_page = 200
         
         # Create a paginator for list_objects_v2 with MaxKeys parameter
         paginator = s3_client.get_paginator('list_objects_v2')
@@ -778,4 +854,8 @@ def delete_all_objects_route(bucket_name):
 if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')
+    # For local development
     app.run(debug=True)
+    
+# Set higher timeout for Gunicorn when running on Heroku
+# Usage: gunicorn --timeout 300 app:app
