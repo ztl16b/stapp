@@ -196,6 +196,12 @@ def process_image(s3_key):
         file_data = response['Body'].read()
         content_type = response.get('ContentType', 'image/jpeg')
         
+        # Get uploader name metadata if available
+        metadata = response.get('Metadata', {})
+        uploader_name = metadata.get('uploader-name', '')
+        if uploader_name:
+            write_debug_info(f"Found uploader name metadata: {uploader_name}")
+        
         write_debug_info(f"Downloaded {filename} ({len(file_data)} bytes) with content type {content_type}")
         
         if len(file_data) == 0:
@@ -286,11 +292,17 @@ def process_image(s3_key):
             write_debug_info(f"Final filename: {os.path.basename(upload_path)}")
             write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
             
+            # Prepare extra args for upload, including metadata
+            extra_args = {'ContentType': 'image/webp'}
+            if uploader_name:
+                extra_args['Metadata'] = {'uploader-name': uploader_name}
+                write_debug_info(f"Preserving uploader name metadata: {uploader_name}")
+            
             s3_client.upload_fileobj(
                 download_response.raw,
                 S3_UPLOAD_BUCKET,
                 upload_path,
-                ExtraArgs={'ContentType': 'image/webp'},
+                ExtraArgs=extra_args,
                 Config=s3_upload_config
             )
             
@@ -305,7 +317,8 @@ def process_image(s3_key):
                 'status': 'success',
                 'original_key': s3_key,
                 'processed_key': upload_path,
-                'message': f'Successfully processed {filename}'
+                'message': f'Successfully processed {filename}',
+                'uploader_name': uploader_name
             }
     except Exception as e:
         error_msg = f"Error processing image {s3_key}: {str(e)}"

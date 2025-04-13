@@ -167,6 +167,19 @@ def upload():
             flash('No selected files', 'warning')
             return redirect(request.url)
         
+        # Get uploader name and validate
+        uploader_name = request.form.get('uploaderName', '').strip()
+        if not uploader_name:
+            error_msg = 'Uploader name is required'
+            app.logger.warning(error_msg)
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({
+                    'status': 'error',
+                    'message': error_msg
+                })
+            flash(error_msg, 'warning')
+            return redirect(request.url)
+        
         # When using client-side sequential uploads, we'll receive just one file at a time
         file = files[0]  # Process just the first file
         
@@ -185,8 +198,8 @@ def upload():
         filename = secure_filename(file.filename)
         content_type = file.content_type
         
-        # Process the single file directly
-        result = process_image(file_data, filename, content_type)
+        # Process the single file directly with uploader name
+        result = process_image(file_data, filename, content_type, uploader_name=uploader_name)
         
         if result['status'] == 'success':
             flash(f'Successfully uploaded {filename}', 'success')
@@ -205,7 +218,7 @@ def upload():
     
     return render_template('upload.html')
 
-def process_image(file_data, filename, content_type, timeout=None):
+def process_image(file_data, filename, content_type, timeout=None, uploader_name=None):
     """
     Upload an image directly to the S3 temp bucket in its original format.
     
@@ -214,6 +227,7 @@ def process_image(file_data, filename, content_type, timeout=None):
         filename: The original filename (with perf_id-ven_id format)
         content_type: The content type of the file
         timeout: Kept for backwards compatibility
+        uploader_name: Name of the person uploading the file
         
     Returns:
         dict: Status information about the processing
@@ -233,6 +247,12 @@ def process_image(file_data, filename, content_type, timeout=None):
         # Use original filename exactly as provided - the image_processor.py will handle format conversion
         upload_path = f"tmp_upload/{filename}"
         
+        # Add metadata with uploader name if provided
+        extra_args = {'ContentType': content_type}
+        if uploader_name:
+            extra_args['Metadata'] = {'uploader-name': uploader_name}
+            app.logger.info(f"Adding uploader name metadata: {uploader_name}")
+        
         # Upload to S3 using BytesIO for memory efficiency
         file_obj = BytesIO(file_data)
         
@@ -240,7 +260,7 @@ def process_image(file_data, filename, content_type, timeout=None):
             file_obj,
             S3_TEMP_BUCKET,
             upload_path,
-            ExtraArgs={'ContentType': content_type},
+            ExtraArgs=extra_args,
             Config=s3_upload_config
         )
         
@@ -250,7 +270,8 @@ def process_image(file_data, filename, content_type, timeout=None):
             'status': 'success',
             'message': 'Upload successful',
             's3_path': upload_path,
-            'filename': filename
+            'filename': filename,
+            'uploader_name': uploader_name
         }
     except Exception as e:
         app.logger.error(f"Error processing {filename}: {str(e)}")
@@ -628,6 +649,21 @@ def browse_bucket(bucket_name):
                                     'size': item['Size'],
                                     'last_modified': item['LastModified']
                                 })
+        
+        # Get metadata for each file (including uploader name)
+        for file in all_files:
+            try:
+                # Get object metadata using head_object call
+                head_response = s3_client.head_object(
+                    Bucket=bucket_info['bucket'],
+                    Key=file['key']
+                )
+                # Add metadata to file object
+                file['metadata'] = head_response.get('Metadata', {})
+                app.logger.debug(f"Metadata for {file['key']}: {file['metadata']}")
+            except Exception as e:
+                app.logger.error(f"Error getting metadata for {file['key']}: {e}")
+                file['metadata'] = {}
         
         # Sort files by last_modified date
         all_files.sort(key=lambda x: x['last_modified'], reverse=(sort_order == 'desc'))

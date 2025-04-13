@@ -82,6 +82,7 @@
                                 {% endif %}
                             </a>
                         </th>
+                        <th>Uploader</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -91,6 +92,7 @@
                         <td>{{ file.key }}</td>
                         <td>{{ (file.size / 1024)|round(1) }} KB</td>
                         <td>{{ file.last_modified.strftime('%m/%d/%y     %I:%M %p') }}</td>
+                        <td>{{ file.metadata.get('uploader-name', 'Unknown') }}</td>
                         <td>
                             <button type="button" class="btn btn-danger btn-sm" 
                                     data-bs-toggle="modal" 

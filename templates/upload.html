@@ -132,6 +132,13 @@
     </div>
 
     <form id="uploadForm" enctype="multipart/form-data">
+        <!-- Uploader Name Field -->
+        <div class="form-group mb-4">
+            <label for="uploaderName" class="form-label">Your Name: <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="uploaderName" name="uploaderName" placeholder="Enter your name" required>
+            <small class="form-text text-muted">Your name will be associated with these uploaded images.</small>
+        </div>
+
         <!-- Upload button at the top -->
         <div class="upload-button-container">
             <button type="button" class="btn btn-primary" id="startUploadButton" disabled>
@@ -417,30 +424,40 @@
 
         // Sequential Upload Functions
         function startSequentialUpload() {
-            if (isUploading || validFiles.length === 0) return;
+            // Check if uploader name is provided
+            const uploaderName = document.getElementById('uploaderName').value.trim();
+            if (!uploaderName) {
+                alert('Please enter your name before uploading.');
+                document.getElementById('uploaderName').focus();
+                return;
+            }
             
+            if (isUploading) {
+                addLogEntry('Upload already in progress', 'warning');
+                return;
+            }
+            
+            if (validFiles.length === 0) {
+                addLogEntry('No valid files selected for upload', 'warning');
+                return;
+            }
+            
+            uploadProgress.style.display = 'block';
+            uploadLog.innerHTML = '';
             isUploading = true;
             currentFileIndex = 0;
             uploadedFiles = 0;
             
-            // Show progress UI
-            uploadProgress.style.display = 'block';
-            totalCount.textContent = validFiles.length;
-            uploadedCount.textContent = '0';
+            // Update UI elements
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
-            document.getElementById('uploadStatus').textContent = 'Uploading...';
-            uploadLog.innerHTML = '';
+            uploadedCount.textContent = '0';
+            totalCount.textContent = validFiles.length;
+            uploadStatus.textContent = 'Starting...';
             
-            // Hide file selection UI
-            dropZone.style.display = 'none';
-            filePreview.style.display = 'none';
-            startUploadButton.disabled = true;
+            addLogEntry(`Starting upload of ${validFiles.length} files by ${uploaderName}`, 'info');
             
-            // Add initial log entry
-            addLogEntry(`Starting sequential upload of ${validFiles.length} files with ${uploadTimeoutInput.value}s timeout per file...`, 'info');
-            
-            // Start the first upload immediately
+            // Start the upload process
             uploadCurrentFile();
         }
         
@@ -457,6 +474,15 @@
             
             const file = validFiles[currentFileIndex];
             const timeout = parseInt(uploadTimeoutInput.value) * 1000; // Convert to milliseconds
+            const uploaderName = document.getElementById('uploaderName').value.trim();
+            
+            // Check if uploader name is provided
+            if (!uploaderName) {
+                isUploading = false;
+                uploadStatus.textContent = 'Failed - Missing Name';
+                addLogEntry(`Upload failed: Please enter your name before uploading.`, 'error');
+                return;
+            }
             
             // Update status to show which file is being uploaded
             uploadStatus.textContent = `Uploading file ${currentFileIndex + 1}/${validFiles.length}`;
@@ -466,6 +492,7 @@
             // Create form data for this single file
             const formData = new FormData();
             formData.append('files', file);
+            formData.append('uploaderName', uploaderName);
             
             // Set up abort controller for timeout
             currentAbortController = new AbortController();
