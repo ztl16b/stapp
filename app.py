@@ -432,11 +432,29 @@ def review_image_route():
         source_bucket = S3_UPLOAD_BUCKET
     
     image_url = None
+    uploader_initials = "Unknown"
+    
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
         app.logger.info(f"Loading image for review: {image_key} from {source_bucket}")
+        
+        # Get metadata for the image to extract uploader initials
+        try:
+            head_response = s3_client.head_object(
+                Bucket=source_bucket,
+                Key=image_key
+            )
+            metadata = head_response.get('Metadata', {})
+            uploader_initials = metadata.get('uploader-initials', 'Unknown')
+            app.logger.info(f"Found uploader initials: {uploader_initials}")
+        except Exception as e:
+            app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
-    return render_template('review.html', image_url=image_url, image_key=image_key, source_bucket=source_bucket)
+    return render_template('review.html', 
+                          image_url=image_url, 
+                          image_key=image_key, 
+                          source_bucket=source_bucket,
+                          uploader_initials=uploader_initials)
 
 @app.route('/move/<action>/<path:image_key>', methods=['POST'])
 @login_required
