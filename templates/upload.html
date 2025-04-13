@@ -104,6 +104,30 @@
     font-weight: bold;
     color: #6c757d;
 }
+.suggestion-wrapper {
+    position: relative;
+    width: 100%;
+}
+.suggestion-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    max-height: 200px;
+    overflow-y: auto;
+    background-color: white;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    z-index: 1000;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+}
+.suggestion-item {
+    padding: 8px 12px;
+    cursor: pointer;
+}
+.suggestion-item:hover {
+    background-color: #f8f9fa;
+}
     </style>
 {% endblock %}
 
@@ -135,13 +159,17 @@
         <!-- Uploader Initials Field -->
         <div class="form-group mb-4">
             <label for="uploaderInitials" class="form-label">Initials and Date: <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="uploaderInitials" name="uploaderInitials" 
-                   placeholder="ABCD_12_34" required
-                   pattern="^.+_\d{2}_\d{2}$"
-                   title="Format must be: any text followed by _##_## where ## are two digits">
-            <small class="form-text text-muted">Your initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)</small>
+            <div class="suggestion-wrapper position-relative">
+                <input type="text" class="form-control" id="uploaderInitials" name="uploaderInitials" 
+                       placeholder="ABCD_12_34" required
+                       pattern="^.+_\d{2}_\d{2}$"
+                       autocomplete="off"
+                       title="Format must be: Text followed by _MM_DD where MM and DD are two digits">
+                <div id="suggestionDropdown" class="suggestion-dropdown d-none"></div>
+            </div>
+            <small class="form-text text-muted">Your initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)</small>
             <div class="invalid-feedback" id="initialsError">
-                Initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)
+                Initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)
             </div>
         </div>
 
@@ -432,7 +460,7 @@
             // Check if uploader initials are provided and valid
             const uploaderInitials = document.getElementById('uploaderInitials').value.trim();
             
-            // Validate format: any text followed by _##_## where ## are two digits
+            // Validate format: Text followed by _MM_DD where MM and DD are two digits
             const initialsRegex = /^.+_\d{2}_\d{2}$/;
             
             if (!uploaderInitials) {
@@ -442,7 +470,7 @@
             }
             
             if (!initialsRegex.test(uploaderInitials)) {
-                alert('Initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)');
+                alert('Initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)');
                 document.getElementById('uploaderInitials').focus();
                 return;
             }
@@ -506,7 +534,7 @@
             if (!initialsRegex.test(uploaderInitials)) {
                 isUploading = false;
                 uploadStatus.textContent = 'Failed - Invalid Initials Format';
-                addLogEntry(`Upload failed: Initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)`, 'error');
+                addLogEntry(`Upload failed: Initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)`, 'error');
                 return;
             }
             
@@ -591,6 +619,78 @@
             
             // Scroll to bottom
             uploadLog.scrollTop = uploadLog.scrollHeight;
+        }
+
+        // Suggestion functionality for uploader initials
+        const initialsInput = document.getElementById('uploaderInitials');
+        const suggestionDropdown = document.getElementById('suggestionDropdown');
+        
+        let debounceTimer;
+        
+        // Add event listener for input changes
+        initialsInput.addEventListener('input', function() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                const query = initialsInput.value.trim();
+                if (query) {
+                    fetchSuggestions(query);
+                } else {
+                    suggestionDropdown.classList.add('d-none');
+                    suggestionDropdown.innerHTML = '';
+                }
+            }, 300);
+        });
+        
+        // Hide suggestions when clicking outside
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.suggestion-wrapper')) {
+                suggestionDropdown.classList.add('d-none');
+            }
+        });
+        
+        // Function to fetch suggestions from server
+        function fetchSuggestions(query) {
+            fetch(`/suggestions?q=${encodeURIComponent(query)}`)
+                .then(response => response.json())
+                .then(suggestions => {
+                    if (suggestions.length > 0) {
+                        displaySuggestions(suggestions);
+                    } else {
+                        suggestionDropdown.classList.add('d-none');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching suggestions:', error);
+                });
+        }
+        
+        // Function to display suggestions
+        function displaySuggestions(suggestions) {
+            suggestionDropdown.innerHTML = '';
+            
+            suggestions.forEach(suggestion => {
+                const item = document.createElement('div');
+                item.className = 'suggestion-item';
+                item.textContent = suggestion;
+                item.addEventListener('click', () => {
+                    initialsInput.value = suggestion;
+                    suggestionDropdown.classList.add('d-none');
+                    // Trigger validation
+                    validateForm();
+                });
+                suggestionDropdown.appendChild(item);
+            });
+            
+            suggestionDropdown.classList.remove('d-none');
+        }
+        
+        // Set default value with current date
+        if (initialsInput.value === '') {
+            const now = new Date();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            // Only set the date part if user hasn't typed anything yet
+            initialsInput.placeholder = `ABCD_${month}_${day}`;
         }
     });
 </script>
