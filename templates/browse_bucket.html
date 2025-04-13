@@ -92,7 +92,7 @@
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
             {% if is_lazy_loading %}
-            Viewing page {{ current_page }}{% if total_files %} ({{ files|length }} files){% endif %}
+            Page {{ current_page }}{% if total_files %}: {{ files|length }} files{% endif %}
             {% else %}
             Showing {{ files|length }} of {{ total_files }} files (Page {{ current_page }} of {{ total_pages }})
             {% endif %}
@@ -158,7 +158,7 @@
         <form id="batchDeleteForm" action="{{ url_for('delete_selected_route', bucket_name=bucket_name) }}" method="post">
             <div class="table-responsive">
                 <table class="table table-striped">
-                    <thead>
+                    <thead class="table-light">
                         <tr>
                             <th>
                                 <div class="form-check">
@@ -293,13 +293,13 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const selectAllCheckbox = document.getElementById('selectAll');
-        const fileCheckboxes = document.querySelectorAll('.file-checkbox');
+        const fileCheckboxes = document.querySelectorAll('tbody .file-checkbox');
         const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
         const selectedCountDisplay = document.getElementById('selectedCount');
         const modalSelectedCountDisplay = document.getElementById('modalSelectedCount');
         
         function updateSelectedCount() {
-            const checkedCount = document.querySelectorAll('.file-checkbox:checked').length;
+            const checkedCount = document.querySelectorAll('tbody .file-checkbox:checked').length;
             selectedCountDisplay.textContent = checkedCount;
             modalSelectedCountDisplay.textContent = checkedCount;
             deleteSelectedBtn.disabled = checkedCount === 0;
