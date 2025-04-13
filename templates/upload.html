@@ -134,9 +134,9 @@
     <form id="uploadForm" enctype="multipart/form-data">
         <!-- Uploader Initials Field -->
         <div class="form-group mb-4">
-            <label for="uploaderInitials" class="form-label">Your Initials: <span class="text-danger">*</span></label>
+            <label for="uploaderInitials" class="form-label">Initials and Date: <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="uploaderInitials" name="uploaderInitials" 
-                   placeholder="Format: text_##_## (e.g. ABC_12_34)" required
+                   placeholder="ABCD_12_34" required
                    pattern="^.+_\d{2}_\d{2}$"
                    title="Format must be: any text followed by _##_## where ## are two digits">
             <small class="form-text text-muted">Your initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)</small>
