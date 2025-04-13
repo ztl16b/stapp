@@ -625,34 +625,177 @@ def browse_bucket(bucket_name):
         date_to = request.args.get('date_to', '')
         per_page = 200
         
-        # Create a paginator for list_objects_v2 with MaxKeys parameter
-        paginator = s3_client.get_paginator('list_objects_v2')
-        
-        # Get objects using the paginator with MaxKeys
-        all_files = []
-        
         # Make sure the prefix is a string
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
         
-        for page_obj in paginator.paginate(
-            Bucket=bucket_info['bucket'],
-            Prefix=prefix,
-            MaxKeys=per_page  # Limit the number of keys returned per request
-        ):
-            if 'Contents' in page_obj:
-                for item in page_obj['Contents']:
-                    # Skip the prefix itself
-                    if item['Key'] != prefix:
-                        # Apply search filter if search query exists
+        # Get continuation token from session (for pagination)
+        session_key = f"s3_pagination_{bucket_name}"
+        pagination_data = session.get(session_key, {})
+        
+        # If first page or a specific search/filter is applied, reset pagination
+        if page == 1 or request.args.get('reset_pagination'):
+            pagination_data = {}
+        
+        # Use S3's native pagination via continuation tokens
+        next_token = pagination_data.get(f'page_{page}', None)
+        current_page_files = []
+        has_more = False
+        
+        # For the Good bucket, use a more efficient approach - only fetch current page
+        if bucket_name == 'good':
+            # Prepare the list_objects_v2 params
+            list_params = {
+                'Bucket': bucket_info['bucket'],
+                'Prefix': prefix,
+                'MaxKeys': per_page,
+            }
+            
+            # Add continuation token if we have one for this page
+            if next_token:
+                list_params['ContinuationToken'] = next_token
+                
+            # For pagination, we need to get one page ahead
+            try:
+                response = s3_client.list_objects_v2(**list_params)
+                
+                # Store token for next page
+                if response.get('IsTruncated'):
+                    has_more = True
+                    pagination_data[f'page_{page+1}'] = response.get('NextContinuationToken')
+                    session[session_key] = pagination_data
+                
+                # Process files in the current page
+                if 'Contents' in response:
+                    items = response['Contents']
+                    app.logger.info(f"Got {len(items)} files from S3 for page {page}")
+                    
+                    for item in items:
+                        # Skip the prefix itself
+                        if item['Key'] != prefix:
+                            file_obj = {
+                                'key': item['Key'],
+                                'size': item['Size'],
+                                'last_modified': item['LastModified'],
+                                'metadata': {}  # Initialize empty metadata
+                            }
+                            current_page_files.append(file_obj)
+                            
+                # Apply any client-side filtering after getting the current page
+                if search_query or uploader_filter or date_from or date_to:
+                    filtered_files = []
+                    
+                    # Get metadata for each file for filtering
+                    for file in current_page_files:
+                        # Only get metadata if we need it for filtering
+                        if uploader_filter:
+                            try:
+                                head_response = s3_client.head_object(
+                                    Bucket=bucket_info['bucket'],
+                                    Key=file['key']
+                                )
+                                file['metadata'] = head_response.get('Metadata', {})
+                            except Exception as e:
+                                app.logger.error(f"Error getting metadata for {file['key']}: {e}")
+                                file['metadata'] = {}
+                        
+                        # Apply text search filter
+                        if search_query and search_query != 'letters':
+                            if search_query not in file['key'].lower():
+                                continue
+                                
+                        # Apply "letters" filter
                         if search_query == 'letters':
-                            # Get just the filename part (after the last slash)
-                            filename = item['Key'].split('/')[-1]
-                            # Remove extension for comparison
+                            filename = file['key'].split('/')[-1]
                             base_filename = filename
                             if '.' in filename:
                                 base_filename = filename.rsplit('.', 1)[0]
+                            
+                            if not any(c.isalpha() for c in base_filename):
+                                continue
                                 
-                            if any(c.isalpha() for c in base_filename):
+                        # Apply uploader filter
+                        if uploader_filter:
+                            file_uploader = file.get('metadata', {}).get('uploader-initials', '').lower()
+                            if uploader_filter.lower() not in file_uploader:
+                                continue
+                                
+                        # Apply date filter
+                        if not apply_date_filter(file['last_modified'], date_from, date_to):
+                            continue
+                            
+                        filtered_files.append(file)
+                    
+                    current_page_files = filtered_files
+                    
+                # Sort files (if needed)
+                current_page_files.sort(key=lambda x: x['last_modified'], reverse=(sort_order == 'desc'))
+                
+                # For filtered results, pagination gets more complex
+                # We'll estimate based on what we know
+                total_files = len(current_page_files)
+                total_pages = 1
+                
+                if has_more or page > 1:
+                    # If we have more pages or we're not on page 1,
+                    # provide minimal pagination info
+                    total_pages = page + (1 if has_more else 0)
+                    total_files = (page-1) * per_page + len(current_page_files)
+                    
+                # Always ensure the user can navigate
+                if page > 1:
+                    pagination_data[f'page_{page-1}'] = pagination_data.get(f'page_{page-1}', None)
+                
+                # Get metadata for display purposes
+                for file in current_page_files:
+                    if not uploader_filter:  # Only if we haven't already fetched metadata
+                        try:
+                            head_response = s3_client.head_object(
+                                Bucket=bucket_info['bucket'],
+                                Key=file['key']
+                            )
+                            file['metadata'] = head_response.get('Metadata', {})
+                        except Exception as e:
+                            app.logger.error(f"Error getting metadata for {file['key']}: {e}")
+                            file['metadata'] = {}
+                
+            except Exception as e:
+                app.logger.error(f"Error listing bucket contents: {e}")
+                flash(f"Error accessing bucket: {str(e)}", "danger")
+                return redirect(url_for('browse_buckets'))
+        else:
+            # For other buckets, use the original implementation
+            all_files = []
+            
+            # Use the paginator for efficiency
+            paginator = s3_client.get_paginator('list_objects_v2')
+            
+            for page_obj in paginator.paginate(
+                Bucket=bucket_info['bucket'],
+                Prefix=prefix,
+                MaxKeys=per_page  # Limit the number of keys returned per request
+            ):
+                if 'Contents' in page_obj:
+                    for item in page_obj['Contents']:
+                        # Skip the prefix itself
+                        if item['Key'] != prefix:
+                            # Apply search filter if search query exists
+                            if search_query == 'letters':
+                                # Get just the filename part (after the last slash)
+                                filename = item['Key'].split('/')[-1]
+                                # Remove extension for comparison
+                                base_filename = filename
+                                if '.' in filename:
+                                    base_filename = filename.rsplit('.', 1)[0]
+                                    
+                                if any(c.isalpha() for c in base_filename):
+                                    # Apply date filter if dates are provided
+                                    if apply_date_filter(item['LastModified'], date_from, date_to):
+                                        all_files.append({
+                                            'key': item['Key'],
+                                            'size': item['Size'],
+                                            'last_modified': item['LastModified']
+                                        })
+                            elif not search_query or search_query in item['Key'].lower():
                                 # Apply date filter if dates are provided
                                 if apply_date_filter(item['LastModified'], date_from, date_to):
                                     all_files.append({
@@ -660,57 +803,50 @@ def browse_bucket(bucket_name):
                                         'size': item['Size'],
                                         'last_modified': item['LastModified']
                                     })
-                        elif not search_query or search_query in item['Key'].lower():
-                            # Apply date filter if dates are provided
-                            if apply_date_filter(item['LastModified'], date_from, date_to):
-                                all_files.append({
-                                    'key': item['Key'],
-                                    'size': item['Size'],
-                                    'last_modified': item['LastModified']
-                                })
-        
-        # Get metadata for each file (including uploader name)
-        for file in all_files:
-            try:
-                # Get object metadata using head_object call
-                head_response = s3_client.head_object(
-                    Bucket=bucket_info['bucket'],
-                    Key=file['key']
-                )
-                # Add metadata to file object
-                file['metadata'] = head_response.get('Metadata', {})
-                app.logger.debug(f"Metadata for {file['key']}: {file['metadata']}")
-            except Exception as e:
-                app.logger.error(f"Error getting metadata for {file['key']}: {e}")
-                file['metadata'] = {}
-        
-        # Apply uploader filter if provided
-        if uploader_filter:
-            filtered_files = []
-            for file in all_files:
-                file_uploader = file.get('metadata', {}).get('uploader-initials', '').lower()
-                if uploader_filter.lower() in file_uploader:
-                    filtered_files.append(file)
-            all_files = filtered_files
             
-        # Sort files by last_modified date
-        all_files.sort(key=lambda x: x['last_modified'], reverse=(sort_order == 'desc'))
-        
-        # Calculate pagination info
-        total_files = len(all_files)
-        total_pages = (total_files + per_page - 1) // per_page if total_files > 0 else 1
-        
-        # Ensure page is within valid range
-        if page < 1:
-            page = 1
-        elif page > total_pages and total_pages > 0:
-            page = total_pages
-        
-        # Slice the files list to get only the current page
-        start_idx = (page - 1) * per_page
-        end_idx = min(start_idx + per_page, total_files)
-        current_page_files = all_files[start_idx:end_idx] if total_files > 0 else []
-        
+            # Get metadata for each file (including uploader name)
+            for file in all_files:
+                try:
+                    # Get object metadata using head_object call
+                    head_response = s3_client.head_object(
+                        Bucket=bucket_info['bucket'],
+                        Key=file['key']
+                    )
+                    # Add metadata to file object
+                    file['metadata'] = head_response.get('Metadata', {})
+                    app.logger.debug(f"Metadata for {file['key']}: {file['metadata']}")
+                except Exception as e:
+                    app.logger.error(f"Error getting metadata for {file['key']}: {e}")
+                    file['metadata'] = {}
+            
+            # Apply uploader filter if provided
+            if uploader_filter:
+                filtered_files = []
+                for file in all_files:
+                    file_uploader = file.get('metadata', {}).get('uploader-initials', '').lower()
+                    if uploader_filter.lower() in file_uploader:
+                        filtered_files.append(file)
+                all_files = filtered_files
+                
+            # Sort files by last_modified date
+            all_files.sort(key=lambda x: x['last_modified'], reverse=(sort_order == 'desc'))
+            
+            # Calculate pagination info
+            total_files = len(all_files)
+            total_pages = (total_files + per_page - 1) // per_page if total_files > 0 else 1
+            
+            # Ensure page is within valid range
+            if page < 1:
+                page = 1
+            elif page > total_pages and total_pages > 0:
+                page = total_pages
+            
+            # Slice the files list to get only the current page
+            start_idx = (page - 1) * per_page
+            end_idx = min(start_idx + per_page, total_files)
+            current_page_files = all_files[start_idx:end_idx] if total_files > 0 else []
+            
+        # Common response for all buckets
         return render_template('browse_bucket.html', 
                              bucket=bucket_info,
                              bucket_name=bucket_name,
@@ -722,7 +858,9 @@ def browse_bucket(bucket_name):
                              uploader_filter=uploader_filter,
                              sort_order=sort_order,
                              date_from=date_from,
-                             date_to=date_to)
+                             date_to=date_to,
+                             is_lazy_loading=(bucket_name == 'good'))
+                             
     except Exception as e:
         app.logger.error(f"Error browsing bucket '{bucket_name}': {str(e)}")
         flash(f'Error accessing bucket: {str(e)}', 'danger')
