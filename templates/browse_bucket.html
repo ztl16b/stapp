@@ -7,13 +7,13 @@
         <div>
             {% if bucket_name != 'good' %}
             <button type="button" class="btn btn-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
-                Delete All Files
+                <i class="fas fa-trash-alt"></i> Delete All
             </button>
             <button type="button" class="btn btn-warning me-2" id="deleteSelectedBtn" disabled data-bs-toggle="modal" data-bs-target="#deleteSelectedModal">
-                Delete Selected (<span id="selectedCount">0</span>)
+                <i class="fas fa-check-square"></i> Delete Selected (<span id="selectedCount">0</span>)
             </button>
             {% endif %}
-            <a href="{{ url_for('browse_buckets') }}" class="btn btn-secondary">&laquo; Back to Buckets</a>
+            <a href="{{ url_for('browse_buckets') }}" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Back</a>
         </div>
     </div>
 
@@ -28,61 +28,141 @@
       {% endif %}
     {% endwith %}
 
-    <!-- Search Form -->
-    <form class="search-form mb-4" method="get">
-        <div class="row g-3">
-            <div class="col-md-4">
-                <div class="input-group">
-                    <span class="input-group-text">Search</span>
-                    <input type="text" name="search" class="form-control" placeholder="Search files..." value="{{ search_query }}">
-                    <button type="submit" class="btn btn-primary">Search</button>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="input-group">
-                    <span class="input-group-text">Uploader</span>
-                    <input type="text" name="uploader" class="form-control" placeholder="Filter by initials..." value="{{ uploader_filter }}">
-                    <button type="submit" class="btn btn-primary">Filter</button>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="btn-group w-100">
-                    <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, search='letters') }}" class="btn btn-info">Letters</a>
-                    {% if search_query or date_from or date_to or uploader_filter %}
-                        <a href="{{ url_for('browse_bucket', bucket_name=bucket_name) }}" class="btn btn-secondary">Clear All</a>
-                    {% endif %}
-                </div>
+    <!-- Compact Filter Bar -->
+    <div class="card mb-3">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+            <span><i class="fas fa-filter"></i> Filters</span>
+            <button class="btn btn-sm btn-link" type="button" data-bs-toggle="collapse" data-bs-target="#filterCollapse">
+                <i class="fas fa-chevron-down"></i>
+            </button>
+        </div>
+        <div class="collapse show" id="filterCollapse">
+            <div class="card-body">
+                <form class="search-form" method="get">
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text"><i class="fas fa-search"></i></span>
+                                <input type="text" name="search" class="form-control" placeholder="Search files..." value="{{ search_query }}">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text"><i class="fas fa-user-tag"></i></span>
+                                <input type="text" name="uploader" class="form-control" placeholder="Uploader initials..." value="{{ uploader_filter }}">
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <div class="d-flex">
+                                <div class="input-group input-group-sm me-2">
+                                    <span class="input-group-text"><i class="fas fa-calendar"></i></span>
+                                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                                    <span class="input-group-text">to</span>
+                                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-12 d-flex justify-content-end">
+                            <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, search='letters') }}" class="btn btn-sm btn-info me-2">
+                                <i class="fas fa-font"></i> Letters Only
+                            </a>
+                            <button type="submit" class="btn btn-sm btn-primary me-2">
+                                <i class="fas fa-filter"></i> Apply Filters
+                            </button>
+                            {% if search_query or date_from or date_to or uploader_filter %}
+                                <a href="{{ url_for('browse_bucket', bucket_name=bucket_name) }}" class="btn btn-sm btn-secondary">
+                                    <i class="fas fa-times"></i> Clear All
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </form>
             </div>
         </div>
-        <div class="row g-3 mt-1">
-            <div class="col-md-12">
-                <div class="input-group">
-                    <span class="input-group-text">Date Range</span>
-                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}" placeholder="From">
-                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}" placeholder="To">
-                    <button type="submit" class="btn btn-primary">Filter</button>
-                </div>
-            </div>
-        </div>
-    </form>
+    </div>
 
-    <div class="alert alert-info">
-        Showing {{ files|length }} of {{ total_files }} files (Page {{ current_page }} of {{ total_pages }})
-        {% if search_query %}
-            <br>Filtered by text: "{{ search_query }}"
-        {% endif %}
-        {% if uploader_filter %}
-            <br>Filtered by uploader: "{{ uploader_filter }}"
-        {% endif %}
-        {% if date_from or date_to %}
-            <br>Date range: 
-            {% if date_from %}
-                From {{ date_from }}
+    <div class="alert alert-info d-flex justify-content-between align-items-center">
+        <div>
+            <strong>{{ files|length }} of {{ total_files }}</strong> files
+            <span class="badge bg-secondary">Page {{ current_page }}/{{ total_pages }}</span>
+            {% if search_query %}
+                <span class="badge bg-primary"><i class="fas fa-search"></i> "{{ search_query }}"</span>
             {% endif %}
-            {% if date_to %}
-                To {{ date_to }}
+            {% if uploader_filter %}
+                <span class="badge bg-info"><i class="fas fa-user-tag"></i> "{{ uploader_filter }}"</span>
             {% endif %}
-        {% endif %}
+            {% if date_from or date_to %}
+                <span class="badge bg-dark">
+                    <i class="fas fa-calendar"></i>
+                    {% if date_from %}{{ date_from }}{% endif %}
+                    {% if date_from and date_to %} - {% endif %}
+                    {% if date_to %}{{ date_to }}{% endif %}
+                </span>
+            {% endif %}
+        </div>
+        <div class="d-flex">
+            {% if total_pages > 1 %}
+                <nav aria-label="Page navigation" class="me-2">
+                    <ul class="pagination pagination-sm mb-0">
+                        {% if current_page > 1 %}
+                        <li class="page-item">
+                            <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
+                                <i class="fas fa-chevron-left"></i>
+                            </a>
+                        </li>
+                        {% endif %}
+                        
+                        {% if total_pages <= 5 %}
+                            {% for p in range(1, total_pages + 1) %}
+                            <li class="page-item {% if p == current_page %}active{% endif %}">
+                                <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ p }}</a>
+                            </li>
+                            {% endfor %}
+                        {% else %}
+                            {% if current_page > 2 %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">1</a>
+                            </li>
+                            {% endif %}
+                            
+                            {% if current_page > 3 %}
+                            <li class="page-item disabled">
+                                <span class="page-link">...</span>
+                            </li>
+                            {% endif %}
+                            
+                            {% for p in range(max(1, current_page - 1), min(total_pages + 1, current_page + 2)) %}
+                            <li class="page-item {% if p == current_page %}active{% endif %}">
+                                <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ p }}</a>
+                            </li>
+                            {% endfor %}
+                            
+                            {% if current_page < total_pages - 2 %}
+                            <li class="page-item disabled">
+                                <span class="page-link">...</span>
+                            </li>
+                            {% endif %}
+                            
+                            {% if current_page < total_pages - 1 %}
+                            <li class="page-item">
+                                <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=total_pages, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ total_pages }}</a>
+                            </li>
+                            {% endif %}
+                        {% endif %}
+                        
+                        {% if current_page < total_pages %}
+                        <li class="page-item">
+                            <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
+                                <i class="fas fa-chevron-right"></i>
+                            </a>
+                        </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            {% endif %}
+        </div>
     </div>
 
     {% if files %}
@@ -159,35 +239,6 @@
                 </table>
             </div>
         </form>
-
-        <!-- Pagination -->
-        {% if total_pages > 1 %}
-        <nav aria-label="Page navigation">
-            <ul class="pagination justify-content-center">
-                {% if current_page > 1 %}
-                <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Previous">
-                        <span aria-hidden="true">&laquo;</span>
-                    </a>
-                </li>
-                {% endif %}
-                
-                {% for p in range(1, total_pages + 1) %}
-                <li class="page-item {% if p == current_page %}active{% endif %}">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ p }}</a>
-                </li>
-                {% endfor %}
-                
-                {% if current_page < total_pages %}
-                <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Next">
-                        <span aria-hidden="true">&raquo;</span>
-                    </a>
-                </li>
-                {% endif %}
-            </ul>
-        </nav>
-        {% endif %}
     {% else %}
         <div class="alert alert-info">
             No files found in this bucket{% if search_query %} matching "{{ search_query }}"{% endif %}.
