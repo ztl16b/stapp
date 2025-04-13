@@ -619,6 +619,7 @@ def browse_bucket(bucket_name):
         # Get page number, search query, sort order, and date filter from query parameters
         page = request.args.get('page', 1, type=int)
         search_query = request.args.get('search', '').lower()
+        uploader_filter = request.args.get('uploader', '')  # Uploader initials filter
         sort_order = request.args.get('sort', 'desc')  # Default to descending order
         date_from = request.args.get('date_from', '')  # Date filter from
         date_to = request.args.get('date_to', '')
@@ -683,6 +684,15 @@ def browse_bucket(bucket_name):
                 app.logger.error(f"Error getting metadata for {file['key']}: {e}")
                 file['metadata'] = {}
         
+        # Apply uploader filter if provided
+        if uploader_filter:
+            filtered_files = []
+            for file in all_files:
+                file_uploader = file.get('metadata', {}).get('uploader-initials', '').lower()
+                if uploader_filter.lower() in file_uploader:
+                    filtered_files.append(file)
+            all_files = filtered_files
+            
         # Sort files by last_modified date
         all_files.sort(key=lambda x: x['last_modified'], reverse=(sort_order == 'desc'))
         
@@ -709,6 +719,7 @@ def browse_bucket(bucket_name):
                              total_pages=total_pages,
                              total_files=total_files,
                              search_query=search_query,
+                             uploader_filter=uploader_filter,
                              sort_order=sort_order,
                              date_from=date_from,
                              date_to=date_to)
@@ -844,6 +855,69 @@ def delete_all_objects_route(bucket_name):
     except Exception as e:
         app.logger.error(f"Error listing bucket contents: {e}")
         flash(f'Error accessing bucket: {str(e)}', 'danger')
+    
+    return redirect(url_for('browse_bucket', bucket_name=bucket_name))
+
+@app.route('/delete-selected/<bucket_name>', methods=['POST'])
+@login_required
+def delete_selected_route(bucket_name):
+    buckets = {
+        'good': S3_GOOD_BUCKET,
+        'bad': S3_BAD_BUCKET,
+        'incredible': S3_INCREDIBLE_BUCKET,
+        'upload': S3_UPLOAD_BUCKET,
+        'temp': S3_TEMP_BUCKET,
+        'issue': S3_ISSUE_BUCKET
+    }
+    
+    if bucket_name not in buckets:
+        flash('Invalid bucket selected', 'danger')
+        return redirect(url_for('browse_buckets'))
+    
+    # Get the selected files from the form
+    selected_files = request.form.getlist('selected_files')
+    
+    if not selected_files:
+        flash('No files were selected for deletion', 'warning')
+        return redirect(url_for('browse_bucket', bucket_name=bucket_name))
+    
+    deleted_count = 0
+    error_count = 0
+    
+    try:
+        # Delete files in batches of 1000 (S3 limit)
+        batch_size = 1000
+        for i in range(0, len(selected_files), batch_size):
+            batch = selected_files[i:i+batch_size]
+            try:
+                response = s3_client.delete_objects(
+                    Bucket=buckets[bucket_name],
+                    Delete={'Objects': [{'Key': key} for key in batch]}
+                )
+                
+                # Count successful deletions
+                if 'Deleted' in response:
+                    deleted_count += len(response['Deleted'])
+                
+                # Count errors
+                if 'Errors' in response:
+                    error_count += len(response['Errors'])
+                    for error in response['Errors']:
+                        app.logger.error(f"Error deleting {error.get('Key')}: {error.get('Message')}")
+                    
+            except Exception as e:
+                app.logger.error(f"Error deleting batch of objects: {e}")
+                error_count += len(batch)
+        
+        # Log the results
+        if error_count == 0:
+            flash(f'Successfully deleted {deleted_count} selected files', 'success')
+        else:
+            flash(f'Deleted {deleted_count} files, but encountered {error_count} errors', 'warning')
+    
+    except Exception as e:
+        app.logger.error(f"Error in batch deletion: {e}")
+        flash(f'Error deleting files: {str(e)}', 'danger')
     
     return redirect(url_for('browse_bucket', bucket_name=bucket_name))
 

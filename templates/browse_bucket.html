@@ -1,13 +1,16 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mt-5 mb-4">
+<div class="container mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
         <h1>{{ bucket.name }}</h1>
         <div>
             {% if bucket_name != 'good' %}
             <button type="button" class="btn btn-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
                 Delete All Files
+            </button>
+            <button type="button" class="btn btn-warning me-2" id="deleteSelectedBtn" disabled data-bs-toggle="modal" data-bs-target="#deleteSelectedModal">
+                Delete Selected (<span id="selectedCount">0</span>)
             </button>
             {% endif %}
             <a href="{{ url_for('browse_buckets') }}" class="btn btn-secondary">&laquo; Back to Buckets</a>
@@ -28,17 +31,31 @@
     <!-- Search Form -->
     <form class="search-form mb-4" method="get">
         <div class="row g-3">
-            <div class="col-md-6">
+            <div class="col-md-4">
                 <div class="input-group">
+                    <span class="input-group-text">Search</span>
                     <input type="text" name="search" class="form-control" placeholder="Search files..." value="{{ search_query }}">
                     <button type="submit" class="btn btn-primary">Search</button>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text">Uploader</span>
+                    <input type="text" name="uploader" class="form-control" placeholder="Filter by initials..." value="{{ uploader_filter }}">
+                    <button type="submit" class="btn btn-primary">Filter</button>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="btn-group w-100">
                     <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, search='letters') }}" class="btn btn-info">Letters</a>
-                    {% if search_query or date_from or date_to %}
-                        <a href="{{ url_for('browse_bucket', bucket_name=bucket_name) }}" class="btn btn-secondary">Clear</a>
+                    {% if search_query or date_from or date_to or uploader_filter %}
+                        <a href="{{ url_for('browse_bucket', bucket_name=bucket_name) }}" class="btn btn-secondary">Clear All</a>
                     {% endif %}
                 </div>
             </div>
-            <div class="col-md-6">
+        </div>
+        <div class="row g-3 mt-1">
+            <div class="col-md-12">
                 <div class="input-group">
                     <span class="input-group-text">Date Range</span>
                     <input type="date" name="date_from" class="form-control" value="{{ date_from }}" placeholder="From">
@@ -52,7 +69,10 @@
     <div class="alert alert-info">
         Showing {{ files|length }} of {{ total_files }} files (Page {{ current_page }} of {{ total_pages }})
         {% if search_query %}
-            <br>Filtered by: "{{ search_query }}"
+            <br>Filtered by text: "{{ search_query }}"
+        {% endif %}
+        {% if uploader_filter %}
+            <br>Filtered by uploader: "{{ uploader_filter }}"
         {% endif %}
         {% if date_from or date_to %}
             <br>Date range: 
@@ -66,67 +86,79 @@
     </div>
 
     {% if files %}
-        <div class="table-responsive">
-            <table class="table table-striped">
-                <thead>
-                    <tr>
-                        <th>File Name</th>
-                        <th>Size</th>
-                        <th>
-                            <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to) }}" class="text-dark text-decoration-none">
-                                Last Modified
-                                {% if sort_order == 'desc' %}
-                                    <i class="fas fa-sort-down"></i>
-                                {% else %}
-                                    <i class="fas fa-sort-up"></i>
-                                {% endif %}
-                            </a>
-                        </th>
-                        <th>Uploader Initials</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for file in files %}
-                    <tr class="file-row">
-                        <td>{{ file.key }}</td>
-                        <td>{{ (file.size / 1024)|round(1) }} KB</td>
-                        <td>{{ file.last_modified.strftime('%m/%d/%y     %I:%M %p') }}</td>
-                        <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
-                        <td>
-                            <button type="button" class="btn btn-danger btn-sm" 
-                                    data-bs-toggle="modal" 
-                                    data-bs-target="#deleteModal{{ loop.index }}">
-                                Delete
-                            </button>
-                        </td>
-                    </tr>
+        <form id="batchDeleteForm" action="{{ url_for('delete_selected_route', bucket_name=bucket_name) }}" method="post">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="selectAll">
+                                </div>
+                            </th>
+                            <th>File Name</th>
+                            <th>Size</th>
+                            <th>
+                                <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, uploader=uploader_filter, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to) }}" class="text-dark text-decoration-none">
+                                    Last Modified
+                                    {% if sort_order == 'desc' %}
+                                        <i class="fas fa-sort-down"></i>
+                                    {% else %}
+                                        <i class="fas fa-sort-up"></i>
+                                    {% endif %}
+                                </a>
+                            </th>
+                            <th>Uploader Initials</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in files %}
+                        <tr class="file-row">
+                            <td>
+                                <div class="form-check">
+                                    <input class="form-check-input file-checkbox" type="checkbox" name="selected_files" value="{{ file.key }}">
+                                </div>
+                            </td>
+                            <td>{{ file.key }}</td>
+                            <td>{{ (file.size / 1024)|round(1) }} KB</td>
+                            <td>{{ file.last_modified.strftime('%m/%d/%y     %I:%M %p') }}</td>
+                            <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
+                            <td>
+                                <button type="button" class="btn btn-danger btn-sm" 
+                                        data-bs-toggle="modal" 
+                                        data-bs-target="#deleteModal{{ loop.index }}">
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
 
-                    <!-- Delete Modal -->
-                    <div class="modal fade" id="deleteModal{{ loop.index }}" tabindex="-1" aria-labelledby="deleteModalLabel{{ loop.index }}" aria-hidden="true">
-                        <div class="modal-dialog">
-                            <div class="modal-content">
-                                <div class="modal-header">
-                                    <h5 class="modal-title" id="deleteModalLabel{{ loop.index }}">Confirm Delete</h5>
-                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                </div>
-                                <div class="modal-body">
-                                    Are you sure you want to delete the file "{{ file.key }}"?
-                                    This action cannot be undone.
-                                </div>
-                                <div class="modal-footer">
-                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                    <form action="{{ url_for('delete_object_route', bucket_name=bucket_name, object_key=file.key) }}" method="post" style="display: inline;">
-                                        <button type="submit" class="btn btn-danger">Delete</button>
-                                    </form>
+                        <!-- Delete Modal -->
+                        <div class="modal fade" id="deleteModal{{ loop.index }}" tabindex="-1" aria-labelledby="deleteModalLabel{{ loop.index }}" aria-hidden="true">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title" id="deleteModalLabel{{ loop.index }}">Confirm Delete</h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        Are you sure you want to delete the file "{{ file.key }}"?
+                                        This action cannot be undone.
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                        <form action="{{ url_for('delete_object_route', bucket_name=bucket_name, object_key=file.key) }}" method="post" style="display: inline;">
+                                            <button type="submit" class="btn btn-danger">Delete</button>
+                                        </form>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </form>
 
         <!-- Pagination -->
         {% if total_pages > 1 %}
@@ -134,7 +166,7 @@
             <ul class="pagination justify-content-center">
                 {% if current_page > 1 %}
                 <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Previous">
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Previous">
                         <span aria-hidden="true">&laquo;</span>
                     </a>
                 </li>
@@ -142,13 +174,13 @@
                 
                 {% for p in range(1, total_pages + 1) %}
                 <li class="page-item {% if p == current_page %}active{% endif %}">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ p }}</a>
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ p }}</a>
                 </li>
                 {% endfor %}
                 
                 {% if current_page < total_pages %}
                 <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Next">
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}" aria-label="Next">
                         <span aria-hidden="true">&raquo;</span>
                     </a>
                 </li>
@@ -190,4 +222,77 @@
     </div>
 </div>
 {% endif %}
+
+<!-- Delete Selected Modal -->
+{% if bucket_name != 'good' %}
+<div class="modal fade" id="deleteSelectedModal" tabindex="-1" aria-labelledby="deleteSelectedModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteSelectedModalLabel">Confirm Delete Selected Files</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <strong>Warning:</strong> This action will delete <span id="modalSelectedCount">0</span> selected files from the "{{ bucket.name }}" bucket.
+                    This action cannot be undone.
+                </div>
+                <p>Are you sure you want to proceed?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="batchDeleteForm" class="btn btn-danger">Delete Selected Files</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const selectAllCheckbox = document.getElementById('selectAll');
+        const fileCheckboxes = document.querySelectorAll('.file-checkbox');
+        const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+        const selectedCountDisplay = document.getElementById('selectedCount');
+        const modalSelectedCountDisplay = document.getElementById('modalSelectedCount');
+        
+        function updateSelectedCount() {
+            const checkedCount = document.querySelectorAll('.file-checkbox:checked').length;
+            selectedCountDisplay.textContent = checkedCount;
+            modalSelectedCountDisplay.textContent = checkedCount;
+            deleteSelectedBtn.disabled = checkedCount === 0;
+        }
+        
+        // Select/deselect all files
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', function() {
+                fileCheckboxes.forEach(checkbox => {
+                    checkbox.checked = selectAllCheckbox.checked;
+                });
+                updateSelectedCount();
+            });
+        }
+        
+        // Update selected count when individual checkboxes change
+        fileCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                updateSelectedCount();
+                
+                // Update "select all" checkbox state
+                if (!this.checked) {
+                    selectAllCheckbox.checked = false;
+                } else {
+                    // Check if all checkboxes are checked
+                    const allChecked = Array.from(fileCheckboxes).every(cb => cb.checked);
+                    selectAllCheckbox.checked = allChecked;
+                }
+            });
+        });
+        
+        // Initialize count
+        updateSelectedCount();
+    });
+</script>
 {% endblock %} 
