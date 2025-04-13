@@ -123,20 +123,18 @@
 
     <div class="sequential-upload-info">
         <h5><i class="bi bi-info-circle"></i>Upload</h5>
-        <p>Files will be uploaded one at a time. The process will stop if any upload fails or takes longer than the specified timeout.</p>
+        <p>The upload process will stop if any upload fails or takes longer than the specified timeout.</p>
         <div class="form-group mt-2">
             <label for="uploadTimeout">Upload Timeout (seconds):</label>
             <input type="number" id="uploadTimeout" class="form-control" min="5" max="300" value="30" style="width: 120px;">
-            <small class="form-text text-muted">Maximum time allowed for each file upload before timing out.</small>
         </div>
     </div>
 
     <form id="uploadForm" enctype="multipart/form-data">
-        <!-- Uploader Name Field -->
+        <!-- Uploader Initials Field -->
         <div class="form-group mb-4">
-            <label for="uploaderName" class="form-label">Your Name: <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="uploaderName" name="uploaderName" placeholder="Enter your name" required>
-            <small class="form-text text-muted">Your name will be associated with these uploaded images.</small>
+            <label for="uploaderInitials" class="form-label">Your Initials: <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="uploaderInitials" name="uploaderInitials" placeholder="Enter your initials" required>
         </div>
 
         <!-- Upload button at the top -->
@@ -423,11 +421,11 @@
 
         // Sequential Upload Functions
         function startSequentialUpload() {
-            // Check if uploader name is provided
-            const uploaderName = document.getElementById('uploaderName').value.trim();
-            if (!uploaderName) {
-                alert('Please enter your name before uploading.');
-                document.getElementById('uploaderName').focus();
+            // Check if uploader initials are provided
+            const uploaderInitials = document.getElementById('uploaderInitials').value.trim();
+            if (!uploaderInitials) {
+                alert('Please enter your initials before uploading.');
+                document.getElementById('uploaderInitials').focus();
                 return;
             }
             
@@ -454,7 +452,7 @@
             totalCount.textContent = validFiles.length;
             uploadStatus.textContent = 'Starting...';
             
-            addLogEntry(`Starting upload of ${validFiles.length} files by ${uploaderName}`, 'info');
+            addLogEntry(`Starting upload of ${validFiles.length} files by ${uploaderInitials}`, 'info');
             
             // Start the upload process
             uploadCurrentFile();
@@ -473,13 +471,13 @@
             
             const file = validFiles[currentFileIndex];
             const timeout = parseInt(uploadTimeoutInput.value) * 1000; // Convert to milliseconds
-            const uploaderName = document.getElementById('uploaderName').value.trim();
+            const uploaderInitials = document.getElementById('uploaderInitials').value.trim();
             
-            // Check if uploader name is provided
-            if (!uploaderName) {
+            // Check if uploader initials are provided
+            if (!uploaderInitials) {
                 isUploading = false;
-                uploadStatus.textContent = 'Failed - Missing Name';
-                addLogEntry(`Upload failed: Please enter your name before uploading.`, 'error');
+                uploadStatus.textContent = 'Failed - Missing Initials';
+                addLogEntry(`Upload failed: Please enter your initials before uploading.`, 'error');
                 return;
             }
             
@@ -491,7 +489,7 @@
             // Create form data for this single file
             const formData = new FormData();
             formData.append('files', file);
-            formData.append('uploaderName', uploaderName);
+            formData.append('uploaderInitials', uploaderInitials);
             
             // Set up abort controller for timeout
             currentAbortController = new AbortController();

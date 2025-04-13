@@ -167,10 +167,10 @@ def upload():
             flash('No selected files', 'warning')
             return redirect(request.url)
         
-        # Get uploader name and validate
-        uploader_name = request.form.get('uploaderName', '').strip()
-        if not uploader_name:
-            error_msg = 'Uploader name is required'
+        # Get uploader initials and validate
+        uploader_initials = request.form.get('uploaderInitials', '').strip()
+        if not uploader_initials:
+            error_msg = 'Uploader initials are required'
             app.logger.warning(error_msg)
             if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
                 return jsonify({
@@ -198,8 +198,8 @@ def upload():
         filename = secure_filename(file.filename)
         content_type = file.content_type
         
-        # Process the single file directly with uploader name
-        result = process_image(file_data, filename, content_type, uploader_name=uploader_name)
+        # Process the single file directly with uploader initials
+        result = process_image(file_data, filename, content_type, uploader_initials=uploader_initials)
         
         if result['status'] == 'success':
             flash(f'Successfully uploaded {filename}', 'success')
@@ -218,7 +218,7 @@ def upload():
     
     return render_template('upload.html')
 
-def process_image(file_data, filename, content_type, timeout=None, uploader_name=None):
+def process_image(file_data, filename, content_type, timeout=None, uploader_initials=None):
     """
     Upload an image directly to the S3 temp bucket in its original format.
     
@@ -227,7 +227,7 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_name
         filename: The original filename (with perf_id-ven_id format)
         content_type: The content type of the file
         timeout: Kept for backwards compatibility
-        uploader_name: Name of the person uploading the file
+        uploader_initials: Initials of the person uploading the file
         
     Returns:
         dict: Status information about the processing
@@ -247,11 +247,11 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_name
         # Use original filename exactly as provided - the image_processor.py will handle format conversion
         upload_path = f"tmp_upload/{filename}"
         
-        # Add metadata with uploader name if provided
+        # Add metadata with uploader initials if provided
         extra_args = {'ContentType': content_type}
-        if uploader_name:
-            extra_args['Metadata'] = {'uploader-name': uploader_name}
-            app.logger.info(f"Adding uploader name metadata: {uploader_name}")
+        if uploader_initials:
+            extra_args['Metadata'] = {'uploader-initials': uploader_initials}
+            app.logger.info(f"Adding uploader initials metadata: {uploader_initials}")
         
         # Upload to S3 using BytesIO for memory efficiency
         file_obj = BytesIO(file_data)
@@ -271,7 +271,7 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_name
             'message': 'Upload successful',
             's3_path': upload_path,
             'filename': filename,
-            'uploader_name': uploader_name
+            'uploader_initials': uploader_initials
         }
     except Exception as e:
         app.logger.error(f"Error processing {filename}: {str(e)}")
