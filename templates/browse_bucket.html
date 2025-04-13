@@ -62,10 +62,10 @@
                                 <button type="button" class="btn btn-sm btn-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteAllModal">
                                     <i class="fas fa-trash-alt"></i> Delete All
                                 </button>
+                                {% endif %}
                                 <button type="button" class="btn btn-sm btn-warning me-2" id="deleteSelectedBtn" disabled data-bs-toggle="modal" data-bs-target="#deleteSelectedModal">
                                     <i class="fas fa-check-square"></i> Delete Selected (<span id="selectedCount">0</span>)
                                 </button>
-                                {% endif %}
                             </div>
                             <div>
                                 <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, search='letters') }}" class="btn btn-sm btn-info me-2">
@@ -178,6 +178,7 @@
                                 </a>
                             </th>
                             <th>Uploader Initials</th>
+                            <th>Preview</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -193,6 +194,16 @@
                             <td>{{ (file.size / 1024)|round(1) }} KB</td>
                             <td>{{ file.last_modified.strftime('%m/%d/%y     %I:%M %p') }}</td>
                             <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
+                            <td>
+                                <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
+                                   target="_blank" 
+                                   title="View full image">
+                                    <img src="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key, thumbnail='true') }}" 
+                                         alt="Preview" 
+                                         class="img-thumbnail" 
+                                         style="max-height: 50px; max-width: 50px;">
+                                </a>
+                            </td>
                             <td>
                                 <button type="button" class="btn btn-danger btn-sm" 
                                         data-bs-toggle="modal" 
@@ -264,7 +275,6 @@
 {% endif %}
 
 <!-- Delete Selected Modal -->
-{% if bucket_name != 'good' %}
 <div class="modal fade" id="deleteSelectedModal" tabindex="-1" aria-labelledby="deleteSelectedModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -286,7 +296,6 @@
         </div>
     </div>
 </div>
-{% endif %}
 {% endblock %}
 
 {% block extra_js %}

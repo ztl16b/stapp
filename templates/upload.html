@@ -134,8 +134,15 @@
     <form id="uploadForm" enctype="multipart/form-data">
         <!-- Uploader Initials Field -->
         <div class="form-group mb-4">
-            <label for="uploaderInitials" class="form-label"><span class="text-danger">*</span> Your Initials <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="uploaderInitials" name="uploaderInitials" placeholder="Enter your initials" required>
+            <label for="uploaderInitials" class="form-label">Your Initials: <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="uploaderInitials" name="uploaderInitials" 
+                   placeholder="Format: text_##_## (e.g. ABC_12_34)" required
+                   pattern="^.+_\d{2}_\d{2}$"
+                   title="Format must be: any text followed by _##_## where ## are two digits">
+            <small class="form-text text-muted">Your initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)</small>
+            <div class="invalid-feedback" id="initialsError">
+                Initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)
+            </div>
         </div>
 
         <!-- Upload button at the top -->
@@ -422,10 +429,20 @@
 
         // Sequential Upload Functions
         function startSequentialUpload() {
-            // Check if uploader initials are provided
+            // Check if uploader initials are provided and valid
             const uploaderInitials = document.getElementById('uploaderInitials').value.trim();
+            
+            // Validate format: any text followed by _##_## where ## are two digits
+            const initialsRegex = /^.+_\d{2}_\d{2}$/;
+            
             if (!uploaderInitials) {
                 alert('Please enter your initials before uploading.');
+                document.getElementById('uploaderInitials').focus();
+                return;
+            }
+            
+            if (!initialsRegex.test(uploaderInitials)) {
+                alert('Initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)');
                 document.getElementById('uploaderInitials').focus();
                 return;
             }
@@ -474,11 +491,22 @@
             const timeout = parseInt(uploadTimeoutInput.value) * 1000; // Convert to milliseconds
             const uploaderInitials = document.getElementById('uploaderInitials').value.trim();
             
+            // Check if uploader initials are provided and valid
+            const initialsRegex = /^.+_\d{2}_\d{2}$/;
+            
             // Check if uploader initials are provided
             if (!uploaderInitials) {
                 isUploading = false;
                 uploadStatus.textContent = 'Failed - Missing Initials';
                 addLogEntry(`Upload failed: Please enter your initials before uploading.`, 'error');
+                return;
+            }
+            
+            // Check if uploader initials are valid
+            if (!initialsRegex.test(uploaderInitials)) {
+                isUploading = false;
+                uploadStatus.textContent = 'Failed - Invalid Initials Format';
+                addLogEntry(`Upload failed: Initials must follow the format: any text followed by _##_## (e.g., ABC_12_34)`, 'error');
                 return;
             }
             
