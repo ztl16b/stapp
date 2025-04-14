@@ -76,9 +76,14 @@
                         <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
                         <button type="submit" class="btn btn-warning btn-lg">INCREDIBLE</button>
                     </form>
-                    <form action="{{ url_for('move_image_route', action='bad', image_key=image_key) }}" method="post">
+                    <form id="badForm" action="{{ url_for('move_image_route', action='bad', image_key=image_key) }}" method="post">
                         <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-danger btn-lg">BAD</button>
+                        <button type="button" class="btn btn-danger btn-lg" id="badButton">BAD</button>
+                         {# Notes field - initially hidden #}
+                        <div id="badNotesContainer" class="mt-3" style="display: none;">
+                            <label for="badNotes" class="form-label">Reason for Bad:</label>
+                            <textarea class="form-control" id="badNotes" name="bad_notes" rows="3"></textarea>
+                        </div>
                     </form>
                 </div>
             </div>
@@ -106,13 +111,72 @@
 
 {% block extra_js %}
 <script>
-    // Print session information to console for debugging
     document.addEventListener('DOMContentLoaded', function() {
         const imageKey = "{{ image_key }}";
         console.log("Current image key:", imageKey);
-        
-        // Add a timestamp to help with debugging
         console.log("Page loaded at:", new Date().toISOString());
+
+        const goodButton = document.querySelector('form[action*="action=good"] button');
+        const incredibleButton = document.querySelector('form[action*="action=incredible"] button');
+        const badButton = document.getElementById('badButton');
+        const badForm = document.getElementById('badForm');
+        const badNotesContainer = document.getElementById('badNotesContainer');
+        const badNotesTextarea = document.getElementById('badNotes');
+
+        // Function to hide notes
+        function hideNotes() {
+            if (badNotesContainer) badNotesContainer.style.display = 'none';
+            if (badNotesTextarea) badNotesTextarea.required = false;
+        }
+
+        // Function to show notes
+        function showNotes() {
+            if (badNotesContainer) badNotesContainer.style.display = 'block';
+            if (badNotesTextarea) badNotesTextarea.required = true;
+        }
+
+        // Event listeners for buttons
+        if (goodButton) {
+            goodButton.addEventListener('click', hideNotes);
+        }
+        if (incredibleButton) {
+            incredibleButton.addEventListener('click', hideNotes);
+        }
+        if (badButton) {
+             // When BAD is clicked, show notes and then submit the form
+             // We change the button type to button (not submit) to prevent immediate submission
+            badButton.addEventListener('click', function(event) {
+                showNotes();
+                // Focus on the notes field
+                if (badNotesTextarea) badNotesTextarea.focus(); 
+                // Now, instead of submitting immediately, we let the user fill the notes.
+                // The user has to click the BAD button *again* (or maybe we add a separate submit?) 
+                // Let's modify this: Show notes, then user must click *submit* on the form.
+                // Change the button type back to submit? No, let's add a new submit button inside the form.
+                
+                // --- Simpler approach: Show notes on first click, submit form on second click --- 
+                // If notes are already visible, submit the form
+                if (badNotesContainer.style.display === 'block' && badNotesTextarea.value.trim() !== '') {
+                     badForm.submit(); 
+                } else if (badNotesContainer.style.display === 'block' && badNotesTextarea.value.trim() === '') {
+                    // If visible but empty, maybe add a small visual cue or rely on browser validation
+                    // Prevent submission for now, browser validation should handle 'required'
+                    event.preventDefault(); 
+                    alert('Please provide a reason for marking as bad.');
+                } else {
+                    // First click: just show notes and prevent submission
+                    showNotes();
+                     event.preventDefault(); // Prevent form submission on first click
+                }
+            });
+        }
+        
+        // Check if redirected back with an error flag (e.g., notes required)
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('error') === 'bad_notes_required') {
+            showNotes();
+            if(badNotesTextarea) badNotesTextarea.focus();
+        }
     });
 </script>
 {% endblock %} 

@@ -363,7 +363,7 @@ def get_random_image_key(bucket_name):
         flash("An unexpected error occurred while listing files.", "danger")
     return None
 
-def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
+def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, metadata=None):
     """Moves an object from source_bucket to dest_bucket."""
     dest_key = object_key
     original_key = object_key
@@ -398,11 +398,21 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         elif filename.lower().endswith(('.jpg', '.jpeg')):
             content_type = 'image/jpeg'
             
+        extra_args = {
+            'ContentType': content_type,
+            'MetadataDirective': 'COPY' # Default to copying existing metadata
+        }
+
+        if metadata:
+             # If new metadata is provided (e.g., notes), replace existing metadata
+             extra_args['Metadata'] = metadata
+             extra_args['MetadataDirective'] = 'REPLACE'
+
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
             Key=dest_key,
-            ContentType=content_type
+            **extra_args # Pass ContentType, MetadataDirective, and optional Metadata
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
 
@@ -510,7 +520,23 @@ def move_image_route(action, image_key):
     else:
         # For good and bad actions, use the original logic
         destination_bucket = S3_GOOD_BUCKET if action == 'good' else S3_BAD_BUCKET
-        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action):
+        notes_metadata = None
+        if action == 'bad':
+            bad_notes = request.form.get('bad_notes', '').strip()
+            if bad_notes:
+                # S3 metadata keys must be ascii, values are utf-8
+                # Standard HTTP header format, use x-amz-meta- prefix
+                notes_metadata = {'notes': bad_notes}
+                app.logger.info(f"Adding notes metadata for bad image {image_key}: {bad_notes}")
+            else:
+                # If notes are required, flash an error and redirect back
+                flash("Please provide notes explaining why the image is bad.", "warning")
+                # Redirect back to the review page, preserving the image key/URL if possible
+                # We need to fetch the URL again if we redirect cleanly
+                return redirect(url_for('review_image_route', error='bad_notes_required'))
+
+        # Pass metadata only for the bad action
+        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action, metadata=notes_metadata):
             success = True
             # Only log to the app logger, don't use flash messages twice
             app.logger.info(f"Image '{image_key}' moved to {action} bucket.")
@@ -611,10 +637,10 @@ def browse_bucket(bucket_name):
     flashed_messages = session.get('_flashes', [])
     if flashed_messages:
         # Keep only non-success messages or messages that don't contain "uploaded"
-        filtered_messages = [(category, message) for category, message in flashed_messages
+        filtered_messages = [(category, message) for category, message in flashed_messages 
                             if category != 'success' or 'uploaded' not in message.lower()]
         session['_flashes'] = filtered_messages
-
+        
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
@@ -623,16 +649,16 @@ def browse_bucket(bucket_name):
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
     }
-
+    
     if bucket_name not in buckets:
         flash('Invalid bucket selected', 'danger')
         return redirect(url_for('browse_buckets'))
-
+        
     bucket_info = buckets[bucket_name]
     try:
         if not bucket_info['bucket']:
             raise ValueError(f"Bucket name for '{bucket_name}' is not configured")
-
+            
         # Get request parameters
         page = request.args.get('page', 1, type=int)
         search_query = request.args.get('search', '').lower()
@@ -644,9 +670,9 @@ def browse_bucket(bucket_name):
         date_to = request.args.get('date_to', '')
         per_page = 200
         max_items_to_scan = 5000 # Limit initial scan
-
+        
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
-
+        
         # --- Fetch and Filter Data ---
         all_scanned_files = []
         s3 = get_s3_client() # Use thread-local client
@@ -667,9 +693,9 @@ def browse_bucket(bucket_name):
                     items_scanned += 1
                     # Store raw data needed for initial filtering
                     all_scanned_files.append({
-                        'key': item['Key'],
-                        'size': item['Size'],
-                        'last_modified': item['LastModified'],
+                                'key': item['Key'],
+                                'size': item['Size'],
+                                'last_modified': item['LastModified'],
                         'metadata': {} # Initialize empty
                     })
 
@@ -733,7 +759,7 @@ def browse_bucket(bucket_name):
                         else:
                              app.logger.warning(f"Error fetching metadata for {key}: {e}")
                         return key, {} # Return empty metadata on error
-                    except Exception as e:
+                        except Exception as e:
                          app.logger.warning(f"Unexpected error fetching metadata for {key}: {e}")
                          return key, {}
 
@@ -777,11 +803,11 @@ def browse_bucket(bucket_name):
         if page < 1: page = 1
         # Don't redirect to last page if estimate, allow navigating beyond current known items
         elif page > total_pages and total_pages > 0 and not total_files_estimate:
-             page = total_pages
-
-        start_idx = (page - 1) * per_page
+                page = total_pages
+            
+            start_idx = (page - 1) * per_page
         # Only slice up to the known number of files
-        end_idx = min(start_idx + per_page, total_files)
+            end_idx = min(start_idx + per_page, total_files)
         current_page_files = filtered_files[start_idx:end_idx] if total_files > 0 else []
         app.logger.info(f"Pagination: Page {page}/{total_pages}{'+' if total_files_estimate else ''}. Displaying {len(current_page_files)} items ({start_idx}-{end_idx-1}) from {total_files}{'+' if total_files_estimate else ''} total filtered.")
 
@@ -824,7 +850,7 @@ def browse_bucket(bucket_name):
                         f['metadata'] = fetched_metadata[f['key']]
 
         # --- Render ---
-        return render_template('browse_bucket.html',
+        return render_template('browse_bucket.html', 
                              bucket=bucket_info,
                              bucket_name=bucket_name,
                              files=current_page_files,
@@ -839,7 +865,7 @@ def browse_bucket(bucket_name):
                              date_from=date_from,
                              date_to=date_to,
                              all_buckets=buckets) # Pass the full buckets dict
-
+                             
     except Exception as e:
         app.logger.error(f"Error browsing bucket '{bucket_name}': {str(e)}", exc_info=True) # Log traceback
         flash(f'Error accessing bucket: {str(e)}', 'danger')
