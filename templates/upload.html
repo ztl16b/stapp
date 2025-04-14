@@ -517,7 +517,7 @@
             // Create form data for this single file
             const formData = new FormData();
             formData.append('files', file);
-            formData.append('uploader_initials', uploaderInitials);
+            formData.append('uploaderInitials', uploaderInitials);
             
             // Set up abort controller for timeout
             currentAbortController = new AbortController();
