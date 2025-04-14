@@ -8,7 +8,7 @@ git push heroku master
 git push heroku master --force
 
 git add . && git commit -m "insert_text" && git push heroku master
-git add . && git commit -m "last modified" && git push heroku master && sleep 10 && heroku restart
+git add . && git commit -m "validation_worker" && git push heroku master && sleep 10 && heroku restart
 
 heroku logs --tail
 
