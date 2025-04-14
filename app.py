@@ -733,7 +733,7 @@ def browse_bucket(bucket_name):
                         else:
                              app.logger.warning(f"Error fetching metadata for {key}: {e}")
                         return key, {} # Return empty metadata on error
-                        except Exception as e:
+                    except Exception as e:
                          app.logger.warning(f"Unexpected error fetching metadata for {key}: {e}")
                          return key, {}
 
