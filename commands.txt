@@ -24,3 +24,6 @@ heroku ps:restart validation_worker
 heroku ps:scale image_worker=1
 heroku ps:scale validation_worker=1
 
+heroku logs --app heroimages --ps image_worker -t
+heroku logs --app heroimages --ps validation_worker -t
+

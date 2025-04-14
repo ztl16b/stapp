@@ -7,25 +7,55 @@ import traceback
 import redis
 from datetime import datetime
 import re
+import sys
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 import schedule
 from concurrent.futures import ThreadPoolExecutor
 
-# Load environment variables
-load_dotenv()
+# Add a simple console output for debugging
+print("Starting filename_validator.py script")
 
-# Set up logging
+# Load environment variables
+try:
+    load_dotenv()
+    print("Environment variables loaded")
+except Exception as e:
+    print(f"Error loading environment variables: {e}")
+
+# Set up logging to output to stdout (needed for Heroku)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    stream=sys.stdout
 )
 logger = logging.getLogger('filename_validator')
+logger.info("Logger initialized")
+
+# Check required environment variables
+required_env_vars = [
+    "AWS_ACCESS_KEY_ID", 
+    "AWS_SECRET_ACCESS_KEY", 
+    "AWS_REGION", 
+    "S3_UPLOAD_BUCKET", 
+    "S3_ISSUE_BUCKET", 
+    "S3_GOOD_BUCKET"
+]
+
+missing_vars = []
+for var in required_env_vars:
+    if not os.getenv(var):
+        missing_vars.append(var)
+        print(f"Missing required environment variable: {var}")
+
+if missing_vars:
+    error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+    print(error_msg)
+    logger.error(error_msg)
+    sys.exit(1)
 
 # AWS Configuration
+print("Setting up AWS configuration")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
@@ -35,6 +65,7 @@ S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
 
 # Redis Configuration
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')
+print(f"Redis URL: {REDIS_URL}")
 
 # Debug variables
 DEBUG_FILE = "validator_debug.txt"
@@ -45,16 +76,21 @@ REDIS_FILENAME_PREFIX = "filename:"
 REDIS_CACHE_EXPIRY = 60 * 60 * 24 * 7  # 7 days
 
 # Maximum number of worker threads
-MAX_WORKERS = 10
+MAX_WORKERS = 5  # Reduced from 10 to avoid memory issues on Heroku
 
 # Initialize Redis
+redis_client = None
 try:
+    print("Attempting to connect to Redis...")
     redis_client = redis.from_url(REDIS_URL)
     # Test connection
     redis_client.ping()
+    print("Connected to Redis successfully")
     logger.info("Connected to Redis successfully")
 except Exception as e:
-    logger.warning(f"Warning: Redis connection failed: {e}")
+    error_msg = f"Warning: Redis connection failed: {e}"
+    print(error_msg)
+    logger.warning(error_msg)
     redis_client = None
 
 # Print configuration for debugging
@@ -67,8 +103,10 @@ logger.info(f"REDIS_URL: {REDIS_URL}")
 logger.info(f"Redis Connected: {redis_client is not None}")
 logger.info(f"Using {MAX_WORKERS} worker threads for parallel processing")
 
-# Initialize S3 client
+# Initialize S3 client with error handling
+s3_client = None
 try:
+    print("Initializing S3 client...")
     s3_client = boto3.client(
         's3',
         aws_access_key_id=AWS_ACCESS_KEY_ID,
@@ -76,18 +114,35 @@ try:
         region_name=AWS_REGION
     )
     
+    # Test S3 connection by listing buckets
+    print("Testing S3 connection...")
+    s3_client.list_buckets()
+    print("S3 connection successful")
+    
     # Make sure required prefixes/directories exist
     if S3_ISSUE_BUCKET:
-        s3_client.put_object(
-            Bucket=S3_ISSUE_BUCKET,
-            Key="issue_files/.placeholder",
-            Body="Placeholder to ensure directory exists"
-        )
-        logger.info(f"Ensured issue_files/ prefix exists in {S3_ISSUE_BUCKET}")
+        try:
+            print(f"Creating placeholder in {S3_ISSUE_BUCKET}/issue_files/...")
+            s3_client.put_object(
+                Bucket=S3_ISSUE_BUCKET,
+                Key="issue_files/.placeholder",
+                Body="Placeholder to ensure directory exists"
+            )
+            print(f"Successfully created placeholder in issue bucket")
+            logger.info(f"Ensured issue_files/ prefix exists in {S3_ISSUE_BUCKET}")
+        except Exception as e:
+            error_msg = f"Warning: Could not create placeholder in issue bucket: {e}"
+            print(error_msg)
+            logger.warning(error_msg)
+            # Continue anyway, this is non-fatal
     
 except Exception as e:
-    logger.error(f"Failed to initialize S3 client: {e}")
-    traceback.print_exc()
+    error_msg = f"Failed to initialize S3 client: {e}"
+    print(error_msg)
+    print(traceback.format_exc())
+    logger.error(error_msg)
+    logger.error(traceback.format_exc())
+    sys.exit(1)
 
 def write_debug_info(message):
     """Write debug information to S3 bucket and log"""
@@ -95,27 +150,34 @@ def write_debug_info(message):
         timestamp = datetime.now().isoformat()
         debug_message = f"[{timestamp}] {message}\n"
         
-        # First, try to read existing debug file
-        try:
-            response = s3_client.get_object(Bucket=S3_ISSUE_BUCKET, Key=DEBUG_FILE)
-            existing_content = response['Body'].read().decode('utf-8')
-            # Keep only the last 50 lines to prevent the file from growing too large
-            lines = existing_content.splitlines()[-50:]
-            existing_content = '\n'.join(lines) + '\n'
-        except:
-            existing_content = ""
-        
-        # Write updated content
-        s3_client.put_object(
-            Bucket=S3_ISSUE_BUCKET,
-            Key=DEBUG_FILE,
-            Body=existing_content + debug_message
-        )
-        
-        # Also log the message
+        # First log to console/stdout
+        print(f"DEBUG: {message}")
         logger.info(message)
+        
+        # Try to write to S3 if available
+        if s3_client:
+            try:
+                # First, try to read existing debug file
+                try:
+                    response = s3_client.get_object(Bucket=S3_ISSUE_BUCKET, Key=DEBUG_FILE)
+                    existing_content = response['Body'].read().decode('utf-8')
+                    # Keep only the last 50 lines to prevent the file from growing too large
+                    lines = existing_content.splitlines()[-50:]
+                    existing_content = '\n'.join(lines) + '\n'
+                except:
+                    existing_content = ""
+                
+                # Write updated content
+                s3_client.put_object(
+                    Bucket=S3_ISSUE_BUCKET,
+                    Key=DEBUG_FILE,
+                    Body=existing_content + debug_message
+                )
+            except Exception as e:
+                logger.error(f"Failed to write debug info to S3: {e}")
+                # Continue execution even if S3 write fails
     except Exception as e:
-        logger.error(f"Failed to write debug info: {e}")
+        logger.error(f"Failed in write_debug_info: {e}")
 
 def update_last_run():
     """Update the last run timestamp file"""
@@ -575,35 +637,48 @@ def check_upload_bucket_filenames():
 
 def run_scheduler():
     """Run the scheduler to validate filenames periodically"""
+    print("Starting filename validation service scheduler")
     logger.info("Starting filename validation service")
-    write_debug_info("Scheduler started - will run every 30 seconds")
+    
+    # On Heroku, don't use write_debug_info at startup to avoid S3 issues
+    print("Scheduler started - will run every 30 seconds")
     
     # Schedule the validation job to run every 30 seconds
     schedule.every(30).seconds.do(check_upload_bucket_filenames)
     
     # Run once immediately on startup
     try:
+        print("Running initial validation check...")
         check_upload_bucket_filenames()
+        print("Initial validation check completed")
     except Exception as e:
-        logger.error(f"Error in initial run: {e}")
-        write_debug_info(f"Error in initial run: {e}")
-        traceback.print_exc()
+        error_msg = f"Error in initial validation run: {e}"
+        print(error_msg)
+        print(traceback.format_exc())
+        logger.error(error_msg)
+        # Continue to scheduler even if first run fails
     
     # Keep the script running
+    print("Entering scheduler loop")
     while True:
         try:
             schedule.run_pending()
             time.sleep(1)
         except Exception as e:
-            logger.error(f"Error in scheduler loop: {e}")
-            write_debug_info(f"Error in scheduler loop: {e}")
-            traceback.print_exc()
+            error_msg = f"Error in scheduler loop: {e}"
+            print(error_msg)
+            logger.error(error_msg)
+            # Don't log full traceback to avoid flooding logs
             time.sleep(60)  # Wait a bit longer if there's an error
 
 if __name__ == "__main__":
     try:
+        print("Starting main execution")
         run_scheduler()
     except Exception as e:
-        logger.error(f"Fatal error in main: {e}")
-        write_debug_info(f"Fatal error in main: {e}")
-        traceback.print_exc()
+        error_msg = f"FATAL ERROR in main: {str(e)}"
+        print(error_msg)
+        print(traceback.format_exc())
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        sys.exit(1)
