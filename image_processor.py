@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 import schedule
 
 
-# MAX_WORKERS==Process up to 5 images at a time  |  BATCH_SIZE==Number of images to process in each batch
 MAX_WORKERS = 10
 BATCH_SIZE = 10
 
@@ -178,14 +177,6 @@ def list_all_temp_images():
         return []
 
 def process_image(s3_key):
-    """
-    Process a single image from the temp bucket:
-    1. Download from S3
-    2. Upload to Bytescale for processing
-    3. Download processed image
-    4. Upload to final destination
-    5. Delete original from temp bucket
-    """
     try:
         write_debug_info(f"\n=== Processing image: {s3_key} ===")
         
@@ -196,7 +187,6 @@ def process_image(s3_key):
         file_data = response['Body'].read()
         content_type = response.get('ContentType', 'image/jpeg')
         
-        # Get uploader initials metadata if available
         metadata = response.get('Metadata', {})
         uploader_initials = metadata.get('uploader-initials', '')
         if uploader_initials:
@@ -292,7 +282,6 @@ def process_image(s3_key):
             write_debug_info(f"Final filename: {os.path.basename(upload_path)}")
             write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
             
-            # Prepare extra args for upload, including metadata
             extra_args = {'ContentType': 'image/webp'}
             if uploader_initials:
                 extra_args['Metadata'] = {'uploader-initials': uploader_initials}

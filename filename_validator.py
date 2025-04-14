@@ -352,25 +352,21 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
             except ClientError as e:
                 error_code = e.response.get('Error', {}).get('Code')
                 error_msg = e.response.get('Error', {}).get('Message')
-                # Log error, but maybe don't fail the whole operation? Or should we?
-                # Let's log it as a critical warning for now.
                 write_debug_info(f"  DELETE FAILED for {object_key}: {error_code} - {error_msg}. File was copied but original remains.")
                 logger.error(f"ClientError during delete of {object_key} (after copy): {e}")
-                # Even if delete fails, the primary goal (moving issue file) kinda succeeded with the copy.
-                # Let's still return True, but the logs show the issue.
-                # delete_success remains False, but we proceed. 
+                # Logged error, but return True as copy succeeded.
             except Exception as e:
                 write_debug_info(f"  DELETE FAILED for {object_key} with unexpected error: {str(e)}. File was copied but original remains.")
                 logger.error(f"Unexpected error during delete of {object_key} (after copy): {e}")
                 traceback.print_exc()
-                # Again, return True as the copy worked.
+                # Logged error, but return True as copy succeeded.
 
         # Final success requires copy succeeded. Delete failure is logged.
         if copy_success:
             write_debug_info(f"Successfully processed move for {object_key} (original deleted: {delete_success})")
             return True
         else:
-             # This case should not be reached due to early returns on copy failure
+            # This case should not be reached due to early returns on copy failure
             write_debug_info(f"Move failed for {object_key} during copy phase.")
             return False
             
@@ -385,55 +381,38 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
 def process_file(obj, good_filenames, good_base_filenames):
     """
     Process a single file from the upload bucket:
-    1. Check if the base filename format ({numeric}.{numeric}) is valid.
-    2. If base format is valid, check if the extension is .webp.
-    3. If base format and extension are valid, check for duplicates.
-    4. Return results indicating format validity, webp status, and duplicate status.
+    1. Check if filename format is valid
+    2. If valid, check if it's a duplicate
+    3. Return results for further processing
     """
     object_key = obj['Key']
     filename = object_key.split('/')[-1]
     
-    # Skip empty filenames or directory placeholders
-    if not filename:
-        return None # Indicate this object should be skipped
-        
-    base_name, ext = os.path.splitext(filename)
-    is_valid_base_format = False
-    is_webp = ext.lower() == '.webp'
-
-    # Check base format: {numeric}.{numeric}
-    parts = base_name.split('.')
-    if len(parts) == 2:
-        try:
-            int(parts[0])
-            int(parts[1])
-            is_valid_base_format = True
-        except ValueError:
-            is_valid_base_format = False # Handles cases like 'abc.123'
-    # else: # Base format is invalid if not two parts
-    #     is_valid_base_format = False
-
-    # Default result values
-    is_dupe = False
-
-    # Only check for duplicates if the base format is correct AND it's a webp file
-    if is_valid_base_format and is_webp:
-        is_dupe = is_duplicate(filename, good_filenames, good_base_filenames)
+    # First check filename format
+    if not check_filename_format(filename):
+        return {
+            'key': object_key,
+            'filename': filename,
+            'is_valid_format': False,
+            'is_duplicate': False
+        }
+    
+    # If format is valid, check for duplicates
+    is_dupe = is_duplicate(filename, good_filenames, good_base_filenames)
     
     return {
         'key': object_key,
         'filename': filename,
-        'is_valid_format': is_valid_base_format, # Is the BASE name {num}.{num}?
-        'is_webp': is_webp, # Is the extension .webp?
+        'is_valid_format': True,
         'is_duplicate': is_dupe
     }
 
 def check_upload_bucket_filenames():
     """
     Check all files in the Upload bucket:
-    1. Validate base filename format ({numeric}.{numeric}).
-    2. If base format is valid and extension is .webp, check for duplicates.
-    3. Move files with invalid base format OR valid format but wrong extension OR duplicates to Issue bucket.
+    1. First validate filename format
+    2. If valid format, check against Good bucket for duplicates
+    3. Move invalid format or duplicates to Issue bucket
     
     Uses multithreading for improved performance with large numbers of files.
     """
@@ -447,95 +426,63 @@ def check_upload_bucket_filenames():
             good_filenames, good_base_filenames = refresh_good_images_cache()
         else:
             write_debug_info("WARNING: Redis not available, duplicate detection may not work properly")
+            # Load filenames directly into memory if Redis is not available
             good_filenames, good_base_filenames = load_good_bucket_filenames_to_memory()
-
-        write_debug_info("Checking upload bucket (S3_UPLOAD_BUCKET) for improperly formatted filenames and duplicates")
+        
+        write_debug_info("Checking upload bucket for improperly formatted filenames and duplicates")
         
         # List objects in the upload bucket
         prefix = 'temp_performer_at_venue_images/'
         
-        # Get ALL files from the upload bucket within the prefix
+        # Get all webp files from the upload bucket
         try:
-            s3 = boto3.client('s3') # Ensure we have a client instance
-            all_files_in_prefix = []
-            paginator = s3.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=S3_UPLOAD_BUCKET, Prefix=prefix):
-                if 'Contents' in page:
-                    # Filter out the prefix placeholder itself if present
-                    all_files_in_prefix.extend([obj for obj in page['Contents'] if obj['Key'] != prefix])
-
-            if not all_files_in_prefix:
-                write_debug_info(f"No files found in upload bucket with prefix {prefix}")
+            response = s3_client.list_objects_v2(
+                Bucket=S3_UPLOAD_BUCKET,
+                Prefix=prefix
+            )
+            
+            if 'Contents' not in response:
+                write_debug_info("No files found in upload bucket")
                 return
                 
-            total_files_found = len(all_files_in_prefix)
-            write_debug_info(f"Found {total_files_found} total files in upload bucket prefix {prefix} to validate")
+            webp_files = [obj for obj in response['Contents'] if obj['Key'].lower().endswith('.webp')]
+            total_files = len(webp_files)
+            
+            if total_files == 0:
+                write_debug_info("No .webp files found in upload bucket")
+                return
+                
+            write_debug_info(f"Found {total_files} webp files in upload bucket")
             
             # Process files in parallel using ThreadPoolExecutor
-            invalid_base_format_count = 0
-            wrong_extension_count = 0
+            format_issue_count = 0
             duplicate_count = 0
-            processed_count = 0
-            skipped_count = 0 # Count skipped items like empty filenames
-
+            
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 # Process files in parallel
-                # Ensure good_filenames/good_base_filenames are loaded correctly before this map
-                future_results = executor.map(
+                results = list(executor.map(
                     lambda obj: process_file(obj, good_filenames, good_base_filenames),
-                    all_files_in_prefix # Process ALL files found
-                )
+                    webp_files
+                ))
                 
-                # Filter out None results (e.g., from empty filenames)
-                results = [r for r in future_results if r is not None]
-                skipped_count = total_files_found - len(results)
-                processed_count = len(results)
-
-                # Handle files with invalid base format ({numeric}.{numeric})
-                invalid_base_files = [r for r in results if not r['is_valid_format']]
-                write_debug_info(f"Found {len(invalid_base_files)} files with invalid base format ({numeric}.{numeric})")
+                # Handle invalid format files
+                format_issues = [r for r in results if not r['is_valid_format']]
+                write_debug_info(f"Found {len(format_issues)} files with invalid format")
                 
-                for issue in invalid_base_files:
-                    if issue.get('key'):
-                        write_debug_info(f"  Processing invalid base format file: {issue['filename']}") 
-                        move_successful = move_to_issue_bucket(issue['key'], "invalid base format")
-                        if move_successful:
-                            invalid_base_format_count += 1
-                        write_debug_info(f"  Move result for invalid base format file {issue['filename']}: {move_successful}") 
-                    else:
-                        logger.warning(f"Skipping move for invalid base file due to missing key: {issue}")
-
-                # Handle files with valid base format but wrong extension (not .webp)
-                wrong_extension_files = [r for r in results if r['is_valid_format'] and not r['is_webp']]
-                write_debug_info(f"Found {len(wrong_extension_files)} files with valid base format but wrong extension")
-
-                for issue in wrong_extension_files:
-                    if issue.get('key'):
-                        write_debug_info(f"  Processing wrong extension file: {issue['filename']}") 
-                        move_successful = move_to_issue_bucket(issue['key'], "wrong extension")
-                        if move_successful:
-                            wrong_extension_count += 1
-                        write_debug_info(f"  Move result for wrong extension file {issue['filename']}: {move_successful}") 
-                    else:
-                        logger.warning(f"Skipping move for wrong extension file due to missing key: {issue}")
-
-                # Handle duplicates (must have valid base format AND be .webp)
-                duplicates = [r for r in results if r['is_valid_format'] and r['is_webp'] and r['is_duplicate']]
-                write_debug_info(f"Found {len(duplicates)} duplicate .webp files")
+                for issue in format_issues:
+                    if move_to_issue_bucket(issue['key'], "improperly formatted"):
+                        format_issue_count += 1
+                
+                # Handle duplicates
+                duplicates = [r for r in results if r['is_valid_format'] and r['is_duplicate']]
+                write_debug_info(f"Found {len(duplicates)} duplicate files")
                 
                 for dup in duplicates:
-                    if dup.get('key'):
-                        write_debug_info(f"  Processing duplicate file: {dup['filename']}") 
-                        move_successful = move_to_issue_bucket(dup['key'], "duplicate")
-                        if move_successful:
-                            duplicate_count += 1
-                        write_debug_info(f"  Move result for duplicate file {dup['filename']}: {move_successful}") 
-                    else:
-                        logger.warning(f"Skipping move for duplicate file due to missing key: {dup}")
+                    if move_to_issue_bucket(dup['key'], "duplicate"):
+                        duplicate_count += 1
             
-            write_debug_info(f"Validation summary: Processed {processed_count} files (skipped {skipped_count}) total from prefix {prefix}")
-            write_debug_info(f"Moved {invalid_base_format_count} files with invalid base format to issue bucket")
-            write_debug_info(f"Moved {wrong_extension_count} files with wrong extension to issue bucket")
+            write_debug_info(f"Validation summary: Processed {total_files} files total")
+            write_debug_info(f"Moved {format_issue_count} improperly formatted files to issue bucket")
             write_debug_info(f"Moved {duplicate_count} duplicate files to issue bucket")
             write_debug_info("===== Completed validation cycle =====")
             
