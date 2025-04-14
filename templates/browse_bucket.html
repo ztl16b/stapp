@@ -87,70 +87,81 @@
         </div>
     </div>
 
-    <!-- Display file count and pagination only if multiple pages -->
-    {% if total_pages > 1 %}
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-            {% if is_lazy_loading %}
-            Page {{ current_page }}{% if total_files %}: {{ files|length }} files{% endif %}
+    <!-- Display file count and pagination -->
+    <div class="d-flex justify-content-between align-items-center mb-3 file-count-pagination">
+        <div class="file-count">
+            {% if total_files <= 0 %}
+                No files found matching your criteria.
+            {% elif total_files <= per_page and not total_files_estimate %}
+                {# Case: 1-200 files total, count is exact -> "Showing 199 files" #}
+                Showing {{ total_files }} file{{ 's' if total_files != 1 else '' }}
             {% else %}
-            Showing {{ files|length }} of {{ total_files }} files (Page {{ current_page }} of {{ total_pages }})
+                {# Case: >200 files total (exact or estimate) #}
+                {# "Showing 200 of 1023 files (Page 1 of 6)" #}
+                {# "Showing 23 of 1023 files (Page 6 of 6)" #}
+                {# "Showing 200 of 5000+ files (Page 1 of 25+)" #}
+                Showing {{ files|length }} of {{ total_files }}{{ '+' if total_files_estimate else '' }} files (Page {{ current_page }} of {{ total_pages }}{{ '+' if total_files_estimate else '' }})
             {% endif %}
-            
+
+            {# Optionally show filter criteria #}
+            <small class="text-muted ms-2">
             {% if search_query %}
                 Filtered by: "{{ search_query }}"
             {% endif %}
             {% if uploader_filter %}
-                Uploader: "{{ uploader_filter }}"
+                 Uploader: "{{ uploader_filter }}"
             {% endif %}
             {% if date_from or date_to %}
-                Date range: 
-                {% if date_from %}
-                    From {{ date_from }}
-                {% endif %}
-                {% if date_to %}
-                    To {{ date_to }}
-                {% endif %}
+                Date:{% if date_from %} From {{ date_from }}{% endif %}{% if date_to %} To {{ date_to }}{% endif %}
             {% endif %}
+            </small>
         </div>
+
+        {# Show pagination only if needed #}
+        {% if total_pages > 1 or total_files_estimate %}
         <nav aria-label="Page navigation">
             <ul class="pagination pagination-sm mb-0">
+                {# Previous Page Link #}
                 {% if current_page > 1 %}
                 <li class="page-item">
                     <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
-                        <i class="fas fa-chevron-left"></i>
+                        <i class="fas fa-chevron-left"></i> Prev
                     </a>
                 </li>
-                {% endif %}
-                
-                {% if is_lazy_loading %}
-                    <!-- Simplified pagination for lazy-loading -->
-                    <li class="page-item active">
-                        <span class="page-link">{{ current_page }}</span>
-                    </li>
-                    {% if current_page < total_pages %}
-                    <li class="page-item">
-                        <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ current_page+1 }}</a>
-                    </li>
-                    {% endif %}
                 {% else %}
-                    <!-- Standard pagination -->
-                    {% for p in range(1, total_pages + 1) %}
-                    <li class="page-item {% if p == current_page %}active{% endif %}">
-                        <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=p, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">{{ p }}</a>
-                    </li>
-                    {% endfor %}
+                 <li class="page-item disabled">
+                    <span class="page-link"><i class="fas fa-chevron-left"></i> Prev</span>
+                </li>
                 {% endif %}
-                
-                {% if current_page < total_pages %}
+
+                {# Page Number Links (Simplified for potentially large/estimated totals) #}
+                {# Show current page and maybe a few around it #}
+                {# Logic for generating smart page links can be complex, keeping it simple #}
+                 <li class="page-item active">
+                    <span class="page-link">{{ current_page }}</span>
+                </li>
+                {# Optionally show next page number if not last #}
+                 {% if current_page < total_pages or total_files_estimate %}
+                     {# Show next page link even if estimate, assuming more might exist #}
+                 {% endif %}
+
+
+                {# Next Page Link #}
+                {# Enable Next if not on the last known page OR if the total is an estimate #}
+                {% if current_page < total_pages or total_files_estimate %}
                 <li class="page-item">
                     <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
-                        <i class="fas fa-chevron-right"></i>
+                        Next <i class="fas fa-chevron-right"></i>
                     </a>
+                </li>
+                {% else %}
+                 <li class="page-item disabled">
+                     <span class="page-link">Next <i class="fas fa-chevron-right"></i></span>
                 </li>
                 {% endif %}
             </ul>
         </nav>
+        {% endif %}
     </div>
     {% endif %}
 

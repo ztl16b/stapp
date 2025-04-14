@@ -5,6 +5,9 @@ chrome://net-internals/#sockets
 git add .
 git commit -m "insert_text"
 git push heroku master
+git push heroku master --force
+
+git add . && git commit -m "insert_text" && git push heroku master
 
 heroku logs --tail
 
