@@ -20,7 +20,6 @@ import re
 import hashlib
 import mimetypes
 import psutil
-import csv
 import concurrent.futures
 
 load_dotenv()
@@ -1098,23 +1097,6 @@ def get_image_preview(bucket_name, object_key):
     except Exception as e:
         app.logger.error(f"Error generating image preview: {e}")
         return f"Error loading image: {str(e)}", 500
-
-@app.route('/suggestions')
-def get_suggestions():
-    suggestions = []
-    try:
-        with open('suggestions.csv', 'r') as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                # Using the field 'suggestion' which is the expected field in the CSV
-                suggestions.append({
-                    'text': row['text'],
-                    'suggestion': row['suggestion']
-                })
-        return jsonify(suggestions)
-    except Exception as e:
-        app.logger.error(f"Error loading suggestions: {e}")
-        return jsonify([])
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

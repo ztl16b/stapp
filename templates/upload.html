@@ -104,49 +104,6 @@
     font-weight: bold;
     color: #6c757d;
 }
-
-/* Suggestion Dropdown Styles */
-.suggestion-dropdown {
-    position: absolute;
-    width: 100%;
-    max-height: 200px;
-    overflow-y: auto;
-    background-color: white;
-    border: 1px solid #ced4da;
-    border-radius: 0 0 4px 4px;
-    z-index: 1000;
-    margin-top: 2px;
-}
-
-.suggestion-item {
-    padding: 8px 12px;
-    cursor: pointer;
-}
-
-.suggestion-item:hover {
-    background-color: #f8f9fa;
-}
-
-.suggestions-dropdown {
-    position: absolute;
-    background-color: white;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    max-height: 200px;
-    overflow-y: auto;
-    width: 100%;
-    z-index: 1000;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-}
-
-.suggestion-item {
-    padding: 10px;
-    cursor: pointer;
-}
-
-.suggestion-item:hover {
-    background-color: #f5f5f5;
-}
     </style>
 {% endblock %}
 
@@ -177,10 +134,9 @@
     <form id="uploadForm" enctype="multipart/form-data">
         <!-- Uploader Initials Field -->
         <div class="form-group mb-4">
-            <label for="uploader_initials" class="form-label">Uploader Initials (format: Text_MM_DD where MM and DD are two digits): <span class="text-danger">*</span></label>
+            <label for="uploader_initials" class="form-label"><span class="text-danger">*</span> Uploader Initials and Date <span class="text-danger">*</span></label>
             <div class="position-relative">
                 <input type="text" class="form-control" id="uploader_initials" name="uploader_initials" required>
-                <div id="suggestions" style="display: none;" class="suggestions-dropdown"></div>
             </div>
             <small class="form-text text-muted">Example: ABC_01_15</small>
             <div class="invalid-feedback" id="initialsError">
@@ -255,11 +211,6 @@
         const sizeExceededCount = document.getElementById('sizeExceededCount');
         const invalidTypeCount = document.getElementById('invalidTypeCount');
         
-        // Initials suggestions elements
-        const uploaderInput = document.getElementById('uploader_initials');
-        const suggestionsDiv = document.getElementById('suggestions');
-        let allSuggestions = [];
-        
         // Sequential upload elements
         const uploadProgress = document.getElementById('uploadProgress');
         const progressBar = document.getElementById('progressBar');
@@ -272,59 +223,6 @@
         let validFiles = [];
         const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
         const VALID_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
-        
-        // Load all suggestions when page loads
-        fetch('/suggestions')
-            .then(response => response.json())
-            .then(data => {
-                allSuggestions = data;
-            })
-            .catch(error => console.error('Error loading suggestions:', error));
-        
-        uploaderInput.addEventListener('input', function() {
-            const inputText = this.value.trim().toUpperCase();
-            
-            if (inputText) {
-                // Filter suggestions that start with the input text
-                const matchingSuggestions = allSuggestions.filter(item => 
-                    item.text.toUpperCase().startsWith(inputText) || 
-                    item.suggestion.toUpperCase().startsWith(inputText)
-                );
-                
-                if (matchingSuggestions.length > 0) {
-                    // Format suggestions with current date
-                    const today = new Date();
-                    const month = String(today.getMonth() + 1).padStart(2, '0');
-                    const day = String(today.getDate()).padStart(2, '0');
-                    
-                    suggestionsDiv.innerHTML = '';
-                    matchingSuggestions.forEach(suggestion => {
-                        const formattedSuggestion = suggestion.suggestion.replace('MM', month).replace('DD', day);
-                        const div = document.createElement('div');
-                        div.className = 'suggestion-item';
-                        div.textContent = formattedSuggestion;
-                        div.addEventListener('click', function() {
-                            uploaderInput.value = formattedSuggestion;
-                            suggestionsDiv.style.display = 'none';
-                        });
-                        suggestionsDiv.appendChild(div);
-                    });
-                    
-                    suggestionsDiv.style.display = 'block';
-                } else {
-                    suggestionsDiv.style.display = 'none';
-                }
-            } else {
-                suggestionsDiv.style.display = 'none';
-            }
-        });
-        
-        // Hide suggestions when clicking outside
-        document.addEventListener('click', function(e) {
-            if (e.target !== uploaderInput && e.target !== suggestionsDiv) {
-                suggestionsDiv.style.display = 'none';
-            }
-        });
         
         // Sequential upload variables
         let isUploading = false;
