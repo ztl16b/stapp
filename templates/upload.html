@@ -109,7 +109,7 @@
 
 {% block content %}
 <div class="container mt-3">
-    <h1>Upload Images</h1>
+    <h4>Upload Images</h4>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
@@ -165,6 +165,19 @@
             <p class="text-muted">Maximum file size: 5MB per file</p>
         </div>
 
+        <!-- Sequential Upload Progress - Moved up to be directly under drop zone -->
+        <div class="upload-progress" id="uploadProgress">
+            <div class="progress" style="height: 25px;">
+                <div class="progress-bar progress-bar-striped" role="progressbar" style="width: 0%" id="progressBar">0%</div>
+            </div>
+            <div class="d-flex justify-content-between mt-2">
+                <div><strong>Uploaded:</strong> <span id="uploadedCount">0</span> of <span id="totalCount">0</span></div>
+                <div><strong>Status:</strong> <span id="uploadStatus">Ready</span></div>
+            </div>
+            
+            <div class="upload-log" id="uploadLog"></div>
+        </div>
+
         <div id="filePreview" class="file-preview"></div>
 
         <div class="upload-stats" id="uploadStats" style="display: none;">
@@ -181,20 +194,6 @@
             </div>
         </div>
         </form>
-
-    <!-- Sequential Upload Progress -->
-    <div class="upload-progress" id="uploadProgress">
-        <h4>Upload Progress</h4>
-        <div class="progress" style="height: 25px;">
-            <div class="progress-bar progress-bar-striped" role="progressbar" style="width: 0%" id="progressBar">0%</div>
-        </div>
-        <div class="d-flex justify-content-between mt-2">
-            <div><strong>Uploaded:</strong> <span id="uploadedCount">0</span> of <span id="totalCount">0</span></div>
-            <div><strong>Status:</strong> <span id="uploadStatus">Ready</span></div>
-        </div>
-        
-        <div class="upload-log" id="uploadLog"></div>
-    </div>
 </div>
 {% endblock %}
 
