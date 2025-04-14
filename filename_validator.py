@@ -298,41 +298,88 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
     """
     Move a file from the Upload bucket to the Issue bucket.
     If it's a duplicate, add "_dupe" to the filename.
+    Returns True on success, False on failure.
     """
     try:
-        # Get the filename from the object key
         filename = object_key.split('/')[-1]
+        original_filename = filename # Keep original for logging if needed
         
-        # If it's a duplicate, add "_dupe" to the filename
+        # Modify filename if it's a duplicate
         if reason == "duplicate":
             name_part, ext_part = os.path.splitext(filename)
             filename = f"{name_part}_dupe{ext_part}"
         
         dest_key = f"issue_files/{filename}"
         
-        write_debug_info(f"Moving {reason} file {object_key} to issue bucket as {dest_key}")
+        write_debug_info(f"Attempting to move [{reason}] file '{object_key}' to '{dest_key}'")
         
-        # Copy to issue bucket
         copy_source = {'Bucket': S3_UPLOAD_BUCKET, 'Key': object_key}
+        copy_success = False
+        delete_success = False
+
+        # Copy to issue bucket
+        try:
+            write_debug_info(f"  Copying {object_key} from {S3_UPLOAD_BUCKET} to {S3_ISSUE_BUCKET}/{dest_key}...")
+            s3_client.copy_object(
+                CopySource=copy_source,
+                Bucket=S3_ISSUE_BUCKET,
+                Key=dest_key
+            )
+            copy_success = True
+            write_debug_info(f"  Copy successful: {object_key} to {dest_key}")
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code')
+            error_msg = e.response.get('Error', {}).get('Message')
+            write_debug_info(f"  COPY FAILED for {object_key} to {dest_key}: {error_code} - {error_msg}")
+            logger.error(f"ClientError during copy of {object_key}: {e}")
+            return False # Exit if copy fails
+        except Exception as e:
+            write_debug_info(f"  COPY FAILED for {object_key} to {dest_key} with unexpected error: {str(e)}")
+            logger.error(f"Unexpected error during copy of {object_key}: {e}")
+            traceback.print_exc()
+            return False # Exit if copy fails
         
-        s3_client.copy_object(
-            CopySource=copy_source,
-            Bucket=S3_ISSUE_BUCKET,
-            Key=dest_key
-        )
-        
-        # Delete from upload bucket
-        s3_client.delete_object(
-            Bucket=S3_UPLOAD_BUCKET,
-            Key=object_key
-        )
-        
-        write_debug_info(f"Successfully moved {object_key} to issue bucket as {dest_key}")
-        return True
+        # Delete from upload bucket ONLY if copy was successful
+        if copy_success:
+            try:
+                write_debug_info(f"  Deleting original {object_key} from {S3_UPLOAD_BUCKET}...")
+                s3_client.delete_object(
+                    Bucket=S3_UPLOAD_BUCKET,
+                    Key=object_key
+                )
+                delete_success = True
+                write_debug_info(f"  Delete successful: {object_key}")
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code')
+                error_msg = e.response.get('Error', {}).get('Message')
+                # Log error, but maybe don't fail the whole operation? Or should we?
+                # Let's log it as a critical warning for now.
+                write_debug_info(f"  DELETE FAILED for {object_key}: {error_code} - {error_msg}. File was copied but original remains.")
+                logger.error(f"ClientError during delete of {object_key} (after copy): {e}")
+                # Even if delete fails, the primary goal (moving issue file) kinda succeeded with the copy.
+                # Let's still return True, but the logs show the issue.
+                # delete_success remains False, but we proceed. 
+            except Exception as e:
+                write_debug_info(f"  DELETE FAILED for {object_key} with unexpected error: {str(e)}. File was copied but original remains.")
+                logger.error(f"Unexpected error during delete of {object_key} (after copy): {e}")
+                traceback.print_exc()
+                # Again, return True as the copy worked.
+
+        # Final success requires copy succeeded. Delete failure is logged.
+        if copy_success:
+            write_debug_info(f"Successfully processed move for {object_key} (original deleted: {delete_success})")
+            return True
+        else:
+             # This case should not be reached due to early returns on copy failure
+            write_debug_info(f"Move failed for {object_key} during copy phase.")
+            return False
+            
     except Exception as e:
-        error_msg = f"Error moving {object_key} to issue bucket: {str(e)}"
+        # Catchall for unexpected errors at the start of the function
+        error_msg = f"Error moving {object_key} to issue bucket (outer scope): {str(e)}"
         write_debug_info(error_msg)
         logger.error(error_msg)
+        traceback.print_exc()
         return False
 
 def process_file(obj, good_filenames, good_base_filenames):
@@ -449,10 +496,12 @@ def check_upload_bucket_filenames():
                 write_debug_info(f"Found {len(invalid_base_files)} files with invalid base format ({numeric}.{numeric})")
                 
                 for issue in invalid_base_files:
-                    # Double-check key exists before moving
-                    if issue.get('key'): 
-                      if move_to_issue_bucket(issue['key'], "invalid base format"):
-                          invalid_base_format_count += 1
+                    if issue.get('key'):
+                        write_debug_info(f"  Processing invalid base format file: {issue['filename']}") 
+                        move_successful = move_to_issue_bucket(issue['key'], "invalid base format")
+                        if move_successful:
+                            invalid_base_format_count += 1
+                        write_debug_info(f"  Move result for invalid base format file {issue['filename']}: {move_successful}") 
                     else:
                         logger.warning(f"Skipping move for invalid base file due to missing key: {issue}")
 
@@ -462,8 +511,11 @@ def check_upload_bucket_filenames():
 
                 for issue in wrong_extension_files:
                     if issue.get('key'):
-                      if move_to_issue_bucket(issue['key'], "wrong extension"):
-                          wrong_extension_count += 1
+                        write_debug_info(f"  Processing wrong extension file: {issue['filename']}") 
+                        move_successful = move_to_issue_bucket(issue['key'], "wrong extension")
+                        if move_successful:
+                            wrong_extension_count += 1
+                        write_debug_info(f"  Move result for wrong extension file {issue['filename']}: {move_successful}") 
                     else:
                         logger.warning(f"Skipping move for wrong extension file due to missing key: {issue}")
 
@@ -473,8 +525,11 @@ def check_upload_bucket_filenames():
                 
                 for dup in duplicates:
                     if dup.get('key'):
-                      if move_to_issue_bucket(dup['key'], "duplicate"):
-                          duplicate_count += 1
+                        write_debug_info(f"  Processing duplicate file: {dup['filename']}") 
+                        move_successful = move_to_issue_bucket(dup['key'], "duplicate")
+                        if move_successful:
+                            duplicate_count += 1
+                        write_debug_info(f"  Move result for duplicate file {dup['filename']}: {move_successful}") 
                     else:
                         logger.warning(f"Skipping move for duplicate file due to missing key: {dup}")
             
