@@ -779,9 +779,9 @@ def browse_bucket(bucket_name):
         elif page > total_pages and total_pages > 0 and not total_files_estimate:
                 page = total_pages
             
-            start_idx = (page - 1) * per_page
+        start_idx = (page - 1) * per_page
         # Only slice up to the known number of files
-            end_idx = min(start_idx + per_page, total_files)
+        end_idx = min(start_idx + per_page, total_files)
         current_page_files = filtered_files[start_idx:end_idx] if total_files > 0 else []
         app.logger.info(f"Pagination: Page {page}/{total_pages}{'+' if total_files_estimate else ''}. Displaying {len(current_page_files)} items ({start_idx}-{end_idx-1}) from {total_files}{'+' if total_files_estimate else ''} total filtered.")
 
