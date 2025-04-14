@@ -220,15 +220,18 @@
                                         Move
                                     </button>
                                     <ul class="dropdown-menu" aria-labelledby="moveDropdown{{ loop.index }}">
+                                        {# Capture outer loop index before starting inner loop #}
+                                        {% set outer_loop_index = loop.index %}
                                         {% for dest_bucket_key, dest_bucket_info in all_buckets.items() %}
                                             {% if dest_bucket_key != bucket_name %}
                                             <li>
-                                                <form action="{{ url_for('move_file_route') }}" method="post" class="d-inline" id="moveForm-{{ loop.parent.loop.index }}-{{ loop.index }}">
+                                                {# Use outer_loop_index and dest_bucket_key for unique ID #}
+                                                <form action="{{ url_for('move_file_route') }}" method="post" class="d-inline" id="moveForm-{{ outer_loop_index }}-{{ dest_bucket_key }}">
                                                     <input type="hidden" name="source_bucket_name" value="{{ bucket_name }}">
                                                     <input type="hidden" name="dest_bucket_name" value="{{ dest_bucket_key }}">
                                                     <input type="hidden" name="object_key" value="{{ file.key }}">
                                                     <button type="button" class="dropdown-item" 
-                                                            onclick="if(confirm('Are you sure you want to move {{ file.key.split('/')[-1] }} to {{ dest_bucket_info.name }}?')) { document.getElementById('moveForm-{{ loop.parent.loop.index }}-{{ loop.index }}').submit(); }"
+                                                            onclick="if(confirm('Are you sure you want to move {{ file.key.split('/')[-1] }} to {{ dest_bucket_info.name }}?')) { document.getElementById('moveForm-{{ outer_loop_index }}-{{ dest_bucket_key }}').submit(); }\">
                                                         Move to {{ dest_bucket_info.name }}
                                                     </button>
                                                 </form>
