@@ -201,7 +201,7 @@
                             </td>
                             <td>{{ file.key }}</td>
                             <td>{{ (file.size / 1024)|round(1) }} KB</td>
-                            <td>{{ file.last_modified | datetime_mdt }}</td>
+                            <td>{{ file.last_modified | datetime_mst }}</td>
                             <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
                             <td>
                                 <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
