@@ -6,7 +6,7 @@ from flask import Flask, request, render_template, redirect, url_for, flash, ses
 from dotenv import load_dotenv
 from botocore.exceptions import NoCredentialsError, ClientError
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from werkzeug.utils import secure_filename
 from requests.exceptions import RequestException
 import uuid
@@ -21,6 +21,7 @@ import hashlib
 import mimetypes
 import psutil
 import concurrent.futures
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 
@@ -30,6 +31,24 @@ app = Flask(__name__, template_folder=template_dir)
 
 # Set a fixed secret key for session management
 app.secret_key = os.environ.get('SECRET_KEY', 'your-fixed-secret-key-for-development')
+
+# Define MST timezone (UTC-7)
+MST = ZoneInfo("Etc/GMT+7")
+
+# Custom Jinja filter for MST datetime formatting
+def format_datetime_mst(dt_utc):
+    if not isinstance(dt_utc, datetime):
+        return dt_utc # Return as is if not a datetime object
+    # Ensure the datetime is timezone-aware (assume UTC if naive)
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    # Convert to MST
+    dt_mst = dt_utc.astimezone(MST)
+    # Format as requested
+    return dt_mst.strftime('%m/%d/%y %I:%M %p')
+
+# Register the custom filter
+app.jinja_env.filters['datetime_mst'] = format_datetime_mst
 
 # SIMPLIFIED SESSION CONFIGURATION
 app.config.update(
