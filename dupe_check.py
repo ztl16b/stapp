@@ -290,8 +290,12 @@ def move_to_issue_bucket(s3_key, reason):
             metadata = {'duplicate-reason': reason}
             content_type = 'image/webp'
         
+        # Append "_dupe" to filename before the extension
+        base_name, extension = os.path.splitext(filename)
+        new_filename = f"{base_name}_dupe{extension}"
+        
         # Prepare for copy operation
-        destination_key = f"{ISSUE_PREFIX}{filename}"
+        destination_key = f"{ISSUE_PREFIX}{new_filename}"
         write_debug_info(f"Moving file to issue bucket: {S3_ISSUE_BUCKET}/{destination_key}")
         
         # Copy file to issue bucket
@@ -308,7 +312,7 @@ def move_to_issue_bucket(s3_key, reason):
         # Delete file from upload bucket
         s3_client.delete_object(Bucket=S3_UPLOAD_BUCKET, Key=s3_key)
         
-        write_debug_info(f"Successfully moved {filename} to issue bucket")
+        write_debug_info(f"Successfully moved {filename} to issue bucket as {new_filename}")
         return {
             'status': 'moved',
             'key': s3_key,
