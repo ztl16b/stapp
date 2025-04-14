@@ -6,7 +6,13 @@ import logging
 import traceback
 import sys
 import re
-import redis
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print("WARNING: Redis package not available, using in-memory cache instead")
+import urllib.parse
 from datetime import datetime, timedelta
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
@@ -17,6 +23,9 @@ MAX_WORKERS = 5
 BATCH_SIZE = 50
 REDIS_CACHE_TTL = 3600  # Cache TTL in seconds (1 hour)
 CACHE_KEY_PREFIX = "good_bucket_files:"
+USE_IN_MEMORY_CACHE = False
+in_memory_cache = {}
+in_memory_cache_timestamp = None
 
 # Load environment variables
 load_dotenv()
@@ -57,7 +66,13 @@ if not AWS_REGION: missing_vars.append("AWS_REGION")
 if not S3_GOOD_BUCKET: missing_vars.append("S3_GOOD_BUCKET")
 if not S3_UPLOAD_BUCKET: missing_vars.append("S3_UPLOAD_BUCKET")
 if not S3_ISSUE_BUCKET: missing_vars.append("S3_ISSUE_BUCKET")
-if not REDIS_URL: missing_vars.append("REDIS_URL")
+
+# Make Redis optional
+if not REDIS_URL and REDIS_AVAILABLE:
+    print("WARNING: REDIS_URL not set, using in-memory cache instead")
+    USE_IN_MEMORY_CACHE = True
+elif not REDIS_AVAILABLE:
+    USE_IN_MEMORY_CACHE = True
 
 if missing_vars:
     error_msg = f"ERROR: Missing required environment variables: {', '.join(missing_vars)}"
@@ -100,7 +115,7 @@ def update_last_run():
     except Exception as e:
         print(f"Failed to update last run timestamp: {e}")
 
-# Initialize S3 client
+# Initialize S3 client and Redis client
 try:
     s3_client = boto3.client(
         's3',
@@ -116,24 +131,48 @@ try:
         use_threads=True
     )
     
-    # Initialize Redis client
-    redis_client = redis.from_url(REDIS_URL)
+    # Initialize Redis client with SSL certificate verification disabled
+    redis_client = None
+    if not USE_IN_MEMORY_CACHE and REDIS_AVAILABLE:
+        try:
+            print("Attempting to connect to Redis...")
+            import ssl
+            import redis.connection
+            
+            # Monkey patch the Redis client to disable SSL certificate verification globally
+            redis.connection.ssl._create_default_https_context = ssl._create_unverified_context
+            
+            # Create Redis connection with SSL verification disabled
+            redis_client = redis.from_url(
+                REDIS_URL,
+                ssl_cert_reqs=None,
+                ssl_ca_certs=None
+            )
+            
+            # Test connection
+            redis_client.ping()
+            print("Redis connection successful!")
+            
+        except Exception as e:
+            error_msg = f"WARNING: Failed to connect to Redis: {str(e)}, using in-memory cache instead"
+            print(error_msg)
+            traceback.print_exc()  
+            USE_IN_MEMORY_CACHE = True
+    else:
+        print("Using in-memory cache for file storage")
     
     try:
         s3_client.list_buckets()
         print("S3 connection successful!")
-        
-        # Test Redis connection
-        redis_client.ping()
-        print("Redis connection successful!")
+        write_debug_info("Duplicate checker started successfully")
     except Exception as e:
-        print(f"ERROR: Failed to connect to services: {e}")
+        error_msg = f"ERROR: Failed to connect to S3: {str(e)}"
+        print(error_msg)
+        traceback.print_exc()
         sys.exit(1)
     
-    write_debug_info("Duplicate checker started successfully")
-    
 except Exception as e:
-    print(f"ERROR: Failed to initialize clients: {e}")
+    print(f"ERROR: Failed to initialize services: {str(e)}")
     traceback.print_exc()
     sys.exit(1)
 
@@ -146,16 +185,25 @@ def extract_base_filename(s3_key):
 
 def cache_good_bucket_files():
     """
-    Cache all files from the GOOD bucket in Redis
+    Cache all files from the GOOD bucket in Redis or in-memory
     Returns a set of base filenames (without extension)
     """
-    cache_key = f"{CACHE_KEY_PREFIX}all"
+    global in_memory_cache_timestamp, in_memory_cache
     
-    # Check if we have a recent cache
-    cached_files = redis_client.get(cache_key)
-    if cached_files:
-        write_debug_info("Using cached good bucket file list")
-        return set(cached_files.decode('utf-8').splitlines())
+    # Check if we can use the in-memory cache
+    if USE_IN_MEMORY_CACHE and in_memory_cache_timestamp:
+        cache_age = datetime.now() - in_memory_cache_timestamp
+        if cache_age.total_seconds() < REDIS_CACHE_TTL:
+            write_debug_info("Using in-memory cache for good bucket file list")
+            return in_memory_cache
+    
+    # Check if we have a recent Redis cache
+    if not USE_IN_MEMORY_CACHE and redis_client:
+        cache_key = f"{CACHE_KEY_PREFIX}all"
+        cached_files = redis_client.get(cache_key)
+        if cached_files:
+            write_debug_info("Using Redis cache for good bucket file list")
+            return set(cached_files.decode('utf-8').splitlines())
     
     write_debug_info(f"Caching files from {S3_GOOD_BUCKET} with prefix {GOOD_PREFIX}")
     good_files = set()
@@ -172,16 +220,21 @@ def cache_good_bucket_files():
                     good_files.add(base_name)
                     file_count += 1
         
-        # Cache the list in Redis
+        # Cache the list
         if good_files:
-            # Store as newline-separated string
-            redis_client.setex(
-                cache_key,
-                REDIS_CACHE_TTL,
-                '\n'.join(good_files)
-            )
+            if USE_IN_MEMORY_CACHE:
+                in_memory_cache = good_files
+                in_memory_cache_timestamp = datetime.now()
+                write_debug_info(f"Cached {file_count} files in memory")
+            elif redis_client:
+                # Store as newline-separated string in Redis
+                redis_client.setex(
+                    f"{CACHE_KEY_PREFIX}all",
+                    REDIS_CACHE_TTL,
+                    '\n'.join(good_files)
+                )
+                write_debug_info(f"Cached {file_count} files in Redis")
         
-        write_debug_info(f"Cached {file_count} files from good bucket")
         return good_files
     
     except Exception as e:
