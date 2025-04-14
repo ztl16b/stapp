@@ -363,6 +363,7 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
 
         # Final success requires copy succeeded. Delete failure is logged.
         if copy_success:
+            write_debug_info(f"Move operation check: copy_success={copy_success}, delete_success={delete_success} for {object_key}")
             write_debug_info(f"Successfully processed move for {object_key} (original deleted: {delete_success})")
             return True
         else:
