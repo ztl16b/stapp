@@ -611,10 +611,10 @@ def browse_bucket(bucket_name):
     flashed_messages = session.get('_flashes', [])
     if flashed_messages:
         # Keep only non-success messages or messages that don't contain "uploaded"
-        filtered_messages = [(category, message) for category, message in flashed_messages 
+        filtered_messages = [(category, message) for category, message in flashed_messages
                             if category != 'success' or 'uploaded' not in message.lower()]
         session['_flashes'] = filtered_messages
-        
+
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
@@ -623,16 +623,16 @@ def browse_bucket(bucket_name):
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
     }
-    
+
     if bucket_name not in buckets:
         flash('Invalid bucket selected', 'danger')
         return redirect(url_for('browse_buckets'))
-        
+
     bucket_info = buckets[bucket_name]
     try:
         if not bucket_info['bucket']:
             raise ValueError(f"Bucket name for '{bucket_name}' is not configured")
-            
+
         # Get request parameters
         page = request.args.get('page', 1, type=int)
         search_query = request.args.get('search', '').lower()
@@ -644,9 +644,9 @@ def browse_bucket(bucket_name):
         date_to = request.args.get('date_to', '')
         per_page = 200
         max_items_to_scan = 5000 # Limit initial scan
-        
+
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
-        
+
         # --- Fetch and Filter Data ---
         all_scanned_files = []
         s3 = get_s3_client() # Use thread-local client
@@ -667,9 +667,9 @@ def browse_bucket(bucket_name):
                     items_scanned += 1
                     # Store raw data needed for initial filtering
                     all_scanned_files.append({
-                                'key': item['Key'],
-                                'size': item['Size'],
-                                'last_modified': item['LastModified'],
+                        'key': item['Key'],
+                        'size': item['Size'],
+                        'last_modified': item['LastModified'],
                         'metadata': {} # Initialize empty
                     })
 
@@ -777,8 +777,8 @@ def browse_bucket(bucket_name):
         if page < 1: page = 1
         # Don't redirect to last page if estimate, allow navigating beyond current known items
         elif page > total_pages and total_pages > 0 and not total_files_estimate:
-                page = total_pages
-            
+             page = total_pages
+
         start_idx = (page - 1) * per_page
         # Only slice up to the known number of files
         end_idx = min(start_idx + per_page, total_files)
@@ -824,7 +824,7 @@ def browse_bucket(bucket_name):
                         f['metadata'] = fetched_metadata[f['key']]
 
         # --- Render ---
-        return render_template('browse_bucket.html', 
+        return render_template('browse_bucket.html',
                              bucket=bucket_info,
                              bucket_name=bucket_name,
                              files=current_page_files,
@@ -837,9 +837,8 @@ def browse_bucket(bucket_name):
                              uploader_filter=uploader_filter_display, # Pass original case uploader filter
                              sort_order=sort_order,
                              date_from=date_from,
-                             date_to=date_to,
-                             all_buckets=buckets) # Pass the full buckets dict
-                             
+                             date_to=date_to)
+
     except Exception as e:
         app.logger.error(f"Error browsing bucket '{bucket_name}': {str(e)}", exc_info=True) # Log traceback
         flash(f'Error accessing bucket: {str(e)}', 'danger')
@@ -1098,104 +1097,6 @@ def get_image_preview(bucket_name, object_key):
     except Exception as e:
         app.logger.error(f"Error generating image preview: {e}")
         return f"Error loading image: {str(e)}", 500
-
-def move_object_between_buckets(source_bucket_name, dest_bucket_name, object_key):
-    """Moves an object between specified buckets, handling prefixes."""
-    # Get full bucket info (S3 names, prefixes)
-    all_buckets_info = {
-        'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
-        'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
-        'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
-        'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
-        'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
-        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
-    }
-
-    if source_bucket_name not in all_buckets_info or dest_bucket_name not in all_buckets_info:
-        app.logger.error(f"Invalid bucket name provided for move: {source_bucket_name} or {dest_bucket_name}")
-        return False, "Invalid source or destination bucket specified."
-
-    source_info = all_buckets_info[source_bucket_name]
-    dest_info = all_buckets_info[dest_bucket_name]
-    s3 = get_s3_client()
-
-    original_key = object_key
-    filename = object_key.split('/')[-1]
-
-    # Construct destination key using the destination prefix and original filename
-    dest_prefix = str(dest_info['prefix']) if dest_info['prefix'] else ''
-    dest_key = f"{dest_prefix}{filename}"
-
-    copy_source = {'Bucket': source_info['bucket'], 'Key': original_key}
-
-    try:
-        # Determine content type based on file extension (best effort)
-        content_type, _ = mimetypes.guess_type(filename)
-        if not content_type:
-             # Fallback for unknown types, adjust as needed
-             content_type = 'application/octet-stream' 
-             # If it's likely an image based on context, use a common image type
-             if any(filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']):
-                 content_type = 'image/webp' # Defaulting to webp or keep original? Let's guess based on common outputs
-
-        app.logger.info(f"Attempting to copy {original_key} from {source_info['bucket']} to {dest_info['bucket']} as {dest_key} with ContentType {content_type}")
-
-        # Copy object
-        s3.copy_object(
-            CopySource=copy_source,
-            Bucket=dest_info['bucket'],
-            Key=dest_key,
-            ContentType=content_type,
-            MetadataDirective='COPY' # Attempt to copy metadata too
-        )
-        app.logger.info(f"Successfully copied {original_key} to {dest_key} in {dest_info['bucket']}")
-
-        # Delete original object
-        try:
-            s3.delete_object(Bucket=source_info['bucket'], Key=original_key)
-            app.logger.info(f"Successfully deleted {original_key} from {source_info['bucket']}")
-            return True, f"File '{filename}' moved successfully to {dest_info['name']}."
-        except ClientError as e_del:
-            app.logger.error(f"Error deleting {original_key} after copy: {e_del}")
-            return True, f"File '{filename}' copied to {dest_info['name']}, but failed to delete original: {e_del.response['Error']['Message']}"
-        except Exception as e_del_unex:
-             app.logger.error(f"Unexpected error deleting {original_key} after copy: {e_del_unex}")
-             return True, f"File '{filename}' copied to {dest_info['name']}, but failed to delete original due to an unexpected error."
-
-    except ClientError as e_copy:
-        app.logger.error(f"Error copying object {original_key} to {dest_key}: {e_copy}")
-        return False, f"Error copying file: {e_copy.response['Error']['Message']}"
-    except Exception as e_copy_unex:
-        app.logger.error(f"Unexpected error copying object {original_key}: {e_copy_unex}")
-        return False, "An unexpected error occurred while copying the file."
-
-@app.route('/move-file', methods=['POST'])
-@login_required
-def move_file_route():
-    source_bucket_name = request.form.get('source_bucket_name')
-    dest_bucket_name = request.form.get('dest_bucket_name')
-    object_key = request.form.get('object_key')
-
-    if not source_bucket_name or not dest_bucket_name or not object_key:
-        flash("Missing information for file move operation.", "danger")
-        # Try to redirect back, but might not know source bucket if it wasn't passed
-        return redirect(request.referrer or url_for('browse_buckets')) 
-
-    if source_bucket_name == dest_bucket_name:
-         flash("Source and destination buckets cannot be the same.", "warning")
-         return redirect(url_for('browse_bucket', bucket_name=source_bucket_name))
-
-    success, message = move_object_between_buckets(source_bucket_name, dest_bucket_name, object_key)
-
-    if success:
-        # Use warning category if deletion failed but copy succeeded
-        flash_category = 'warning' if 'failed to delete' in message else 'success'
-        flash(message, flash_category)
-    else:
-        flash(message, 'danger')
-
-    # Redirect back to the original source bucket page
-    return redirect(url_for('browse_bucket', bucket_name=source_bucket_name))
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
