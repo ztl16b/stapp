@@ -189,7 +189,6 @@
                             </th>
                             <th>Uploader Initials</th>
                             <th>Preview</th>
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -214,36 +213,7 @@
                                          style="max-height: 50px; max-width: 50px;">
                                 </a>
                             </td>
-                            <td>
-                                <button type="button" class="btn btn-danger btn-sm" 
-                                        data-bs-toggle="modal" 
-                                        data-bs-target="#deleteModal{{ loop.index }}">
-                                    Delete
-                                </button>
-                            </td>
                         </tr>
-
-                        <!-- Delete Modal -->
-                        <div class="modal fade" id="deleteModal{{ loop.index }}" tabindex="-1" aria-labelledby="deleteModalLabel{{ loop.index }}" aria-hidden="true">
-                            <div class="modal-dialog">
-                                <div class="modal-content">
-                                    <div class="modal-header">
-                                        <h5 class="modal-title" id="deleteModalLabel{{ loop.index }}">Confirm Delete</h5>
-                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                    </div>
-                                    <div class="modal-body">
-                                        Are you sure you want to delete the file "{{ file.key }}"?
-                                        This action cannot be undone.
-                                    </div>
-                                    <div class="modal-footer">
-                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                        <form action="{{ url_for('delete_object_route', bucket_name=bucket_name, object_key=file.key) }}" method="post" style="display: inline;">
-                                            <button type="submit" class="btn btn-danger">Delete</button>
-                                        </form>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                         {% endfor %}
                     </tbody>
                 </table>
