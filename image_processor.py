@@ -176,6 +176,51 @@ def list_all_temp_images():
         traceback.print_exc()
         return []
 
+def file_exists_in_bucket(bucket, key):
+    """Check if a file exists in the specified bucket"""
+    try:
+        s3_client.head_object(Bucket=bucket, Key=key)
+        return True
+    except Exception:
+        return False
+
+def move_to_issue_bucket(file_obj, key, reason, metadata=None, content_type='image/webp'):
+    """Move a file to the issue bucket with appropriate metadata"""
+    try:
+        # Generate a destination key in the issue bucket
+        filename = key.split('/')[-1]
+        base_name, extension = os.path.splitext(filename)
+        new_filename = f"{base_name}_dupe{extension}"
+        destination_key = f"issue_files/{new_filename}"
+        
+        write_debug_info(f"Moving duplicate file: {filename}, Reason: {reason}")
+        
+        # Prepare metadata
+        extra_args = {'ContentType': content_type}
+        if metadata:
+            # Add duplicate reason to metadata
+            metadata_copy = metadata.copy()
+            metadata_copy['duplicate-reason'] = reason
+            extra_args['Metadata'] = metadata_copy
+        else:
+            extra_args['Metadata'] = {'duplicate-reason': reason}
+        
+        # Upload to issue bucket
+        write_debug_info(f"Moving file to issue bucket: {S3_ISSUE_BUCKET}/{destination_key}")
+        s3_client.upload_fileobj(
+            file_obj,
+            S3_ISSUE_BUCKET,
+            destination_key,
+            ExtraArgs=extra_args,
+            Config=s3_upload_config
+        )
+        
+        write_debug_info(f"Successfully moved {filename} to issue bucket as {new_filename}")
+        return True
+    except Exception as e:
+        write_debug_info(f"Error moving file to issue bucket: {e}")
+        return False
+
 def process_image(s3_key):
     try:
         write_debug_info(f"\n=== Processing image: {s3_key} ===")
@@ -280,6 +325,49 @@ def process_image(s3_key):
             upload_path = f"{DESTINATION_PREFIX}{base_filename}.webp"
             
             write_debug_info(f"Final filename: {os.path.basename(upload_path)}")
+            
+            # Check if file already exists in upload bucket
+            if file_exists_in_bucket(S3_UPLOAD_BUCKET, upload_path):
+                write_debug_info(f"File {upload_path} already exists in upload bucket")
+                
+                # Move to issue bucket instead of overwriting
+                extra_args = {'ContentType': 'image/webp'}
+                if uploader_initials:
+                    extra_args['Metadata'] = {'uploader-initials': uploader_initials}
+                
+                # Create a rewindable file-like object
+                download_buffer = BytesIO()
+                download_buffer.write(download_response.content)
+                download_buffer.seek(0)  # Rewind to beginning
+                
+                # Move to issue bucket
+                if move_to_issue_bucket(
+                    download_buffer, 
+                    upload_path, 
+                    "Duplicate file in upload bucket",
+                    metadata={'uploader-initials': uploader_initials} if uploader_initials else None,
+                    content_type='image/webp'
+                ):
+                    write_debug_info(f"Moved duplicate file to issue bucket")
+                else:
+                    write_debug_info(f"Failed to move duplicate file to issue bucket")
+                
+                # Clean up
+                download_buffer.close()
+                s3_client.delete_object(
+                    Bucket=S3_TEMP_BUCKET,
+                    Key=s3_key
+                )
+                
+                return {
+                    'status': 'success',
+                    'original_key': s3_key,
+                    'processed_key': None,
+                    'message': f'Processed {filename} - duplicate file moved to issue bucket',
+                    'uploader_initials': uploader_initials
+                }
+            
+            # If not a duplicate, upload to upload bucket as normal
             write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
             
             extra_args = {'ContentType': 'image/webp'}
