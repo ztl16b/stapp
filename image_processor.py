@@ -191,7 +191,7 @@ def move_to_issue_bucket(file_obj, key, reason, metadata=None, content_type='ima
         # Generate a destination key in the issue bucket
         filename = key.split('/')[-1]
         base_name, extension = os.path.splitext(filename)
-        new_filename = f"{base_name}_dupe{extension}"
+        new_filename = f"{base_name}_dupeUpload{extension}"
         destination_key = f"issue_files/{new_filename}"
         
         write_debug_info(f"Moving duplicate file: {filename}, Reason: {reason}")
