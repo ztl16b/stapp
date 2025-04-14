@@ -163,7 +163,6 @@
         </nav>
         {% endif %}
     </div>
-    {% endif %}
 
     {% if files %}
         <form id="batchDeleteForm" action="{{ url_for('delete_selected_route', bucket_name=bucket_name) }}" method="post">
