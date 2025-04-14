@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+\#!/usr/bin/env python3
 import os
 import time
 import boto3
@@ -6,6 +6,7 @@ import logging
 import traceback
 import redis
 from datetime import datetime
+import re
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 import schedule
@@ -130,29 +131,64 @@ def update_last_run():
 
 def check_filename_format(filename):
     """
-    Check if a filename matches the required format: {perf_id}.{ven_id}.webp
-    where perf_id and ven_id are numeric.
+    Check if a filename matches the required format: {numeric}.{numeric}.webp
+    where both parts are numeric.
     
     Returns True if the format is correct, False otherwise.
     """
-    if not filename.lower().endswith('.webp'):
-        return False
-        
-    # Remove the .webp extension
-    base_name = filename[:-5] if filename.lower().endswith('.webp') else filename
+    # Define pattern for {numbers}.{numbers}.webp
+    pattern = r'^(\d+)\.(\d+)\.webp$'
     
-    # Split by dot and check if we have exactly two parts
-    parts = base_name.split('.')
-    if len(parts) != 2:
-        return False
-        
-    # Check if both parts are numeric
+    # Check if filename matches the pattern (case insensitive)
+    match = re.match(pattern, filename, re.IGNORECASE)
+    
+    return match is not None
+
+def load_good_bucket_filenames_to_memory():
+    """
+    Load all filenames from the good bucket directly into memory.
+    This is a fallback method when Redis is not available.
+    """
     try:
-        int(parts[0])  # perf_id should be a number
-        int(parts[1])  # ven_id should be a number
-        return True
-    except ValueError:
-        return False
+        write_debug_info("Loading good bucket filenames directly to memory (Redis not available)")
+        start_time = time.time()
+        
+        good_filenames = set()
+        good_base_filenames = set()
+        good_prefix = 'images/performer-at-venue/detail/'
+        
+        paginator = s3_client.get_paginator('list_objects_v2')
+        file_count = 0
+        
+        for page in paginator.paginate(Bucket=S3_GOOD_BUCKET, Prefix=good_prefix):
+            if 'Contents' in page:
+                for item in page['Contents']:
+                    key = item['Key']
+                    if not key.lower().endswith('.webp'):
+                        continue
+                        
+                    filename = key.split('/')[-1]
+                    good_filenames.add(filename)
+                    
+                    # Also extract base name (without extension)
+                    base_name = os.path.splitext(filename)[0]
+                    if '.' in base_name:  # If it has performer.venue format
+                        good_base_filenames.add(base_name)
+                    
+                    file_count += 1
+                    if file_count % 1000 == 0:
+                        write_debug_info(f"Loaded {file_count} filenames to memory so far...")
+        
+        elapsed = time.time() - start_time
+        write_debug_info(f"Loaded {len(good_filenames)} filenames from Good bucket to memory in {elapsed:.2f} seconds")
+        
+        return good_filenames, good_base_filenames
+    except Exception as e:
+        error_msg = f"Error loading good bucket filenames to memory: {str(e)}"
+        write_debug_info(error_msg)
+        logger.error(error_msg)
+        traceback.print_exc()
+        return set(), set()
 
 def refresh_good_images_cache():
     """
@@ -363,7 +399,7 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
 
         # Final success requires copy succeeded. Delete failure is logged.
         if copy_success:
-            write_debug_info(f"Move operation check: copy_success={copy_success}, delete_success={delete_success} for {object_key}")
+            write_debug_info(f"Move operation check: copy_success={copy_success}, delete_success={delete_success} for {object_key}") 
             write_debug_info(f"Successfully processed move for {object_key} (original deleted: {delete_success})")
             return True
         else:
@@ -382,41 +418,40 @@ def move_to_issue_bucket(object_key, reason="improperly formatted"):
 def process_file(obj, good_filenames, good_base_filenames):
     """
     Process a single file from the upload bucket:
-    1. Check if the base filename format ({numeric}.{numeric}) is valid.
-    2. If base format is valid, check if the extension is .webp.
-    3. If base format and extension are valid, check for duplicates.
-    1. Check if filename format is valid
-    2. If valid, check if it's a duplicate
-    3. Return results for further processing
+    1. Check if the base filename format ({numeric}.{numeric}.webp) is valid.
+    2. If format is valid, check if it's a duplicate.
+    3. Return results indicating format validity, webp status, and duplicate status.
     """
     object_key = obj['Key']
     filename = object_key.split('/')[-1]
     
-    # First check filename format
-    if not check_filename_format(filename):
-        return {
-            'key': object_key,
-            'filename': filename,
-            'is_valid_format': False,
-            'is_duplicate': False
-        }
+    # Skip empty filenames or directory placeholders
+    if not filename:
+        return None # Indicate this object should be skipped
     
-    # If format is valid, check for duplicates
-    is_dupe = is_duplicate(filename, good_filenames, good_base_filenames)
+    # Check if filename matches required format
+    is_valid_format = check_filename_format(filename)
+    is_webp = filename.lower().endswith('.webp')
+    
+    # Only check for duplicates if format is valid
+    is_dupe = False
+    if is_valid_format:
+        is_dupe = is_duplicate(filename, good_filenames, good_base_filenames)
     
     return {
         'key': object_key,
         'filename': filename,
-        'is_valid_format': True,
+        'is_valid_format': is_valid_format,
+        'is_webp': is_webp,
         'is_duplicate': is_dupe
     }
 
 def check_upload_bucket_filenames():
     """
     Check all files in the Upload bucket:
-    1. Validate base filename format ({numeric}.{numeric}).
-    2. If base format is valid and extension is .webp, check for duplicates.
-    3. Move files with invalid base format OR valid format but wrong extension OR duplicates to Issue bucket.
+    1. Validate filename format ({numeric}.{numeric}.webp).
+    2. If format is valid, check against Good bucket for duplicates.
+    3. Move files with invalid format OR duplicates to Issue bucket.
     
     Uses multithreading for improved performance with large numbers of files.
     """
@@ -439,7 +474,12 @@ def check_upload_bucket_filenames():
         
         # Get ALL files from the upload bucket within the prefix
         try:
-            s3 = boto3.client('s3') # Ensure we have a client instance
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+                region_name=AWS_REGION
+            ) # Ensure we have a client instance
             all_files_in_prefix = []
             paginator = s3.get_paginator('list_objects_v2')
             # Use try-except for pagination to handle potential errors during listing
@@ -465,15 +505,13 @@ def check_upload_bucket_filenames():
             write_debug_info(f"Found {total_files_found} total files in upload bucket prefix {prefix} to validate")
             
             # Process files in parallel using ThreadPoolExecutor
-            invalid_base_format_count = 0
-            wrong_extension_count = 0
+            invalid_format_count = 0
             duplicate_count = 0
             processed_count = 0
             skipped_count = 0 # Count skipped items like empty filenames
 
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 # Process files in parallel
-                # Ensure good_filenames/good_base_filenames are loaded correctly before this map
                 # Use try-except around the map to catch potential errors during parallel processing
                 try:
                     future_results = executor.map(
@@ -490,37 +528,23 @@ def check_upload_bucket_filenames():
                 skipped_count = total_files_found - len(results)
                 processed_count = len(results)
 
-                # Handle files with invalid base format ({numeric}.{numeric})
-                invalid_base_files = [r for r in results if not r.get('is_valid_format', True)] # Default to True if key missing to avoid false positive
-                write_debug_info(f"Found {len(invalid_base_files)} files with invalid base format ({numeric}.{numeric})")
+                # Handle files with invalid format (not {numeric}.{numeric}.webp)
+                invalid_format_files = [r for r in results if not r.get('is_valid_format', True)] # Default to True if key missing to avoid false positive
+                write_debug_info(f"Found {len(invalid_format_files)} files with invalid format")
                 
-                for issue in invalid_base_files:
+                for issue in invalid_format_files:
                     if issue.get('key'):
-                        write_debug_info(f"  Processing invalid base format file: {issue.get('filename', '[unknown]')}") 
-                        move_successful = move_to_issue_bucket(issue['key'], "invalid base format")
+                        write_debug_info(f"  Processing invalid format file: {issue.get('filename', '[unknown]')}") 
+                        move_successful = move_to_issue_bucket(issue['key'], "invalid format")
                         if move_successful:
-                            invalid_base_format_count += 1
-                        write_debug_info(f"  Move result for invalid base format file {issue.get('filename', '[unknown]')}: {move_successful}") 
+                            invalid_format_count += 1
+                        write_debug_info(f"  Move result for invalid format file {issue.get('filename', '[unknown]')}: {move_successful}") 
                     else:
-                        logger.warning(f"Skipping move for invalid base file due to missing key: {issue}")
+                        logger.warning(f"Skipping move for invalid format file due to missing key: {issue}")
 
-                # Handle files with valid base format but wrong extension (not .webp)
-                wrong_extension_files = [r for r in results if r.get('is_valid_format') and not r.get('is_webp')]
-                write_debug_info(f"Found {len(wrong_extension_files)} files with valid base format but wrong extension")
-
-                for issue in wrong_extension_files:
-                    if issue.get('key'):
-                        write_debug_info(f"  Processing wrong extension file: {issue.get('filename', '[unknown]')}") 
-                        move_successful = move_to_issue_bucket(issue['key'], "wrong extension")
-                        if move_successful:
-                            wrong_extension_count += 1
-                        write_debug_info(f"  Move result for wrong extension file {issue.get('filename', '[unknown]')}: {move_successful}") 
-                    else:
-                        logger.warning(f"Skipping move for wrong extension file due to missing key: {issue}")
-
-                # Handle duplicates (must have valid base format AND be .webp)
-                duplicates = [r for r in results if r.get('is_valid_format') and r.get('is_webp') and r.get('is_duplicate')]
-                write_debug_info(f"Found {len(duplicates)} duplicate .webp files")
+                # Handle duplicates (must have valid format)
+                duplicates = [r for r in results if r.get('is_valid_format') and r.get('is_duplicate')]
+                write_debug_info(f"Found {len(duplicates)} duplicate files")
                 
                 for dup in duplicates:
                     if dup.get('key'):
@@ -533,8 +557,7 @@ def check_upload_bucket_filenames():
                         logger.warning(f"Skipping move for duplicate file due to missing key: {dup}")
             
             write_debug_info(f"Validation summary: Processed {processed_count} files (skipped {skipped_count}) total from prefix {prefix}")
-            write_debug_info(f"Moved {invalid_base_format_count} files with invalid base format to issue bucket")
-            write_debug_info(f"Moved {wrong_extension_count} files with wrong extension to issue bucket")
+            write_debug_info(f"Moved {invalid_format_count} files with invalid format to issue bucket")
             write_debug_info(f"Moved {duplicate_count} duplicate files to issue bucket")
             write_debug_info("===== Completed validation cycle =====")
             
@@ -549,52 +572,6 @@ def check_upload_bucket_filenames():
         write_debug_info(error_msg)
         traceback.print_exc()
         logger.error(error_msg)
-
-def load_good_bucket_filenames_to_memory():
-    """
-    Load all filenames from the good bucket directly into memory.
-    This is a fallback method when Redis is not available.
-    """
-    try:
-        write_debug_info("Loading good bucket filenames directly to memory (Redis not available)")
-        start_time = time.time()
-        
-        good_filenames = set()
-        good_base_filenames = set()
-        good_prefix = 'images/performer-at-venue/detail/'
-        
-        paginator = s3_client.get_paginator('list_objects_v2')
-        file_count = 0
-        
-        for page in paginator.paginate(Bucket=S3_GOOD_BUCKET, Prefix=good_prefix):
-            if 'Contents' in page:
-                for item in page['Contents']:
-                    key = item['Key']
-                    if not key.lower().endswith('.webp'):
-                        continue
-                        
-                    filename = key.split('/')[-1]
-                    good_filenames.add(filename)
-                    
-                    # Also extract base name (without extension)
-                    base_name = os.path.splitext(filename)[0]
-                    if '.' in base_name:  # If it has performer.venue format
-                        good_base_filenames.add(base_name)
-                    
-                    file_count += 1
-                    if file_count % 1000 == 0:
-                        write_debug_info(f"Loaded {file_count} filenames to memory so far...")
-        
-        elapsed = time.time() - start_time
-        write_debug_info(f"Loaded {len(good_filenames)} filenames from Good bucket to memory in {elapsed:.2f} seconds")
-        
-        return good_filenames, good_base_filenames
-    except Exception as e:
-        error_msg = f"Error loading good bucket filenames to memory: {str(e)}"
-        write_debug_info(error_msg)
-        logger.error(error_msg)
-        traceback.print_exc()
-        return set(), set()
 
 def run_scheduler():
     """Run the scheduler to validate filenames periodically"""
@@ -629,4 +606,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Fatal error in main: {e}")
         write_debug_info(f"Fatal error in main: {e}")
-        traceback.print_exc() 
+        traceback.print_exc()
