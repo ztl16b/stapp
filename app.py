@@ -363,7 +363,7 @@ def get_random_image_key(bucket_name):
         flash("An unexpected error occurred while listing files.", "danger")
     return None
 
-def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, metadata=None):
+def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
     """Moves an object from source_bucket to dest_bucket."""
     dest_key = object_key
     original_key = object_key
@@ -398,21 +398,11 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, met
         elif filename.lower().endswith(('.jpg', '.jpeg')):
             content_type = 'image/jpeg'
             
-        extra_args = {
-            'ContentType': content_type,
-            'MetadataDirective': 'COPY' # Default to copying existing metadata
-        }
-
-        if metadata:
-             # If new metadata is provided (e.g., notes), replace existing metadata
-             extra_args['Metadata'] = metadata
-             extra_args['MetadataDirective'] = 'REPLACE'
-
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
             Key=dest_key,
-            **extra_args # Pass ContentType, MetadataDirective, and optional Metadata
+            ContentType=content_type
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
 
@@ -520,23 +510,7 @@ def move_image_route(action, image_key):
     else:
         # For good and bad actions, use the original logic
         destination_bucket = S3_GOOD_BUCKET if action == 'good' else S3_BAD_BUCKET
-        notes_metadata = None
-        if action == 'bad':
-            bad_notes = request.form.get('bad_notes', '').strip()
-            if bad_notes:
-                # S3 metadata keys must be ascii, values are utf-8
-                # Standard HTTP header format, use x-amz-meta- prefix
-                notes_metadata = {'notes': bad_notes}
-                app.logger.info(f"Adding notes metadata for bad image {image_key}: {bad_notes}")
-            else:
-                # If notes are required, flash an error and redirect back
-                flash("Please provide notes explaining why the image is bad.", "warning")
-                # Redirect back to the review page, preserving the image key/URL if possible
-                # We need to fetch the URL again if we redirect cleanly
-                return redirect(url_for('review_image_route', error='bad_notes_required'))
-
-        # Pass metadata only for the bad action
-        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action, metadata=notes_metadata):
+        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action):
             success = True
             # Only log to the app logger, don't use flash messages twice
             app.logger.info(f"Image '{image_key}' moved to {action} bucket.")
