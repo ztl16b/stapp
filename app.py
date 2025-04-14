@@ -17,7 +17,11 @@ import base64
 import logging
 import threading
 import re
+import hashlib
+import mimetypes
+import psutil
 import csv
+import concurrent.futures
 
 load_dotenv()
 
@@ -35,24 +39,6 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(days=30),  # 30 days
 )
-
-# Load suggestions from CSV file
-suggestions_dict = {}
-try:
-    suggestions_file = os.path.join(os.path.dirname(__file__), 'suggestions.csv')
-    with open(suggestions_file, 'r') as csv_file:
-        csv_reader = csv.DictReader(csv_file)
-        for row in csv_reader:
-            key = row.get('text', '').strip()
-            value = row.get('Suggestion', '').strip()
-            if key and value:
-                if key not in suggestions_dict:
-                    suggestions_dict[key] = []
-                suggestions_dict[key].append(value)
-    app.logger.info(f"Loaded {len(suggestions_dict)} suggestion keys from {suggestions_file}")
-except Exception as e:
-    app.logger.error(f"Error loading suggestions: {e}")
-    suggestions_dict = {}
 
 # AWS Configuration
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -1153,29 +1139,22 @@ def get_image_preview(bucket_name, object_key):
         app.logger.error(f"Error generating image preview: {e}")
         return f"Error loading image: {str(e)}", 500
 
-@app.route('/suggestions', methods=['GET'])
+@app.route('/suggestions')
 def get_suggestions():
-    """Return suggestions for the uploader initials field based on input text"""
-    query = request.args.get('q', '').strip().upper()
-    
-    if not query:
+    suggestions = []
+    try:
+        with open('suggestions.csv', 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                # Using the field 'suggestion' which is the expected field in the CSV
+                suggestions.append({
+                    'text': row['text'],
+                    'suggestion': row['suggestion']
+                })
+        return jsonify(suggestions)
+    except Exception as e:
+        app.logger.error(f"Error loading suggestions: {e}")
         return jsonify([])
-    
-    # Get current date for formatting suggestions
-    now = datetime.now()
-    month = now.strftime('%m')
-    day = now.strftime('%d')
-    
-    # Check if we have a direct match for the first letter
-    matched_suggestions = []
-    if query and query[0] in suggestions_dict:
-        # Get suggestions for this letter
-        for suggestion_template in suggestions_dict[query[0]]:
-            # Replace MM_DD with the current month and day
-            formatted_suggestion = suggestion_template.replace('MM', month).replace('DD', day)
-            matched_suggestions.append(formatted_suggestion)
-    
-    return jsonify(matched_suggestions)
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

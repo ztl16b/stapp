@@ -104,29 +104,48 @@
     font-weight: bold;
     color: #6c757d;
 }
-.suggestion-wrapper {
-    position: relative;
-    width: 100%;
-}
+
+/* Suggestion Dropdown Styles */
 .suggestion-dropdown {
     position: absolute;
-    top: 100%;
-    left: 0;
     width: 100%;
     max-height: 200px;
     overflow-y: auto;
     background-color: white;
     border: 1px solid #ced4da;
-    border-radius: 0.25rem;
+    border-radius: 0 0 4px 4px;
     z-index: 1000;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+    margin-top: 2px;
 }
+
 .suggestion-item {
     padding: 8px 12px;
     cursor: pointer;
 }
+
 .suggestion-item:hover {
     background-color: #f8f9fa;
+}
+
+.suggestions-dropdown {
+    position: absolute;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    width: 100%;
+    z-index: 1000;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.suggestion-item {
+    padding: 10px;
+    cursor: pointer;
+}
+
+.suggestion-item:hover {
+    background-color: #f5f5f5;
 }
     </style>
 {% endblock %}
@@ -158,18 +177,14 @@
     <form id="uploadForm" enctype="multipart/form-data">
         <!-- Uploader Initials Field -->
         <div class="form-group mb-4">
-            <label for="uploaderInitials" class="form-label">Initials and Date: <span class="text-danger">*</span></label>
-            <div class="suggestion-wrapper position-relative">
-                <input type="text" class="form-control" id="uploaderInitials" name="uploaderInitials" 
-                       placeholder="ABCD_12_34" required
-                       pattern="^.+_\d{2}_\d{2}$"
-                       autocomplete="off"
-                       title="Format must be: Text followed by _MM_DD where MM and DD are two digits">
-                <div id="suggestionDropdown" class="suggestion-dropdown d-none"></div>
+            <label for="uploader_initials" class="form-label">Uploader Initials (format: Text_MM_DD where MM and DD are two digits): <span class="text-danger">*</span></label>
+            <div class="position-relative">
+                <input type="text" class="form-control" id="uploader_initials" name="uploader_initials" required>
+                <div id="suggestions" style="display: none;" class="suggestions-dropdown"></div>
             </div>
-            <small class="form-text text-muted">Your initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)</small>
+            <small class="form-text text-muted">Example: ABC_01_15</small>
             <div class="invalid-feedback" id="initialsError">
-                Initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)
+                Initials must follow the format: Text_MM_DD where MM and DD are two digits
             </div>
         </div>
 
@@ -240,6 +255,11 @@
         const sizeExceededCount = document.getElementById('sizeExceededCount');
         const invalidTypeCount = document.getElementById('invalidTypeCount');
         
+        // Initials suggestions elements
+        const uploaderInput = document.getElementById('uploader_initials');
+        const suggestionsDiv = document.getElementById('suggestions');
+        let allSuggestions = [];
+        
         // Sequential upload elements
         const uploadProgress = document.getElementById('uploadProgress');
         const progressBar = document.getElementById('progressBar');
@@ -252,6 +272,59 @@
         let validFiles = [];
         const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
         const VALID_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'];
+        
+        // Load all suggestions when page loads
+        fetch('/suggestions')
+            .then(response => response.json())
+            .then(data => {
+                allSuggestions = data;
+            })
+            .catch(error => console.error('Error loading suggestions:', error));
+        
+        uploaderInput.addEventListener('input', function() {
+            const inputText = this.value.trim().toUpperCase();
+            
+            if (inputText) {
+                // Filter suggestions that start with the input text
+                const matchingSuggestions = allSuggestions.filter(item => 
+                    item.text.toUpperCase().startsWith(inputText) || 
+                    item.suggestion.toUpperCase().startsWith(inputText)
+                );
+                
+                if (matchingSuggestions.length > 0) {
+                    // Format suggestions with current date
+                    const today = new Date();
+                    const month = String(today.getMonth() + 1).padStart(2, '0');
+                    const day = String(today.getDate()).padStart(2, '0');
+                    
+                    suggestionsDiv.innerHTML = '';
+                    matchingSuggestions.forEach(suggestion => {
+                        const formattedSuggestion = suggestion.suggestion.replace('MM', month).replace('DD', day);
+                        const div = document.createElement('div');
+                        div.className = 'suggestion-item';
+                        div.textContent = formattedSuggestion;
+                        div.addEventListener('click', function() {
+                            uploaderInput.value = formattedSuggestion;
+                            suggestionsDiv.style.display = 'none';
+                        });
+                        suggestionsDiv.appendChild(div);
+                    });
+                    
+                    suggestionsDiv.style.display = 'block';
+                } else {
+                    suggestionsDiv.style.display = 'none';
+                }
+            } else {
+                suggestionsDiv.style.display = 'none';
+            }
+        });
+        
+        // Hide suggestions when clicking outside
+        document.addEventListener('click', function(e) {
+            if (e.target !== uploaderInput && e.target !== suggestionsDiv) {
+                suggestionsDiv.style.display = 'none';
+            }
+        });
         
         // Sequential upload variables
         let isUploading = false;
@@ -458,20 +531,20 @@
         // Sequential Upload Functions
         function startSequentialUpload() {
             // Check if uploader initials are provided and valid
-            const uploaderInitials = document.getElementById('uploaderInitials').value.trim();
+            const uploaderInitials = document.getElementById('uploader_initials').value.trim();
             
-            // Validate format: Text followed by _MM_DD where MM and DD are two digits
+            // Validate format: Text_MM_DD where MM and DD are two digits
             const initialsRegex = /^.+_\d{2}_\d{2}$/;
             
             if (!uploaderInitials) {
                 alert('Please enter your initials before uploading.');
-                document.getElementById('uploaderInitials').focus();
+                document.getElementById('uploader_initials').focus();
                 return;
             }
             
             if (!initialsRegex.test(uploaderInitials)) {
-                alert('Initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)');
-                document.getElementById('uploaderInitials').focus();
+                alert('Initials must follow the format: Text_MM_DD where MM and DD are two digits');
+                document.getElementById('uploader_initials').focus();
                 return;
             }
             
@@ -517,7 +590,7 @@
             
             const file = validFiles[currentFileIndex];
             const timeout = parseInt(uploadTimeoutInput.value) * 1000; // Convert to milliseconds
-            const uploaderInitials = document.getElementById('uploaderInitials').value.trim();
+            const uploaderInitials = document.getElementById('uploader_initials').value.trim();
             
             // Check if uploader initials are provided and valid
             const initialsRegex = /^.+_\d{2}_\d{2}$/;
@@ -534,7 +607,7 @@
             if (!initialsRegex.test(uploaderInitials)) {
                 isUploading = false;
                 uploadStatus.textContent = 'Failed - Invalid Initials Format';
-                addLogEntry(`Upload failed: Initials must follow the format: Text followed by _MM_DD (e.g., ABCD_12_34)`, 'error');
+                addLogEntry(`Upload failed: Initials must follow the format: Text_MM_DD where MM and DD are two digits`, 'error');
                 return;
             }
             
@@ -546,7 +619,7 @@
             // Create form data for this single file
             const formData = new FormData();
             formData.append('files', file);
-            formData.append('uploaderInitials', uploaderInitials);
+            formData.append('uploader_initials', uploaderInitials);
             
             // Set up abort controller for timeout
             currentAbortController = new AbortController();
@@ -619,78 +692,6 @@
             
             // Scroll to bottom
             uploadLog.scrollTop = uploadLog.scrollHeight;
-        }
-
-        // Suggestion functionality for uploader initials
-        const initialsInput = document.getElementById('uploaderInitials');
-        const suggestionDropdown = document.getElementById('suggestionDropdown');
-        
-        let debounceTimer;
-        
-        // Add event listener for input changes
-        initialsInput.addEventListener('input', function() {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                const query = initialsInput.value.trim();
-                if (query) {
-                    fetchSuggestions(query);
-                } else {
-                    suggestionDropdown.classList.add('d-none');
-                    suggestionDropdown.innerHTML = '';
-                }
-            }, 300);
-        });
-        
-        // Hide suggestions when clicking outside
-        document.addEventListener('click', function(event) {
-            if (!event.target.closest('.suggestion-wrapper')) {
-                suggestionDropdown.classList.add('d-none');
-            }
-        });
-        
-        // Function to fetch suggestions from server
-        function fetchSuggestions(query) {
-            fetch(`/suggestions?q=${encodeURIComponent(query)}`)
-                .then(response => response.json())
-                .then(suggestions => {
-                    if (suggestions.length > 0) {
-                        displaySuggestions(suggestions);
-                    } else {
-                        suggestionDropdown.classList.add('d-none');
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching suggestions:', error);
-                });
-        }
-        
-        // Function to display suggestions
-        function displaySuggestions(suggestions) {
-            suggestionDropdown.innerHTML = '';
-            
-            suggestions.forEach(suggestion => {
-                const item = document.createElement('div');
-                item.className = 'suggestion-item';
-                item.textContent = suggestion;
-                item.addEventListener('click', () => {
-                    initialsInput.value = suggestion;
-                    suggestionDropdown.classList.add('d-none');
-                    // Trigger validation
-                    validateForm();
-                });
-                suggestionDropdown.appendChild(item);
-            });
-            
-            suggestionDropdown.classList.remove('d-none');
-        }
-        
-        // Set default value with current date
-        if (initialsInput.value === '') {
-            const now = new Date();
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
-            // Only set the date part if user hasn't typed anything yet
-            initialsInput.placeholder = `ABCD_${month}_${day}`;
         }
     });
 </script>
