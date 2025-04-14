@@ -130,7 +130,7 @@ def is_valid_filename(filename):
     return bool(re.match(pattern, filename))
 
 def list_files_in_upload_bucket():
-    """List all files in the upload bucket"""
+    """List all files in the upload bucket sorted by last modified date (newest first)"""
     try:
         write_debug_info(f"Listing all files in {S3_UPLOAD_BUCKET} with prefix {UPLOAD_PREFIX}")
         
@@ -142,6 +142,9 @@ def list_files_in_upload_bucket():
         for page in pages:
             if 'Contents' in page:
                 all_files.extend(page['Contents'])
+        
+        # Sort files by last modified date, newest first
+        all_files.sort(key=lambda x: x['LastModified'], reverse=True)
         
         write_debug_info(f"Found {len(all_files)} files in the upload bucket")
         
@@ -217,7 +220,7 @@ def validate_and_move_file(s3_key):
         }
 
 def validate_next_batch():
-    """Process a batch of files to validate their filenames"""
+    """Process all files to validate their filenames"""
     try:
         write_debug_info("\n===== Starting new validation cycle =====")
         update_last_run()
@@ -228,24 +231,35 @@ def validate_next_batch():
             write_debug_info("No files found in upload bucket")
             return
         
-        batch = files[:BATCH_SIZE]
-        write_debug_info(f"Validating batch of {len(batch)} files (from {len(files)} total)")
+        total_files = len(files)
+        write_debug_info(f"Found {total_files} files to validate")
         
         valid_count = 0
         moved_count = 0
         error_count = 0
         
-        for file in batch:
-            result = validate_and_move_file(file['Key'])
+        # Process files in batches but continue until all are processed
+        for i in range(0, total_files, BATCH_SIZE):
+            current_batch = files[i:i+BATCH_SIZE]
+            batch_num = (i // BATCH_SIZE) + 1
+            total_batches = (total_files + BATCH_SIZE - 1) // BATCH_SIZE
             
-            if result['status'] == 'valid':
-                valid_count += 1
-            elif result['status'] == 'moved':
-                moved_count += 1
-            else:
-                error_count += 1
+            write_debug_info(f"Processing batch {batch_num} of {total_batches} ({len(current_batch)} files)")
+            
+            for file in current_batch:
+                result = validate_and_move_file(file['Key'])
+                
+                if result['status'] == 'valid':
+                    valid_count += 1
+                elif result['status'] == 'moved':
+                    moved_count += 1
+                else:
+                    error_count += 1
+                    
+            # Log progress after each batch
+            write_debug_info(f"Progress: {i + len(current_batch)}/{total_files} files processed")
         
-        write_debug_info(f"Batch validation complete:")
+        write_debug_info(f"Validation complete:")
         write_debug_info(f"  - Valid files: {valid_count}")
         write_debug_info(f"  - Files moved to issue bucket: {moved_count}")
         write_debug_info(f"  - Errors: {error_count}")
