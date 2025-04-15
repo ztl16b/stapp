@@ -182,6 +182,20 @@ def process_image(s3_key):
             # Create the upload path for the Upload bucket
             upload_bucket_path = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}" if S3_UPLOAD_BUCKET_PREFIX else processed_filename
             
+            # Check if image already exists in Good bucket
+            image_exists = False
+            try:
+                s3_client.head_object(
+                    Bucket=S3_GOOD_BUCKET,
+                    Key=good_bucket_path
+                )
+                # If no exception is raised, the image exists
+                image_exists = True
+                logger.info(f"Duplicate detected: {good_bucket_path} already exists in {S3_GOOD_BUCKET}")
+            except Exception:
+                # If an exception is raised, the image doesn't exist
+                pass
+                
             # Prepare metadata for upload
             extra_args = {
                 'ContentType': 'image/webp',
@@ -195,14 +209,27 @@ def process_image(s3_key):
             if uploader_initials:
                 extra_args['Metadata']['uploader-initials'] = uploader_initials
             
-            # Upload to Good bucket
-            logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
-            s3_client.put_object(
-                Bucket=S3_GOOD_BUCKET,
-                Key=good_bucket_path,
-                Body=download_response.content,
-                **extra_args
-            )
+            if image_exists:
+                # If image already exists, upload to Issue bucket instead
+                issue_bucket_path = f"{os.getenv('S3_ISSUE_BUCKET_PREFIX', '')}{processed_filename}"
+                issue_bucket = os.getenv('S3_ISSUE_BUCKET')
+                
+                logger.info(f"Uploading duplicate image to {issue_bucket}/{issue_bucket_path}")
+                s3_client.put_object(
+                    Bucket=issue_bucket,
+                    Key=issue_bucket_path,
+                    Body=download_response.content,
+                    **extra_args
+                )
+            else:
+                # Upload to Good bucket only if it doesn't already exist
+                logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
+                s3_client.put_object(
+                    Bucket=S3_GOOD_BUCKET,
+                    Key=good_bucket_path,
+                    Body=download_response.content,
+                    **extra_args
+                )
             
             # Upload to Upload bucket
             logger.info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
