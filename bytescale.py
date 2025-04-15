@@ -176,24 +176,6 @@ def process_image(s3_key):
             # Upload to both buckets
             logger.info(f"Starting uploads to both buckets")
             
-            # Upload to Good bucket
-            try:
-                logger.info(f"Uploading to Good bucket: {S3_GOOD_BUCKET}/{good_bucket_path}")
-                good_buffer = BytesIO(processed_content)
-                good_buffer.seek(0)
-                
-                s3_client.upload_fileobj(
-                    good_buffer,
-                    S3_GOOD_BUCKET,
-                    good_bucket_path,
-                    ExtraArgs={'ContentType': 'image/webp'}
-                )
-                good_bucket_success = True
-                logger.info(f"Successfully uploaded to Good bucket")
-            except Exception as e:
-                logger.error(f"ERROR uploading to Good bucket ({S3_GOOD_BUCKET}/{good_bucket_path}): {str(e)}")
-                traceback.print_exc()
-            
             # Upload to Upload bucket
             try:
                 logger.info(f"Uploading to Upload bucket: {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
@@ -210,6 +192,24 @@ def process_image(s3_key):
                 logger.info(f"Successfully uploaded to Upload bucket")
             except Exception as e:
                 logger.error(f"ERROR uploading to Upload bucket ({S3_UPLOAD_BUCKET}/{upload_bucket_path}): {str(e)}")
+                traceback.print_exc()
+
+            # Upload to Good bucket
+            try:
+                logger.info(f"Uploading to Good bucket: {S3_GOOD_BUCKET}/{good_bucket_path}")
+                good_buffer = BytesIO(processed_content)
+                good_buffer.seek(0)
+                
+                s3_client.upload_fileobj(
+                    good_buffer,
+                    S3_GOOD_BUCKET,
+                    good_bucket_path,
+                    ExtraArgs={'ContentType': 'image/webp'}
+                )
+                good_bucket_success = True
+                logger.info(f"Successfully uploaded to Good bucket")
+            except Exception as e:
+                logger.error(f"ERROR uploading to Good bucket ({S3_GOOD_BUCKET}/{good_bucket_path}): {str(e)}")
                 traceback.print_exc()
             
             # Delete the original image from Temp bucket if at least one upload was successful
