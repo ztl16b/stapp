@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/zacklung/local_files/image_interface_test/image_processor.py", line 4, in <module>
+    import boto3
+ModuleNotFoundError: No module named 'boto3'

@@ -35,6 +35,7 @@ AWS_REGION = os.getenv("AWS_REGION")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
 S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
+S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
@@ -49,6 +50,7 @@ if not AWS_SECRET_ACCESS_KEY: missing_vars.append("AWS_SECRET_ACCESS_KEY")
 if not AWS_REGION: missing_vars.append("AWS_REGION")
 if not S3_TEMP_BUCKET: missing_vars.append("S3_TEMP_BUCKET")
 if not S3_UPLOAD_BUCKET: missing_vars.append("S3_UPLOAD_BUCKET")
+if not S3_GOOD_BUCKET: missing_vars.append("S3_GOOD_BUCKET")
 if not BYTESCALE_API_KEY: missing_vars.append("BYTESCALE_API_KEY")
 if not BYTESCALE_UPLOAD_URL: missing_vars.append("BYTESCALE_UPLOAD_URL")
 
@@ -324,6 +326,7 @@ def process_image(s3_key):
                     write_debug_info(f"Transformed filename from hyphen to dot format: {base_filename}")
             
             upload_path = f"{DESTINATION_PREFIX}{base_filename}.webp"
+            good_bucket_path = f"images/performer-at-venue/detail/{base_filename}.webp"
             
             write_debug_info(f"Final filename: {os.path.basename(upload_path)}")
             
@@ -368,21 +371,38 @@ def process_image(s3_key):
                     'uploader_initials': uploader_initials
                 }
             
-            # If not a duplicate, upload to upload bucket as normal
-            write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
+            # Get the processed file content
+            processed_content = download_response.content
             
+            # Prepare upload args
             extra_args = {'ContentType': 'image/webp'}
             if uploader_initials:
                 extra_args['Metadata'] = {'uploader-initials': uploader_initials}
                 write_debug_info(f"Preserving uploader initials metadata: {uploader_initials}")
             
+            # First upload to Upload bucket
+            write_debug_info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_path}")
+            upload_buffer = BytesIO(processed_content)
             s3_client.upload_fileobj(
-                download_response.raw,
+                upload_buffer,
                 S3_UPLOAD_BUCKET,
                 upload_path,
                 ExtraArgs=extra_args,
                 Config=s3_upload_config
             )
+            upload_buffer.close()
+            
+            # Then upload to Good bucket
+            write_debug_info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
+            good_buffer = BytesIO(processed_content)
+            s3_client.upload_fileobj(
+                good_buffer,
+                S3_GOOD_BUCKET,
+                good_bucket_path,
+                ExtraArgs=extra_args,
+                Config=s3_upload_config
+            )
+            good_buffer.close()
             
             write_debug_info(f"Deleting original image from {S3_TEMP_BUCKET}/{s3_key}")
             s3_client.delete_object(
@@ -390,12 +410,12 @@ def process_image(s3_key):
                 Key=s3_key
             )
             
-            write_debug_info(f"Successfully processed {filename}\n")
+            write_debug_info(f"Successfully processed {filename} and uploaded to both Upload and Good buckets\n")
             return {
                 'status': 'success',
                 'original_key': s3_key,
                 'processed_key': upload_path,
-                'message': f'Successfully processed {filename}',
+                'message': f'Successfully processed {filename} and uploaded to both Upload and Good buckets',
                 'uploader_initials': uploader_initials
             }
     except Exception as e:
