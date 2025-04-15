@@ -196,94 +196,20 @@ def process_image(s3_key):
 
             # Upload to Good bucket
             try:
-                logger.info(f"===== GOOD BUCKET UPLOAD DETAILS =====")
-                logger.info(f"Good bucket name: {S3_GOOD_BUCKET}")
-                logger.info(f"Good bucket path: {good_bucket_path}")
-                logger.info(f"Processed content size: {len(processed_content)} bytes")
-                
-                # Create a fresh BytesIO buffer
+                logger.info(f"Uploading to Good bucket: {S3_GOOD_BUCKET}/{good_bucket_path}")
                 good_buffer = BytesIO(processed_content)
                 good_buffer.seek(0)
-                buffer_size = len(good_buffer.getvalue())
-                logger.info(f"Buffer size for Good bucket upload: {buffer_size} bytes")
                 
-                logger.info(f"Starting upload to Good bucket: {S3_GOOD_BUCKET}/{good_bucket_path}")
-                
-                # Check if AWS credentials are still valid before upload
-                try:
-                    identity = boto3.client('sts').get_caller_identity()
-                    logger.info(f"AWS identity confirmed: {identity.get('Account')}")
-                except Exception as id_err:
-                    logger.error(f"AWS identity check failed: {str(id_err)}")
-                
-                # Check if the file already exists in the Good bucket
-                try:
-                    exists_check = s3_client.head_object(Bucket=S3_GOOD_BUCKET, Key=good_bucket_path)
-                    logger.info(f"File already exists in Good bucket with size: {exists_check.get('ContentLength', 'unknown')} bytes")
-                except Exception as e:
-                    if "404" in str(e):
-                        logger.info(f"File does not exist in Good bucket yet (expected 404)")
-                    else:
-                        logger.error(f"Error checking if file exists in Good bucket: {str(e)}")
-                
-                # Create a specific client just for this upload
-                try:
-                    good_s3_client = boto3.client(
-                        's3',
-                        aws_access_key_id=AWS_ACCESS_KEY_ID,
-                        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-                        region_name=AWS_REGION
-                    )
-                    logger.info(f"Created dedicated S3 client for Good bucket upload")
-                    
-                    # Try a small test upload first
-                    test_key = f"test_upload_{int(time.time())}.txt"
-                    good_s3_client.put_object(
-                        Bucket=S3_GOOD_BUCKET,
-                        Key=test_key,
-                        Body="test upload",
-                        ContentType='text/plain'
-                    )
-                    logger.info(f"Test upload to Good bucket successful: {test_key}")
-                    
-                    # Now try the actual image upload
-                    logger.info(f"Proceeding with main upload to Good bucket")
-                    upload_start_time = time.time()
-                    
-                    good_s3_client.upload_fileobj(
-                        good_buffer,
-                        S3_GOOD_BUCKET,
-                        good_bucket_path,
-                        ExtraArgs={'ContentType': 'image/webp'}
-                    )
-                    
-                    upload_duration = time.time() - upload_start_time
-                    logger.info(f"Good bucket upload call completed in {upload_duration:.2f} seconds")
-                    
-                    # Verify the upload worked by checking the file exists
-                    try:
-                        check_result = good_s3_client.head_object(Bucket=S3_GOOD_BUCKET, Key=good_bucket_path)
-                        logger.info(f"Verification: File exists in Good bucket with size: {check_result.get('ContentLength', 'unknown')} bytes")
-                        good_bucket_success = True
-                    except Exception as verify_err:
-                        logger.error(f"Verification failed - file not found in Good bucket after upload: {str(verify_err)}")
-                        good_bucket_success = False
-                    
-                except Exception as client_err:
-                    logger.error(f"Error with dedicated Good bucket S3 client: {str(client_err)}")
-                    raise
-                
-                if good_bucket_success:
-                    logger.info(f"Successfully uploaded to Good bucket")
-                else:
-                    logger.error(f"Upload to Good bucket failed verification")
-                    
-                logger.info(f"===== END GOOD BUCKET UPLOAD DETAILS =====")
-                
+                s3_client.upload_fileobj(
+                    good_buffer,
+                    S3_GOOD_BUCKET,
+                    good_bucket_path,
+                    ExtraArgs={'ContentType': 'image/webp'}
+                )
+                good_bucket_success = True
+                logger.info(f"Successfully uploaded to Good bucket")
             except Exception as e:
                 logger.error(f"ERROR uploading to Good bucket ({S3_GOOD_BUCKET}/{good_bucket_path}): {str(e)}")
-                logger.error(f"Exception type: {type(e).__name__}")
-                logger.error(f"Exception details: {e}")
                 traceback.print_exc()
             
             # Delete the original image from Temp bucket if at least one upload was successful
