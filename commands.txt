@@ -8,8 +8,8 @@ git push heroku master
 git push heroku master --force
 
 
-git add . && git commit -m "insert_text" && git push heroku master
-git add . && git commit -m "dupe_check" && git push heroku master && sleep 10 && heroku restart
+git add . && git commit -m "insert_text" && git push stapp master
+git add . && git commit -m "dupe_check" && git push stapp master && sleep 10 && heroku restart
 
 heroku logs --tail
 
@@ -21,14 +21,7 @@ heroku ps
 heroku restart
 
 heroku ps:restart image_worker
-heroku ps:restart validation_worker
-heroku ps:restart dupe_worker
 
 heroku ps:scale image_worker=1
-heroku ps:scale validation_worker=1
-heroku ps:scale dupe_worker=1
 
-heroku logs --app heroimages --ps image_worker -t
-heroku logs --app heroimages --ps validation_worker -t
-heroku logs --app heroimages --ps dupe_worker -t
-
+heroku logs --app stapp --ps image_worker -t
