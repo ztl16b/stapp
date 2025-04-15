@@ -36,12 +36,28 @@ S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
+logger.info(f"Using S3 bucket: {S3_TEMP_BUCKET}")
+if S3_TEMP_BUCKET_PREFIX:
+    logger.info(f"Using prefix: {S3_TEMP_BUCKET_PREFIX}")
+else:
+    logger.info("No prefix specified, will check entire bucket")
+
+logger.info(f"Using Good bucket: {S3_GOOD_BUCKET}")
+if S3_GOOD_BUCKET_PREFIX:
+    logger.info(f"Using Good bucket prefix: {S3_GOOD_BUCKET_PREFIX}")
+
+logger.info(f"Using Upload bucket: {S3_UPLOAD_BUCKET}")
+if S3_UPLOAD_BUCKET_PREFIX:
+    logger.info(f"Using Upload bucket prefix: {S3_UPLOAD_BUCKET_PREFIX}")
+
 # Validate required environment variables
 missing_vars = []
 if not AWS_ACCESS_KEY_ID: missing_vars.append("AWS_ACCESS_KEY_ID")
 if not AWS_SECRET_ACCESS_KEY: missing_vars.append("AWS_SECRET_ACCESS_KEY")
 if not AWS_REGION: missing_vars.append("AWS_REGION")
 if not S3_TEMP_BUCKET: missing_vars.append("S3_TEMP_BUCKET")
+if not S3_GOOD_BUCKET: missing_vars.append("S3_GOOD_BUCKET")
+if not S3_UPLOAD_BUCKET: missing_vars.append("S3_UPLOAD_BUCKET")
 if not BYTESCALE_API_KEY: missing_vars.append("BYTESCALE_API_KEY")
 if not BYTESCALE_UPLOAD_URL: missing_vars.append("BYTESCALE_UPLOAD_URL")
 
@@ -49,12 +65,6 @@ if missing_vars:
     error_msg = f"ERROR: Missing required environment variables: {', '.join(missing_vars)}"
     logger.error(error_msg)
     sys.exit(1)
-
-logger.info(f"Using S3 bucket: {S3_TEMP_BUCKET}")
-if S3_TEMP_BUCKET_PREFIX:
-    logger.info(f"Using prefix: {S3_TEMP_BUCKET_PREFIX}")
-else:
-    logger.info("No prefix specified, will check entire bucket")
 
 try:
     s3_client = boto3.client(
@@ -153,25 +163,38 @@ def process_image(s3_key):
             # Create the new filename with webp extension
             processed_filename = f"{base_name_with_dots}.webp"
             
-            # Extract the directory part from the original key if any
-            key_parts = s3_key.split('/')
-            if len(key_parts) > 1:
-                # If there's a directory structure, keep it
-                directory = '/'.join(key_parts[:-1]) + '/'
-                processed_key = f"{directory}{processed_filename}"
-            else:
-                # If it's in the root, just use the new filename
-                processed_key = processed_filename
+            # Create the upload path for the Good bucket
+            good_bucket_path = f"{S3_GOOD_BUCKET_PREFIX}{processed_filename}" if S3_GOOD_BUCKET_PREFIX else processed_filename
             
-            logger.info(f"Uploading processed image to {S3_TEMP_BUCKET}/{processed_key}")
+            # Create the upload path for the Upload bucket
+            upload_bucket_path = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}" if S3_UPLOAD_BUCKET_PREFIX else processed_filename
+            
+            # Upload to Good bucket
+            logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
             s3_client.put_object(
-                Bucket=S3_TEMP_BUCKET,
-                Key=processed_key,
+                Bucket=S3_GOOD_BUCKET,
+                Key=good_bucket_path,
                 Body=download_response.content,
                 ContentType='image/webp'
             )
             
-            logger.info(f"Successfully processed {filename} and uploaded as {processed_filename}")
+            # Upload to Upload bucket
+            logger.info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
+            s3_client.put_object(
+                Bucket=S3_UPLOAD_BUCKET,
+                Key=upload_bucket_path,
+                Body=download_response.content,
+                ContentType='image/webp'
+            )
+            
+            # Delete the original image from Temp bucket
+            logger.info(f"Deleting original image from {S3_TEMP_BUCKET}/{s3_key}")
+            s3_client.delete_object(
+                Bucket=S3_TEMP_BUCKET,
+                Key=s3_key
+            )
+            
+            logger.info(f"Successfully processed {filename} and uploaded to Good and Upload buckets")
             return True
     
     except Exception as e:
@@ -203,39 +226,11 @@ def check_temp_bucket():
             # Filter for image files
             image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
             
-            # Keep track of original filenames to avoid processing already processed images
-            processed_images = set()
-            original_images = []
-            
-            for obj in response['Contents']:
-                obj_key = obj['Key']
-                filename = obj_key.split('/')[-1]
-                
-                # Only consider files with valid image extensions
-                if not any(obj_key.lower().endswith(ext) for ext in image_extensions):
-                    continue
-                
-                # If it's a WebP file with a filename that has dots instead of hyphens,
-                # it's likely a processed file we created earlier
-                if obj_key.lower().endswith('.webp'):
-                    base_name = os.path.splitext(filename)[0]
-                    if '.' in base_name and '-' not in base_name:
-                        # Add the potential original filename variants to the set
-                        possible_original = base_name.replace('.', '-')
-                        processed_images.add(possible_original)
-                else:
-                    # This is an original image file
-                    original_images.append(obj)
-            
-            # Only process images that don't have a corresponding processed version
-            images = []
-            for img in original_images:
-                img_key = img['Key']
-                filename = img_key.split('/')[-1]
-                base_name = os.path.splitext(filename)[0]
-                
-                if base_name not in processed_images:
-                    images.append(img)
+            # All images in the Temp bucket need processing
+            images = [
+                obj for obj in response['Contents']
+                if any(obj['Key'].lower().endswith(ext) for ext in image_extensions)
+            ]
             
             # Process found images
             if images:
