@@ -234,15 +234,6 @@ def process_image(s3_key):
                     **extra_args
                 )
             
-            # Upload to Upload bucket
-            logger.info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
-            s3_client.put_object(
-                Bucket=S3_UPLOAD_BUCKET,
-                Key=upload_bucket_path,
-                Body=download_response.content,
-                **extra_args
-            )
-            
             # Delete the original image from Temp bucket
             logger.info(f"Deleting original image from {S3_TEMP_BUCKET}/{s3_key}")
             s3_client.delete_object(
