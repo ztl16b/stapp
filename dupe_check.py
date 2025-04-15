@@ -227,9 +227,17 @@ def check_duplicates():
 def run_scheduler():
     """Run the scheduler to check for duplicates periodically"""
     logger.info("Starting duplicate check worker service")
-    
-    # Run every 5 minutes
-    schedule.every(5).minutes.do(check_duplicates)
+    # # 5 minutes
+    # schedule.every(5).minutes.do(check_duplicates)
+
+    # # 1 minute
+    # schedule.every(1).minute.do(check_duplicates)
+
+    # 30 seconds
+    schedule.every(30).seconds.do(check_duplicates)
+
+    # Run every 30 seconds
+    schedule.every(30).seconds.do(check_duplicates)
     # Also run immediately on startup
     check_duplicates()
     
