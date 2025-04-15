@@ -318,8 +318,8 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_init
             'filename': filename
         }
 
-def get_random_image_key(bucket_name):
-    """Gets a random object key from the specified bucket."""
+def get_random_image_key(bucket_name, filter_by_review=None):
+    """Gets a random object key from the specified bucket, optionally filtered by review status."""
     try:
         # Different prefix depending on which bucket we're using
         prefix = None
@@ -327,6 +327,8 @@ def get_random_image_key(bucket_name):
             prefix = 'temp_performer_at_venue_images/'
         elif bucket_name == S3_TEMP_BUCKET:
             prefix = 'tmp_upload/'
+        elif bucket_name == S3_GOOD_BUCKET:
+            prefix = 'images/performer-at-venue/detail/'
             
         # Get list of objects with the appropriate prefix
         response = s3_client.list_objects_v2(
@@ -336,8 +338,33 @@ def get_random_image_key(bucket_name):
             
         if 'Contents' in response and response['Contents']:
             all_objects = response['Contents']
+            
+            # Filter by file type and structure based on bucket
+            image_objects = []
+            
+            # For Good bucket, filter by review status if requested
+            if bucket_name == S3_GOOD_BUCKET and filter_by_review:
+                for obj in all_objects:
+                    # Get metadata to check review status
+                    try:
+                        head_response = s3_client.head_object(
+                            Bucket=bucket_name,
+                            Key=obj['Key']
+                        )
+                        metadata = head_response.get('Metadata', {})
+                        review_status = metadata.get('review_status', 'FALSE')
+                        
+                        # If filtering for unreviewed images, only include those with FALSE status
+                        if filter_by_review == 'unreviewed' and review_status != 'TRUE':
+                            image_objects.append(obj)
+                        # If filtering for reviewed images, only include those with TRUE status
+                        elif filter_by_review == 'reviewed' and review_status == 'TRUE':
+                            image_objects.append(obj)
+                    except Exception as e:
+                        app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
+                        continue
             # For temp bucket, accept all image file types
-            if bucket_name == S3_TEMP_BUCKET:
+            elif bucket_name == S3_TEMP_BUCKET:
                 image_objects = [
                     obj for obj in all_objects
                     if obj['Key'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
@@ -382,7 +409,7 @@ def get_random_image_key(bucket_name):
         flash("An unexpected error occurred while listing files.", "danger")
     return None
 
-def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, metadata=None):
+def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
     """Moves an object from source_bucket to dest_bucket."""
     dest_key = object_key
     original_key = object_key
@@ -428,15 +455,6 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, met
         if dest_bucket != S3_INCREDIBLE_BUCKET or source_bucket == S3_UPLOAD_BUCKET:
             s3_client.delete_object(Bucket=source_bucket, Key=original_key)
             app.logger.info(f"Deleted {original_key} from {source_bucket}")
-
-        if metadata:
-            s3_client.put_object(
-                Bucket=dest_bucket,
-                Key=dest_key,
-                Metadata=metadata
-            )
-            app.logger.info(f"Updated metadata for {dest_key}")
-
         return True
     except ClientError as e:
         app.logger.error(f"Error moving object {original_key}: {e}")
@@ -468,9 +486,9 @@ def review_image_route():
     # Log session information for debugging
     app.logger.info(f"Review page accessed by user {session.get('user_id', 'unknown')}")
     
-    # Only check the upload bucket for images
-    image_key = get_random_image_key(S3_UPLOAD_BUCKET)
-    source_bucket = S3_UPLOAD_BUCKET
+    # Check the Good bucket for unreviewed images only
+    image_key = get_random_image_key(S3_GOOD_BUCKET, filter_by_review='unreviewed')
+    source_bucket = S3_GOOD_BUCKET
     
     image_url = None
     uploader_initials = "Unknown"
@@ -478,7 +496,7 @@ def review_image_route():
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
-        app.logger.info(f"Loading image for review: {image_key} from {source_bucket}")
+        app.logger.info(f"Loading unreviewed image for review: {image_key} from {source_bucket}")
         
         # Get metadata for the image to extract uploader initials and review status
         try:
@@ -512,33 +530,115 @@ def move_image_route(action, image_key):
     
     # Log the action
     app.logger.info(f"Moving image with key: {image_key} from {source_bucket} to {action} bucket")
-    
-    # Get original metadata
-    try:
-        head_response = s3_client.head_object(
-            Bucket=source_bucket,
-            Key=image_key
-        )
-        metadata = head_response.get('Metadata', {})
-        
-        # For all actions, set review_status to TRUE in the metadata
-        metadata['review_status'] = 'TRUE'
-        app.logger.info(f"Setting review_status to TRUE for {image_key}")
-        
-    except Exception as e:
-        app.logger.error(f"Error getting metadata for {image_key}: {e}")
-        flash(f"Error retrieving image metadata: {str(e)}", "danger")
-        return redirect(url_for('review_image_route'))
 
+    # If we're already in the good bucket, we need to update the metadata to mark as reviewed
+    if source_bucket == S3_GOOD_BUCKET:
+        try:
+            # Get current metadata and content
+            head_response = s3_client.head_object(
+                Bucket=source_bucket,
+                Key=image_key
+            )
+            current_metadata = head_response.get('Metadata', {})
+            content_type = head_response.get('ContentType', 'image/webp')
+            
+            # Update review status
+            current_metadata['review_status'] = 'TRUE'
+            
+            # For BAD action, move the image from Good to Bad bucket
+            if action == 'bad':
+                # Extract the filename from the path
+                filename = image_key.split('/')[-1]
+                
+                # Create the destination path in the bad bucket
+                bad_dest_key = f"bad_images/{filename}"
+                
+                # Get the object data
+                get_response = s3_client.get_object(
+                    Bucket=source_bucket,
+                    Key=image_key
+                )
+                file_data = get_response['Body'].read()
+                
+                # Upload to bad bucket with updated metadata
+                s3_client.put_object(
+                    Bucket=S3_BAD_BUCKET,
+                    Key=bad_dest_key,
+                    Body=file_data,
+                    ContentType=content_type,
+                    Metadata=current_metadata
+                )
+                
+                # Delete from good bucket
+                s3_client.delete_object(
+                    Bucket=source_bucket,
+                    Key=image_key
+                )
+                
+                app.logger.info(f"Moved {image_key} from Good bucket to Bad bucket")
+                flash(f"Image '{filename}' moved to bad bucket.", "success")
+                return redirect(url_for('review_image_route'))
+                
+            # For INCREDIBLE action, also copy to the incredible bucket
+            elif action == 'incredible':
+                # Extract the filename from the path
+                filename = image_key.split('/')[-1]
+                
+                # Create the destination path in the incredible bucket
+                incredible_dest_key = f"incredible_images/{filename}"
+                
+                # Copy to incredible bucket
+                s3_client.copy_object(
+                    CopySource={'Bucket': source_bucket, 'Key': image_key},
+                    Bucket=S3_INCREDIBLE_BUCKET,
+                    Key=incredible_dest_key,
+                    Metadata=current_metadata,
+                    ContentType=content_type
+                )
+                
+                # Update metadata in the good bucket
+                s3_client.copy_object(
+                    CopySource={'Bucket': source_bucket, 'Key': image_key},
+                    Bucket=source_bucket,
+                    Key=image_key,
+                    Metadata=current_metadata,
+                    MetadataDirective='REPLACE',
+                    ContentType=content_type
+                )
+                
+                app.logger.info(f"Updated metadata for {image_key} and copied to incredible bucket")
+                flash(f"Image '{image_key.split('/')[-1]}' marked as reviewed and copied to incredible bucket.", "success")
+            else:
+                # For GOOD action, just update metadata
+                s3_client.copy_object(
+                    CopySource={'Bucket': source_bucket, 'Key': image_key},
+                    Bucket=source_bucket,
+                    Key=image_key,
+                    Metadata=current_metadata,
+                    MetadataDirective='REPLACE',
+                    ContentType=content_type
+                )
+                
+                app.logger.info(f"Updated metadata for {image_key} to mark as reviewed")
+                flash(f"Image '{image_key.split('/')[-1]}' marked as reviewed.", "success")
+                
+            return redirect(url_for('review_image_route'))
+            
+        except Exception as e:
+            app.logger.error(f"Error updating metadata: {e}")
+            flash(f"Error updating review status: {str(e)}", "danger")
+            return redirect(url_for('review_image_route'))
+
+    # Original logic for moving between buckets
     success = False
     if action == 'incredible':
         # For incredible images, we need to copy to both buckets without deleting the original
         # until both copies are successful
         
         # First, copy to the good bucket without deleting the original
-        if copy_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good', metadata=metadata):
+        if copy_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good'):
             # If first copy succeeds, copy to incredible bucket
-            if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible', metadata=metadata):
+            if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
                 # Now that both copies are successful, delete the original
                 try:
                     s3_client.delete_object(Bucket=source_bucket, Key=image_key)
@@ -550,45 +650,23 @@ def move_image_route(action, image_key):
                     app.logger.error(f"Error deleting original file after copies: {e}")
                     flash("Image copied successfully but there was an error deleting the original.", "warning")
                     success = True
-    elif action == 'bad':
-        # For bad images, move to Bad bucket and delete from Good if it exists there
-        filename = image_key.split('/')[-1]
-        
-        # First move to bad bucket
-        if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad', metadata=metadata):
-            success = True
-            
-            # Check if this file also exists in the Good bucket and delete it if found
-            good_bucket_key = f"images/performer-at-venue/detail/{filename}"
-            try:
-                # Check if file exists in Good bucket
-                s3_client.head_object(Bucket=S3_GOOD_BUCKET, Key=good_bucket_key)
-                # If no exception, file exists - delete it
-                s3_client.delete_object(Bucket=S3_GOOD_BUCKET, Key=good_bucket_key)
-                app.logger.info(f"Also deleted {good_bucket_key} from {S3_GOOD_BUCKET}")
-                flash(f"Image '{filename}' moved to bad bucket and removed from good bucket.", "success")
-            except ClientError as e:
-                # If 404, file doesn't exist in Good bucket - that's okay
-                if e.response['Error']['Code'] != '404':
-                    app.logger.warning(f"Error checking/deleting from Good bucket: {e}")
-                flash(f"Image '{filename}' moved to bad bucket.", "success")
-            except Exception as e:
-                app.logger.warning(f"Unexpected error checking Good bucket: {e}")
-                flash(f"Image '{filename}' moved to bad bucket.", "success")
     else:
-        # For good action, use the original logic
-        if move_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good', metadata=metadata):
+        # For good and bad actions, use the original logic
+        destination_bucket = S3_GOOD_BUCKET if action == 'good' else S3_BAD_BUCKET
+        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action):
             success = True
+            # Only log to the app logger, don't use flash messages twice
+            app.logger.info(f"Image '{image_key}' moved to {action} bucket.")
             # Use a single flash message
             filename = image_key.split('/')[-1]
-            flash(f"Image '{filename}' moved to good bucket.", "success")
+            flash(f"Image '{filename}' moved to {action} bucket.", "success")
 
     if not success:
         flash(f"Failed to move image '{image_key}' to {action} bucket.", "danger")
 
     return redirect(url_for('review_image_route'))
 
-def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, metadata=None):
+def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
     dest_key = object_key
     original_key = object_key
@@ -630,15 +708,6 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, met
             ContentType=content_type
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
-
-        if metadata:
-            s3_client.put_object(
-                Bucket=dest_bucket,
-                Key=dest_key,
-                Metadata=metadata
-            )
-            app.logger.info(f"Updated metadata for {dest_key}")
-
         return True
     except ClientError as e:
         app.logger.error(f"Error copying object {original_key}: {e}")
