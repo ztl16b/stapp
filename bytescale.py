@@ -29,6 +29,10 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_TEMP_BUCKET_PREFIX = os.getenv("S3_TEMP_BUCKET_PREFIX", "")
+S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
+S3_GOOD_BUCKET_PREFIX = os.getenv("S3_GOOD_BUCKET_PREFIX", "")
+S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
+S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
 
@@ -70,14 +74,6 @@ except Exception as e:
     sys.exit(1)
 
 def process_image(s3_key):
-    """
-    Process an image through Bytescale:
-    1. Download from S3
-    2. Upload to Bytescale
-    3. Process using Bytescale Image API
-    4. Download processed image
-    5. Upload processed image back to S3
-    """
     try:
         filename = s3_key.split('/')[-1]
         base_name, extension = os.path.splitext(filename)
@@ -151,8 +147,21 @@ def process_image(s3_key):
             download_response.raise_for_status()
             
             # Upload processed image back to S3
-            processed_filename = f"{base_name}_processed.webp"
-            processed_key = f"{S3_TEMP_BUCKET_PREFIX}processed/{processed_filename}" if S3_TEMP_BUCKET_PREFIX else f"processed/{processed_filename}"
+            # Replace hyphens with dots in the base filename
+            base_name_with_dots = base_name.replace('-', '.')
+            
+            # Create the new filename with webp extension
+            processed_filename = f"{base_name_with_dots}.webp"
+            
+            # Extract the directory part from the original key if any
+            key_parts = s3_key.split('/')
+            if len(key_parts) > 1:
+                # If there's a directory structure, keep it
+                directory = '/'.join(key_parts[:-1]) + '/'
+                processed_key = f"{directory}{processed_filename}"
+            else:
+                # If it's in the root, just use the new filename
+                processed_key = processed_filename
             
             logger.info(f"Uploading processed image to {S3_TEMP_BUCKET}/{processed_key}")
             s3_client.put_object(
@@ -193,20 +202,44 @@ def check_temp_bucket():
         if 'Contents' in response:
             # Filter for image files
             image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
-            images = [
-                obj for obj in response['Contents']
-                if obj['Key'].lower().endswith(image_extensions) and 
-                "processed/" not in obj['Key']  # Skip already processed images
-            ]
+            
+            # Keep track of original filenames to avoid processing already processed images
+            processed_images = set()
+            original_images = []
+            
+            for obj in response['Contents']:
+                obj_key = obj['Key']
+                filename = obj_key.split('/')[-1]
+                
+                # Only consider files with valid image extensions
+                if not any(obj_key.lower().endswith(ext) for ext in image_extensions):
+                    continue
+                
+                # If it's a WebP file with a filename that has dots instead of hyphens,
+                # it's likely a processed file we created earlier
+                if obj_key.lower().endswith('.webp'):
+                    base_name = os.path.splitext(filename)[0]
+                    if '.' in base_name and '-' not in base_name:
+                        # Add the potential original filename variants to the set
+                        possible_original = base_name.replace('.', '-')
+                        processed_images.add(possible_original)
+                else:
+                    # This is an original image file
+                    original_images.append(obj)
+            
+            # Only process images that don't have a corresponding processed version
+            images = []
+            for img in original_images:
+                img_key = img['Key']
+                filename = img_key.split('/')[-1]
+                base_name = os.path.splitext(filename)[0]
+                
+                if base_name not in processed_images:
+                    images.append(img)
             
             # Process found images
             if images:
                 logger.info(f"image found - {len(images)} images in the Temp bucket")
-                
-                # Create processed directory if it doesn't exist
-                processed_dir = f"{S3_TEMP_BUCKET_PREFIX}processed/" if S3_TEMP_BUCKET_PREFIX else "processed/"
-                # This is just to log the directory name, no actual file is created
-                logger.info(f"Will store processed images in: {processed_dir}")
                 
                 # Process each image
                 for img in images:
@@ -231,13 +264,9 @@ def run_scheduler():
     """Run the scheduler to check for images periodically"""
     logger.info("Starting bytescale worker service")
     
-    # Schedule the check to run every 30 seconds
     schedule.every(30).seconds.do(check_temp_bucket)
-    
-    # Run the first check immediately
     check_temp_bucket()
     
-    # Keep the scheduler running
     while True:
         try:
             schedule.run_pending()
