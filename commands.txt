@@ -16,16 +16,16 @@ heroku logs --tail
 
 
 TROUBLESHOOTING WORKERS
-heroku ps
+heroku ps --app stapp
 
 heroku restart
 
-heroku ps:restart image_worker
-heroku ps:restart bytescale_worker
+heroku ps:restart image_worker --app stapp
+heroku ps:restart bytescale_worker --app stapp
 
-heroku ps:scale image_worker=1
-heroku ps:scale bytescale_worker=1
+heroku ps:scale image_worker=1 --app stapp
+heroku ps:scale bytescale_worker=1 --app stapp
 
 
-heroku logs --app stapp --ps image_worker -t
+heroku logs --app stapp --ps image_worker -t 
 heroku logs --app stapp --ps bytescale_worker -t
