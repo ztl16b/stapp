@@ -382,7 +382,7 @@ def get_random_image_key(bucket_name):
         flash("An unexpected error occurred while listing files.", "danger")
     return None
 
-def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
+def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, metadata=None):
     """Moves an object from source_bucket to dest_bucket."""
     dest_key = object_key
     original_key = object_key
@@ -428,6 +428,15 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         if dest_bucket != S3_INCREDIBLE_BUCKET or source_bucket == S3_UPLOAD_BUCKET:
             s3_client.delete_object(Bucket=source_bucket, Key=original_key)
             app.logger.info(f"Deleted {original_key} from {source_bucket}")
+
+        if metadata:
+            s3_client.put_object(
+                Bucket=dest_bucket,
+                Key=dest_key,
+                Metadata=metadata
+            )
+            app.logger.info(f"Updated metadata for {dest_key}")
+
         return True
     except ClientError as e:
         app.logger.error(f"Error moving object {original_key}: {e}")
@@ -503,6 +512,23 @@ def move_image_route(action, image_key):
     
     # Log the action
     app.logger.info(f"Moving image with key: {image_key} from {source_bucket} to {action} bucket")
+    
+    # Get original metadata
+    try:
+        head_response = s3_client.head_object(
+            Bucket=source_bucket,
+            Key=image_key
+        )
+        metadata = head_response.get('Metadata', {})
+        
+        # For all actions, set review_status to TRUE in the metadata
+        metadata['review_status'] = 'TRUE'
+        app.logger.info(f"Setting review_status to TRUE for {image_key}")
+        
+    except Exception as e:
+        app.logger.error(f"Error getting metadata for {image_key}: {e}")
+        flash(f"Error retrieving image metadata: {str(e)}", "danger")
+        return redirect(url_for('review_image_route'))
 
     success = False
     if action == 'incredible':
@@ -510,9 +536,9 @@ def move_image_route(action, image_key):
         # until both copies are successful
         
         # First, copy to the good bucket without deleting the original
-        if copy_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good'):
+        if copy_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good', metadata=metadata):
             # If first copy succeeds, copy to incredible bucket
-            if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
+            if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible', metadata=metadata):
                 # Now that both copies are successful, delete the original
                 try:
                     s3_client.delete_object(Bucket=source_bucket, Key=image_key)
@@ -524,23 +550,45 @@ def move_image_route(action, image_key):
                     app.logger.error(f"Error deleting original file after copies: {e}")
                     flash("Image copied successfully but there was an error deleting the original.", "warning")
                     success = True
-    else:
-        # For good and bad actions, use the original logic
-        destination_bucket = S3_GOOD_BUCKET if action == 'good' else S3_BAD_BUCKET
-        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action):
+    elif action == 'bad':
+        # For bad images, move to Bad bucket and delete from Good if it exists there
+        filename = image_key.split('/')[-1]
+        
+        # First move to bad bucket
+        if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad', metadata=metadata):
             success = True
-            # Only log to the app logger, don't use flash messages twice
-            app.logger.info(f"Image '{image_key}' moved to {action} bucket.")
+            
+            # Check if this file also exists in the Good bucket and delete it if found
+            good_bucket_key = f"images/performer-at-venue/detail/{filename}"
+            try:
+                # Check if file exists in Good bucket
+                s3_client.head_object(Bucket=S3_GOOD_BUCKET, Key=good_bucket_key)
+                # If no exception, file exists - delete it
+                s3_client.delete_object(Bucket=S3_GOOD_BUCKET, Key=good_bucket_key)
+                app.logger.info(f"Also deleted {good_bucket_key} from {S3_GOOD_BUCKET}")
+                flash(f"Image '{filename}' moved to bad bucket and removed from good bucket.", "success")
+            except ClientError as e:
+                # If 404, file doesn't exist in Good bucket - that's okay
+                if e.response['Error']['Code'] != '404':
+                    app.logger.warning(f"Error checking/deleting from Good bucket: {e}")
+                flash(f"Image '{filename}' moved to bad bucket.", "success")
+            except Exception as e:
+                app.logger.warning(f"Unexpected error checking Good bucket: {e}")
+                flash(f"Image '{filename}' moved to bad bucket.", "success")
+    else:
+        # For good action, use the original logic
+        if move_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good', metadata=metadata):
+            success = True
             # Use a single flash message
             filename = image_key.split('/')[-1]
-            flash(f"Image '{filename}' moved to {action} bucket.", "success")
+            flash(f"Image '{filename}' moved to good bucket.", "success")
 
     if not success:
         flash(f"Failed to move image '{image_key}' to {action} bucket.", "danger")
 
     return redirect(url_for('review_image_route'))
 
-def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
+def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, metadata=None):
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
     dest_key = object_key
     original_key = object_key
@@ -582,6 +630,15 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
             ContentType=content_type
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
+
+        if metadata:
+            s3_client.put_object(
+                Bucket=dest_bucket,
+                Key=dest_key,
+                Metadata=metadata
+            )
+            app.logger.info(f"Updated metadata for {dest_key}")
+
         return True
     except ClientError as e:
         app.logger.error(f"Error copying object {original_key}: {e}")
