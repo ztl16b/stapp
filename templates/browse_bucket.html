@@ -206,9 +206,9 @@
                             <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
                             <td>
                                 {% if file.metadata.get('review_status', 'FALSE') == 'TRUE' %}
-                                    <span class="badge bg-success">Yes</span>
+                                    <span class="badge bg-success">TRUE</span>
                                 {% else %}
-                                    <span class="badge bg-danger">No</span>
+                                    <span class="badge bg-danger">FALSE</span>
                                 {% endif %}
                             </td>
                             <td>

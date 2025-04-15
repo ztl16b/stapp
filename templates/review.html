@@ -87,6 +87,13 @@
                 <div class="metadata-box">
                     <h5 class="mb-3">Image Information</h5>
                     <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
+                    <p class="mb-2"><strong>Review Status:</strong> 
+                        {% if review_status == 'TRUE' %}
+                            <span class="badge bg-success">Reviewed</span>
+                        {% else %}
+                            <span class="badge bg-danger">Not Reviewed</span>
+                        {% endif %}
+                    </p>
                     <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
                     <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
                 </div>

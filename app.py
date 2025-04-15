@@ -459,23 +459,19 @@ def review_image_route():
     # Log session information for debugging
     app.logger.info(f"Review page accessed by user {session.get('user_id', 'unknown')}")
     
-    # First check the temp bucket for any images
-    image_key = get_random_image_key(S3_TEMP_BUCKET)
-    source_bucket = S3_TEMP_BUCKET
-    
-    # If no images in temp bucket, check the upload bucket
-    if not image_key:
-        image_key = get_random_image_key(S3_UPLOAD_BUCKET)
-        source_bucket = S3_UPLOAD_BUCKET
+    # Only check the upload bucket for images
+    image_key = get_random_image_key(S3_UPLOAD_BUCKET)
+    source_bucket = S3_UPLOAD_BUCKET
     
     image_url = None
     uploader_initials = "Unknown"
+    review_status = "FALSE"
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
         app.logger.info(f"Loading image for review: {image_key} from {source_bucket}")
         
-        # Get metadata for the image to extract uploader initials
+        # Get metadata for the image to extract uploader initials and review status
         try:
             head_response = s3_client.head_object(
                 Bucket=source_bucket,
@@ -483,7 +479,8 @@ def review_image_route():
             )
             metadata = head_response.get('Metadata', {})
             uploader_initials = metadata.get('uploader-initials', 'Unknown')
-            app.logger.info(f"Found uploader initials: {uploader_initials}")
+            review_status = metadata.get('review_status', 'FALSE')
+            app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}")
         except Exception as e:
             app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
@@ -491,7 +488,8 @@ def review_image_route():
                           image_url=image_url, 
                           image_key=image_key, 
                           source_bucket=source_bucket,
-                          uploader_initials=uploader_initials)
+                          uploader_initials=uploader_initials,
+                          review_status=review_status)
 
 @app.route('/move/<action>/<path:image_key>', methods=['POST'])
 @login_required
