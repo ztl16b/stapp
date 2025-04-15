@@ -188,6 +188,7 @@
                                 </a>
                             </th>
                             <th>Uploader Initials</th>
+                            <th>Reviewed</th>
                             <th>Preview</th>
                         </tr>
                     </thead>
@@ -203,6 +204,13 @@
                             <td>{{ (file.size / 1024)|round(1) }} KB</td>
                             <td>{{ file.last_modified | datetime_mst }}</td>
                             <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
+                            <td>
+                                {% if file.metadata.get('review_status', 'FALSE') == 'TRUE' %}
+                                    <span class="badge bg-success">Yes</span>
+                                {% else %}
+                                    <span class="badge bg-danger">No</span>
+                                {% endif %}
+                            </td>
                             <td>
                                 <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
                                    target="_blank" 
