@@ -287,7 +287,7 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_init
         # Add metadata with uploader initials if provided
         extra_args = {'ContentType': content_type}
         if uploader_initials:
-            extra_args['Metadata'] = {'uploader-initials': uploader_initials}
+            extra_args['Metadata'] = {'uploader-initials': uploader_initials, 'review_status': 'FALSE'}
             app.logger.info(f"Adding uploader initials metadata: {uploader_initials}")
         
         # Upload to S3 using BytesIO for memory efficiency
