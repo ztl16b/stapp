@@ -156,88 +156,46 @@ def process_image(s3_key):
             
             download_response.raise_for_status()
             
-            # Get the processed image content once
-            processed_content = download_response.content
-            
+            # Upload processed image back to S3
             # Replace hyphens with dots in the base filename
             base_name_with_dots = base_name.replace('-', '.')
             
             # Create the new filename with webp extension
             processed_filename = f"{base_name_with_dots}.webp"
             
-            # Define paths for both buckets
-            good_bucket_path = f"images/performer-at-venue/detail/{processed_filename}"
-            upload_bucket_path = f"temp_performer_at_venue_images/{processed_filename}"
+            # Create the upload path for the Good bucket
+            good_bucket_path = f"{S3_GOOD_BUCKET_PREFIX}{processed_filename}" if S3_GOOD_BUCKET_PREFIX else processed_filename
             
-            # Track upload success
-            good_bucket_success = False
-            upload_bucket_success = False
+            # Create the upload path for the Upload bucket
+            upload_bucket_path = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}" if S3_UPLOAD_BUCKET_PREFIX else processed_filename
             
-            # Upload to both buckets
-            logger.info(f"Starting uploads to both buckets")
+            # Upload to Good bucket
+            logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
+            s3_client.put_object(
+                Bucket=S3_GOOD_BUCKET,
+                Key=good_bucket_path,
+                Body=download_response.content,
+                ContentType='image/webp'
+            )
             
             # Upload to Upload bucket
-            try:
-                logger.info(f"Uploading to Upload bucket: {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
-                upload_buffer = BytesIO(processed_content)
-                upload_buffer.seek(0)
-                
-                s3_client.upload_fileobj(
-                    upload_buffer,
-                    S3_UPLOAD_BUCKET,
-                    upload_bucket_path,
-                    ExtraArgs={'ContentType': 'image/webp'}
-                )
-                upload_bucket_success = True
-                logger.info(f"Successfully uploaded to Upload bucket")
-            except Exception as e:
-                logger.error(f"ERROR uploading to Upload bucket ({S3_UPLOAD_BUCKET}/{upload_bucket_path}): {str(e)}")
-                traceback.print_exc()
-
-            # Upload to Good bucket
-            try:
-                logger.info(f"Uploading to Good bucket: {S3_GOOD_BUCKET}/{good_bucket_path}")
-                good_buffer = BytesIO(processed_content)
-                good_buffer.seek(0)
-                
-                s3_client.upload_fileobj(
-                    good_buffer,
-                    S3_GOOD_BUCKET,
-                    good_bucket_path,
-                    ExtraArgs={'ContentType': 'image/webp'}
-                )
-                good_bucket_success = True
-                logger.info(f"Successfully uploaded to Good bucket")
-            except Exception as e:
-                logger.error(f"ERROR uploading to Good bucket ({S3_GOOD_BUCKET}/{good_bucket_path}): {str(e)}")
-                traceback.print_exc()
+            logger.info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
+            s3_client.put_object(
+                Bucket=S3_UPLOAD_BUCKET,
+                Key=upload_bucket_path,
+                Body=download_response.content,
+                ContentType='image/webp'
+            )
             
-            # Delete the original image from Temp bucket if at least one upload was successful
-            if good_bucket_success or upload_bucket_success:
-                try:
-                    logger.info(f"Deleting original image from {S3_TEMP_BUCKET}/{s3_key}")
-                    s3_client.delete_object(
-                        Bucket=S3_TEMP_BUCKET,
-                        Key=s3_key
-                    )
-                    logger.info(f"Successfully deleted original image")
-                except Exception as e:
-                    logger.error(f"ERROR deleting original image: {str(e)}")
-                    traceback.print_exc()
+            # Delete the original image from Temp bucket
+            logger.info(f"Deleting original image from {S3_TEMP_BUCKET}/{s3_key}")
+            s3_client.delete_object(
+                Bucket=S3_TEMP_BUCKET,
+                Key=s3_key
+            )
             
-            # Determine overall success
-            if good_bucket_success and upload_bucket_success:
-                logger.info(f"Successfully processed {filename} and uploaded to both buckets")
-                return True
-            elif good_bucket_success:
-                logger.info(f"Successfully processed {filename} and uploaded to Good bucket only")
-                return True
-            elif upload_bucket_success:
-                logger.info(f"Successfully processed {filename} and uploaded to Upload bucket only")
-                return True
-            else:
-                logger.error(f"Failed to upload {filename} to any bucket")
-                return False
+            logger.info(f"Successfully processed {filename} and uploaded to Good and Upload buckets")
+            return True
     
     except Exception as e:
         logger.error(f"Error processing image {s3_key}: {str(e)}")
