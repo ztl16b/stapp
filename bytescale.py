@@ -48,7 +48,7 @@ except Exception as e:
 def check_temp_bucket():
     """Check the Temp bucket for images"""
     try:
-        prefix = S3_TEMP_BUCKET_PREFIX or ""
+        prefix = S3_TEMP_BUCKET_PREFIX
         logger.info(f"Checking for images in {S3_TEMP_BUCKET} with prefix '{prefix}'")
         
         # List objects in the bucket using the specified prefix
