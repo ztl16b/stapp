@@ -211,7 +211,10 @@ def process_image(s3_key):
             
             if image_exists:
                 # If image already exists, upload to Issue bucket instead
-                issue_bucket_path = f"{os.getenv('S3_ISSUE_BUCKET_PREFIX', '')}{processed_filename}_dupeUpload"
+                base_name = os.path.splitext(processed_filename)[0]
+                extension = os.path.splitext(processed_filename)[1]  # Should be .webp
+                issue_filename = f"{base_name}_dupeUpload{extension}"
+                issue_bucket_path = f"{os.getenv('S3_ISSUE_BUCKET_PREFIX', '')}{issue_filename}"
                 issue_bucket = os.getenv('S3_ISSUE_BUCKET')
                 
                 logger.info(f"Uploading duplicate image to {issue_bucket}/{issue_bucket_path}")
