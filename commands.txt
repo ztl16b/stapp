@@ -21,7 +21,11 @@ heroku ps
 heroku restart
 
 heroku ps:restart image_worker
+heroku ps:restart bytescale_worker
 
 heroku ps:scale image_worker=1
+heroku ps:scale bytescale_worker=1
+
 
 heroku logs --app stapp --ps image_worker -t
+heroku logs --app stapp --ps bytescale_worker -t

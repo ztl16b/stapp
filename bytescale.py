@@ -26,20 +26,8 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
+S3_TEMP_BUCKET_PREFIX = os.getenv("S3_TEMP_BUCKET_PREFIX")
 
-# Validate required environment variables
-missing_vars = []
-if not AWS_ACCESS_KEY_ID: missing_vars.append("AWS_ACCESS_KEY_ID")
-if not AWS_SECRET_ACCESS_KEY: missing_vars.append("AWS_SECRET_ACCESS_KEY")
-if not AWS_REGION: missing_vars.append("AWS_REGION")
-if not S3_TEMP_BUCKET: missing_vars.append("S3_TEMP_BUCKET")
-
-if missing_vars:
-    error_msg = f"ERROR: Missing required environment variables: {', '.join(missing_vars)}"
-    logger.error(error_msg)
-    sys.exit(1)
-
-# Initialize S3 client
 try:
     s3_client = boto3.client(
         's3',
@@ -60,11 +48,13 @@ except Exception as e:
 def check_temp_bucket():
     """Check the Temp bucket for images"""
     try:
-        logger.info(f"Checking for images in {S3_TEMP_BUCKET}")
+        prefix = S3_TEMP_BUCKET_PREFIX or ""
+        logger.info(f"Checking for images in {S3_TEMP_BUCKET} with prefix '{prefix}'")
         
-        # List all objects in the bucket
+        # List objects in the bucket using the specified prefix
         response = s3_client.list_objects_v2(
-            Bucket=S3_TEMP_BUCKET
+            Bucket=S3_TEMP_BUCKET,
+            Prefix=prefix
         )
         
         # Check if there are any objects
@@ -78,14 +68,14 @@ def check_temp_bucket():
             
             # Log found images
             if images:
-                logger.info(f"image found - {len(images)} images in the Temp bucket")
+                logger.info(f"image found - {len(images)} images in the Temp bucket with prefix '{prefix}'")
                 for img in images[:5]:  # Show details of first 5 images
                     logger.info(f"Image: {img['Key']} ({img['Size']} bytes)")
             else:
-                logger.info("No images found in the Temp bucket")
+                logger.info(f"No images found in the Temp bucket with prefix '{prefix}'")
                 
         else:
-            logger.info("No objects found in the Temp bucket")
+            logger.info(f"No objects found in the Temp bucket with prefix '{prefix}'")
             
     except Exception as e:
         logger.error(f"Error checking Temp bucket: {e}")
