@@ -9,6 +9,7 @@ import requests
 from io import BytesIO
 from dotenv import load_dotenv
 import schedule
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -185,7 +186,8 @@ def process_image(s3_key):
             extra_args = {
                 'ContentType': 'image/webp',
                 'Metadata': {
-                    'review_status': review_status
+                    'review_status': review_status,
+                    'upload_time': datetime.utcnow().isoformat()
                 }
             }
             

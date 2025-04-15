@@ -444,11 +444,24 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         elif filename.lower().endswith(('.jpg', '.jpeg')):
             content_type = 'image/jpeg'
             
+        # Get metadata from source object if it exists
+        try:
+            head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
+            metadata = head_response.get('Metadata', {})
+        except:
+            metadata = {}
+            
+        # Add upload_time metadata if destination is good bucket
+        if dest_bucket == S3_GOOD_BUCKET or destination == 'good':
+            metadata['upload_time'] = datetime.utcnow().isoformat()
+            
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
             Key=dest_key,
-            ContentType=content_type
+            ContentType=content_type,
+            Metadata=metadata,
+            MetadataDirective='REPLACE'
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
 
@@ -597,6 +610,10 @@ def move_image_route(action, image_key):
                 )
                 
                 # Update metadata in the good bucket
+                # Update the upload_time if it doesn't exist
+                if 'upload_time' not in current_metadata:
+                    current_metadata['upload_time'] = datetime.utcnow().isoformat()
+                
                 s3_client.copy_object(
                     CopySource={'Bucket': source_bucket, 'Key': image_key},
                     Bucket=source_bucket,
@@ -610,6 +627,10 @@ def move_image_route(action, image_key):
                 flash(f"Image '{image_key.split('/')[-1]}' marked as reviewed and copied to incredible bucket.", "success")
             else:
                 # For GOOD action, just update metadata
+                # Update the upload_time if it doesn't exist
+                if 'upload_time' not in current_metadata:
+                    current_metadata['upload_time'] = datetime.utcnow().isoformat()
+                
                 s3_client.copy_object(
                     CopySource={'Bucket': source_bucket, 'Key': image_key},
                     Bucket=source_bucket,
@@ -701,11 +722,24 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         elif filename.lower().endswith(('.jpg', '.jpeg')):
             content_type = 'image/jpeg'
             
+        # Get metadata from source object if it exists
+        try:
+            head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
+            metadata = head_response.get('Metadata', {})
+        except:
+            metadata = {}
+            
+        # Add upload_time metadata if destination is good bucket
+        if dest_bucket == S3_GOOD_BUCKET or destination == 'good':
+            metadata['upload_time'] = datetime.utcnow().isoformat()
+            
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
             Key=dest_key,
-            ContentType=content_type
+            ContentType=content_type,
+            Metadata=metadata,
+            MetadataDirective='REPLACE'
         )
         app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
         return True
