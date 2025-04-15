@@ -95,6 +95,15 @@ def process_image(s3_key):
         file_data = response['Body'].read()
         content_type = response.get('ContentType', 'image/jpeg')
         
+        # Extract metadata from the original image
+        metadata = response.get('Metadata', {})
+        uploader_initials = metadata.get('uploader-initials', '')
+        
+        if uploader_initials:
+            logger.info(f"Found uploader initials metadata: {uploader_initials}")
+        else:
+            logger.info("No uploader initials found in metadata")
+        
         if len(file_data) == 0:
             logger.error(f"Downloaded file has zero bytes. Skipping.")
             return False
@@ -169,13 +178,23 @@ def process_image(s3_key):
             # Create the upload path for the Upload bucket
             upload_bucket_path = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}" if S3_UPLOAD_BUCKET_PREFIX else processed_filename
             
+            # Prepare metadata for upload
+            extra_args = {
+                'ContentType': 'image/webp',
+                'Metadata': {}
+            }
+            
+            # Add uploader initials to metadata if available
+            if uploader_initials:
+                extra_args['Metadata']['uploader-initials'] = uploader_initials
+            
             # Upload to Good bucket
             logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
             s3_client.put_object(
                 Bucket=S3_GOOD_BUCKET,
                 Key=good_bucket_path,
                 Body=download_response.content,
-                ContentType='image/webp'
+                **extra_args
             )
             
             # Upload to Upload bucket
@@ -184,7 +203,7 @@ def process_image(s3_key):
                 Bucket=S3_UPLOAD_BUCKET,
                 Key=upload_bucket_path,
                 Body=download_response.content,
-                ContentType='image/webp'
+                **extra_args
             )
             
             # Delete the original image from Temp bucket
@@ -210,12 +229,10 @@ def check_temp_bucket():
         else:
             logger.info(f"Checking for images in {S3_TEMP_BUCKET}")
         
-        # List all objects in the bucket with specified prefix
         list_params = {
             'Bucket': S3_TEMP_BUCKET
         }
         
-        # Only add prefix if it's set
         if S3_TEMP_BUCKET_PREFIX:
             list_params['Prefix'] = S3_TEMP_BUCKET_PREFIX
             
