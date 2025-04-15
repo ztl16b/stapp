@@ -26,7 +26,6 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
-S3_TEMP_BUCKET_PREFIX = os.getenv("S3_TEMP_BUCKET_PREFIX")
 
 try:
     s3_client = boto3.client(
@@ -48,7 +47,7 @@ except Exception as e:
 def check_temp_bucket():
     """Check the Temp bucket for images"""
     try:
-        prefix = S3_TEMP_BUCKET_PREFIX
+        prefix = 'tmp_bucket/'
         logger.info(f"Checking for images in {S3_TEMP_BUCKET} with prefix '{prefix}'")
         
         # List objects in the bucket using the specified prefix
