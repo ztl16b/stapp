@@ -164,28 +164,40 @@ def process_image(s3_key):
             processed_filename = f"{base_name_with_dots}.webp"
             
             # Create the upload path for the Good bucket
-            good_bucket_path = f"{S3_GOOD_BUCKET_PREFIX}{processed_filename}" if S3_GOOD_BUCKET_PREFIX else processed_filename
+            good_bucket_path = f"images/performer-at-venue/detail/{processed_filename}"
             
             # Create the upload path for the Upload bucket
-            upload_bucket_path = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}" if S3_UPLOAD_BUCKET_PREFIX else processed_filename
+            upload_bucket_path = f"temp_performer_at_venue_images/{processed_filename}"
             
-            # Upload to Good bucket
-            logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
-            s3_client.put_object(
-                Bucket=S3_GOOD_BUCKET,
-                Key=good_bucket_path,
-                Body=download_response.content,
-                ContentType='image/webp'
-            )
+            # Upload to Good bucket with specific error handling
+            try:
+                logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
+                s3_client.put_object(
+                    Bucket=S3_GOOD_BUCKET,
+                    Key=good_bucket_path,
+                    Body=download_response.content,
+                    ContentType='image/webp'
+                )
+                logger.info(f"Successfully uploaded to Good bucket: {S3_GOOD_BUCKET}/{good_bucket_path}")
+            except Exception as e:
+                logger.error(f"ERROR uploading to Good bucket: {str(e)}")
+                traceback.print_exc()
+                return False
             
-            # Upload to Upload bucket
-            logger.info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
-            s3_client.put_object(
-                Bucket=S3_UPLOAD_BUCKET,
-                Key=upload_bucket_path,
-                Body=download_response.content,
-                ContentType='image/webp'
-            )
+            # Upload to Upload bucket with specific error handling
+            try:
+                logger.info(f"Uploading processed image to {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
+                s3_client.put_object(
+                    Bucket=S3_UPLOAD_BUCKET,
+                    Key=upload_bucket_path,
+                    Body=download_response.content,
+                    ContentType='image/webp'
+                )
+                logger.info(f"Successfully uploaded to Upload bucket: {S3_UPLOAD_BUCKET}/{upload_bucket_path}")
+            except Exception as e:
+                logger.error(f"ERROR uploading to Upload bucket: {str(e)}")
+                traceback.print_exc()
+                # Continue even if Upload bucket fails, as we've already uploaded to Good bucket
             
             # Delete the original image from Temp bucket
             logger.info(f"Deleting original image from {S3_TEMP_BUCKET}/{s3_key}")
