@@ -38,7 +38,12 @@ MST = ZoneInfo("Etc/GMT+7")
 # Custom Jinja filter for MST datetime formatting
 def format_datetime_mst(dt_utc):
     if not isinstance(dt_utc, datetime):
-        return dt_utc # Return as is if not a datetime object
+        # Try to convert string format to datetime
+        try:
+            dt_utc = datetime.fromisoformat(dt_utc)
+        except (ValueError, TypeError):
+            return dt_utc # Return as is if conversion fails
+    
     # Ensure the datetime is timezone-aware (assume UTC if naive)
     if dt_utc.tzinfo is None:
         dt_utc = dt_utc.replace(tzinfo=timezone.utc)

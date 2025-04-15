@@ -187,6 +187,7 @@
                                     {% endif %}
                                 </a>
                             </th>
+                            <th>Upload Time</th>
                             <th>Uploader Initials</th>
                             <th>Reviewed</th>
                             <th>Preview</th>
@@ -203,6 +204,13 @@
                             <td>{{ file.key }}</td>
                             <td>{{ (file.size / 1024)|round(1) }} KB</td>
                             <td>{{ file.last_modified | datetime_mst }}</td>
+                            <td>
+                                {% if file.metadata.get('upload_time') %}
+                                    {{ file.metadata.get('upload_time') | datetime_mst }}
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            </td>
                             <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
                             <td>
                                 {% if file.metadata.get('review_status', 'FALSE') == 'TRUE' %}
