@@ -28,6 +28,24 @@ AWS_REGION = os.getenv("AWS_REGION")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_TEMP_BUCKET_PREFIX = os.getenv("S3_TEMP_BUCKET_PREFIX")
 
+# Validate required environment variables
+missing_vars = []
+if not AWS_ACCESS_KEY_ID: missing_vars.append("AWS_ACCESS_KEY_ID")
+if not AWS_SECRET_ACCESS_KEY: missing_vars.append("AWS_SECRET_ACCESS_KEY")
+if not AWS_REGION: missing_vars.append("AWS_REGION")
+if not S3_TEMP_BUCKET: missing_vars.append("S3_TEMP_BUCKET")
+
+if missing_vars:
+    error_msg = f"ERROR: Missing required environment variables: {', '.join(missing_vars)}"
+    logger.error(error_msg)
+    sys.exit(1)
+
+logger.info(f"Using S3 bucket: {S3_TEMP_BUCKET}")
+if S3_TEMP_BUCKET_PREFIX:
+    logger.info(f"Using prefix: {S3_TEMP_BUCKET_PREFIX}")
+else:
+    logger.info("No prefix specified, will check entire bucket")
+
 try:
     s3_client = boto3.client(
         's3',
@@ -48,13 +66,21 @@ except Exception as e:
 def check_temp_bucket():
     """Check the Temp bucket for images"""
     try:
-        logger.info(f"Checking for images in {S3_TEMP_BUCKET}")
+        if S3_TEMP_BUCKET_PREFIX:
+            logger.info(f"Checking for images in {S3_TEMP_BUCKET}/{S3_TEMP_BUCKET_PREFIX}")
+        else:
+            logger.info(f"Checking for images in {S3_TEMP_BUCKET}")
         
-        # List all objects in the bucket
-        response = s3_client.list_objects_v2(
-            Bucket=S3_TEMP_BUCKET
-            Prefix=S3_TEMP_BUCKET_PREFIX
-        )
+        # List all objects in the bucket with specified prefix
+        list_params = {
+            'Bucket': S3_TEMP_BUCKET
+        }
+        
+        # Only add prefix if it's set
+        if S3_TEMP_BUCKET_PREFIX:
+            list_params['Prefix'] = S3_TEMP_BUCKET_PREFIX
+            
+        response = s3_client.list_objects_v2(**list_params)
         
         # Check if there are any objects
         if 'Contents' in response:
