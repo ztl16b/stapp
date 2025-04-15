@@ -190,6 +190,7 @@
                             <th>Upload Time</th>
                             <th>Uploader Initials</th>
                             <th>Reviewed</th>
+                            <th>Perf Img</th>
                             <th>Preview</th>
                         </tr>
                     </thead>
@@ -218,6 +219,16 @@
                                 {% else %}
                                     <span class="badge bg-danger">FALSE</span>
                                 {% endif %}
+                            </td>
+                            <td>
+                                {% if file.metadata.get('perfimg_status', 'FALSE') == 'TRUE' %}
+                                    <span class="badge bg-success">TRUE</span>
+                                {% else %}
+                                    <span class="badge bg-danger">FALSE</span>
+                                {% endif %}
+                                <form action="{{ url_for('toggle_perfimg_status_route', bucket_name=bucket_name, object_key=file.key) }}" method="post" class="d-inline">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary ms-1">Toggle</button>
+                                </form>
                             </td>
                             <td>
                                 <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 

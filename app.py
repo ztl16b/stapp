@@ -292,7 +292,11 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_init
         # Add metadata with uploader initials if provided
         extra_args = {'ContentType': content_type}
         if uploader_initials:
-            extra_args['Metadata'] = {'uploader-initials': uploader_initials, 'review_status': 'FALSE'}
+            extra_args['Metadata'] = {
+                'uploader-initials': uploader_initials, 
+                'review_status': 'FALSE',
+                'perfimg_status': 'FALSE'
+            }
             app.logger.info(f"Adding uploader initials metadata: {uploader_initials}")
         
         # Upload to S3 using BytesIO for memory efficiency
@@ -460,6 +464,10 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         if dest_bucket == S3_GOOD_BUCKET or destination == 'good':
             metadata['upload_time'] = datetime.utcnow().isoformat()
             
+        # Ensure perfimg_status is preserved or set to FALSE if not already in metadata
+        if 'perfimg_status' not in metadata:
+            metadata['perfimg_status'] = 'FALSE'
+        
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
@@ -511,6 +519,7 @@ def review_image_route():
     image_url = None
     uploader_initials = "Unknown"
     review_status = "FALSE"
+    perfimg_status = "FALSE"
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
@@ -525,7 +534,8 @@ def review_image_route():
             metadata = head_response.get('Metadata', {})
             uploader_initials = metadata.get('uploader-initials', 'Unknown')
             review_status = metadata.get('review_status', 'FALSE')
-            app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}")
+            perfimg_status = metadata.get('perfimg_status', 'FALSE')
+            app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
         except Exception as e:
             app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
@@ -534,7 +544,8 @@ def review_image_route():
                           image_key=image_key, 
                           source_bucket=source_bucket,
                           uploader_initials=uploader_initials,
-                          review_status=review_status)
+                          review_status=review_status,
+                          perfimg_status=perfimg_status)
 
 @app.route('/move/<action>/<path:image_key>', methods=['POST'])
 @login_required
@@ -562,6 +573,10 @@ def move_image_route(action, image_key):
             
             # Update review status
             current_metadata['review_status'] = 'TRUE'
+            
+            # Ensure perfimg_status is preserved or set to FALSE if not already in metadata
+            if 'perfimg_status' not in current_metadata:
+                current_metadata['perfimg_status'] = 'FALSE'
             
             # For BAD action, move the image from Good to Bad bucket
             if action == 'bad':
@@ -738,6 +753,10 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         if dest_bucket == S3_GOOD_BUCKET or destination == 'good':
             metadata['upload_time'] = datetime.utcnow().isoformat()
             
+        # Ensure perfimg_status is preserved or set to FALSE if not already in metadata
+        if 'perfimg_status' not in metadata:
+            metadata['perfimg_status'] = 'FALSE'
+        
         s3_client.copy_object(
             CopySource=copy_source,
             Bucket=dest_bucket,
@@ -1279,6 +1298,62 @@ def get_image_preview(bucket_name, object_key):
     except Exception as e:
         app.logger.error(f"Error generating image preview: {e}")
         return f"Error loading image: {str(e)}", 500
+
+@app.route('/toggle-perfimg-status/<bucket_name>/<path:object_key>', methods=['POST'])
+@login_required
+def toggle_perfimg_status_route(bucket_name, object_key):
+    buckets = {
+        'good': S3_GOOD_BUCKET,
+        'bad': S3_BAD_BUCKET,
+        'incredible': S3_INCREDIBLE_BUCKET,
+        'upload': S3_UPLOAD_BUCKET,
+        'temp': S3_TEMP_BUCKET,
+        'issue': S3_ISSUE_BUCKET
+    }
+    
+    if bucket_name not in buckets:
+        flash('Invalid bucket selected', 'danger')
+        return redirect(url_for('browse_buckets'))
+        
+    try:
+        # Get current object metadata
+        head_response = s3_client.head_object(
+            Bucket=buckets[bucket_name],
+            Key=object_key
+        )
+        
+        # Extract metadata and content type
+        current_metadata = head_response.get('Metadata', {})
+        content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Toggle perfimg_status (TRUE -> FALSE, FALSE -> TRUE)
+        current_perfimg_status = current_metadata.get('perfimg_status', 'FALSE')
+        new_perfimg_status = 'FALSE' if current_perfimg_status == 'TRUE' else 'TRUE'
+        current_metadata['perfimg_status'] = new_perfimg_status
+        
+        # Use copy_object to update the metadata
+        s3_client.copy_object(
+            CopySource={'Bucket': buckets[bucket_name], 'Key': object_key},
+            Bucket=buckets[bucket_name],
+            Key=object_key,
+            Metadata=current_metadata,
+            MetadataDirective='REPLACE',
+            ContentType=content_type
+        )
+        
+        # Log the metadata update
+        app.logger.info(f"Updated perfimg_status for {object_key} from {current_perfimg_status} to {new_perfimg_status}")
+        
+        # Extract just the filename for the flash message
+        filename = object_key.split('/')[-1]
+        flash(f'Toggled perfimg_status for "{filename}" to {new_perfimg_status}', 'success')
+        
+    except Exception as e:
+        app.logger.error(f"Error toggling perfimg_status: {e}")
+        flash(f'Error updating metadata: {str(e)}', 'danger')
+    
+    # Redirect back to the browse bucket page
+    return redirect(url_for('browse_bucket', bucket_name=bucket_name))
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

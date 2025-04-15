@@ -100,6 +100,7 @@ def process_image(s3_key):
         metadata = response.get('Metadata', {})
         uploader_initials = metadata.get('uploader-initials', '')
         review_status = metadata.get('review_status', 'FALSE')
+        perfimg_status = metadata.get('perfimg_status', 'FALSE')
         
         if uploader_initials:
             logger.info(f"Found uploader initials metadata: {uploader_initials}")
@@ -107,6 +108,7 @@ def process_image(s3_key):
             logger.info("No uploader initials found in metadata")
             
         logger.info(f"Using review_status: {review_status}")
+        logger.info(f"Using perfimg_status: {perfimg_status}")
         
         if len(file_data) == 0:
             logger.error(f"Downloaded file has zero bytes. Skipping.")
@@ -201,6 +203,7 @@ def process_image(s3_key):
                 'ContentType': 'image/webp',
                 'Metadata': {
                     'review_status': review_status,
+                    'perfimg_status': perfimg_status,
                     'upload_time': datetime.utcnow().isoformat()
                 }
             }

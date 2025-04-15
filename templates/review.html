@@ -94,6 +94,13 @@
                             <span class="badge bg-danger">Not Reviewed</span>
                         {% endif %}
                     </p>
+                    <p class="mb-2"><strong>Perf Img Status:</strong> 
+                        {% if perfimg_status == 'TRUE' %}
+                            <span class="badge bg-success">TRUE</span>
+                        {% else %}
+                            <span class="badge bg-danger">FALSE</span>
+                        {% endif %}
+                    </p>
                     <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
                     <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
                 </div>
