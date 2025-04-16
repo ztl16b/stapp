@@ -836,7 +836,7 @@ def browse_buckets():
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
-        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performer/detail/'}
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'}
     }
     app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
@@ -859,7 +859,7 @@ def browse_bucket(bucket_name):
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
-        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performer/detail/'}
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'}
     }
 
     if bucket_name not in buckets:
@@ -990,12 +990,8 @@ def browse_bucket(bucket_name):
                             continue
                         
                         # For performers bucket, we want to include:
-                        # 1. Files with the prefix path (images/performer/detail/)
-                        # 2. Files directly in the bucket with image extensions
-                        # 3. Any files with "performer" in the path
-                        if not (item['Key'].startswith(prefix) or 
-                                '/' not in item['Key'] or 
-                                "performer" in item['Key'].lower()):
+                        # 1. ONLY files with the exact prefix 'images/performers/detail/'
+                        if not item['Key'].startswith('images/performers/detail/'):
                             continue
                         
                         app.logger.info(f"Including file in performers bucket: {item['Key']}")
@@ -1250,7 +1246,7 @@ def delete_all_objects_route(bucket_name):
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
-        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performer/detail/'}
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'}
     }
     
     if bucket_name not in buckets:
