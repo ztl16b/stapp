@@ -16,6 +16,7 @@ heroku logs --tail
 
 
 
+
 TROUBLESHOOTING WORKERS
 heroku ps --app stapp
 
