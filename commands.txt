@@ -29,3 +29,8 @@ heroku ps:scale bytescale_worker=1 --app stapp
 
 heroku logs --app stapp --ps dupe_worker -t 
 heroku logs --app stapp --ps bytescale_worker -t
+
+
+
+
+git add . && git commit -m "insert_text" && git push heroimages master
