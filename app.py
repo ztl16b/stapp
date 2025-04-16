@@ -892,15 +892,68 @@ def browse_bucket(bucket_name):
         items_scanned = 0
 
         app.logger.info(f"Starting scan for bucket '{bucket_name}' prefix '{prefix}', max_scan={max_items_to_scan}")
+        
+        # For performers bucket, special handling if needed
+        try_without_prefix = False
+        if bucket_name == 'performers':
+            try:
+                # Check if we have any items with the exact prefix
+                test_prefix_response = s3.list_objects_v2(
+                    Bucket=bucket_info['bucket'],
+                    Prefix=prefix,
+                    MaxKeys=1
+                )
+                if 'Contents' not in test_prefix_response or len(test_prefix_response['Contents']) == 0:
+                    app.logger.info(f"DEBUG: No objects found with prefix '{prefix}'. Will try without prefix.")
+                    try_without_prefix = True
+            except Exception as e:
+                app.logger.error(f"DEBUG: Error checking prefix: {e}")
+        
+        # Log debug info for performers bucket
+        if bucket_name == 'performers':
+            try:
+                # Just fetch a list of all objects in bucket without prefix to see what's there
+                app.logger.info("DEBUG: Listing all objects in performers bucket:")
+                all_objects_response = s3.list_objects_v2(Bucket=bucket_info['bucket'])
+                if 'Contents' in all_objects_response:
+                    for item in all_objects_response['Contents'][:20]:  # Log first 20 for brevity
+                        app.logger.info(f"DEBUG: Found object: {item['Key']}")
+                else:
+                    app.logger.info("DEBUG: No objects found in performers bucket")
+            except Exception as e:
+                app.logger.error(f"DEBUG: Error listing all objects: {e}")
 
         # Scan up to max_items_to_scan or until paginator finishes
-        for page_obj in s3_paginator.paginate(Bucket=bucket_info['bucket'], Prefix=prefix):
+        scan_prefix = prefix
+        if bucket_name == 'performers' and try_without_prefix:
+            scan_prefix = ''
+            app.logger.info(f"Using empty prefix for performers bucket scan")
+        
+        for page_obj in s3_paginator.paginate(Bucket=bucket_info['bucket'], Prefix=scan_prefix):
             page_truncated = False
             if 'Contents' in page_obj:
+                app.logger.info(f"DEBUG: Found {len(page_obj['Contents'])} items with prefix '{scan_prefix}'")
+                
                 for item in page_obj['Contents']:
-                    if item['Key'] == prefix: # Skip the prefix itself
+                    if item['Key'] == scan_prefix: # Skip the prefix itself
                         continue
-
+                    
+                    # For performers bucket, check if it's an image file
+                    if bucket_name == 'performers':
+                        file_ext = item['Key'].lower().split('.')[-1] if '.' in item['Key'] else ''
+                        if file_ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
+                            continue
+                            
+                        # If using empty prefix, only keep files that match our target path pattern
+                        if try_without_prefix:
+                            # First, check if it starts with the original prefix
+                            if item['Key'].startswith(prefix):
+                                pass  # Keep files that match our original prefix
+                            else:
+                                # Also keep any image file with "performer" in the path
+                                if "performer" not in item['Key'].lower():
+                                    continue
+                            
                     items_scanned += 1
                     # Store raw data needed for initial filtering
                     all_scanned_files.append({
