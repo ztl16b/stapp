@@ -73,6 +73,7 @@ S3_BAD_BUCKET = os.getenv("S3_BAD_BUCKET")
 S3_INCREDIBLE_BUCKET = os.getenv("S3_INCREDIBLE_BUCKET")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
+S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 
 BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
@@ -833,7 +834,8 @@ def browse_buckets():
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
-        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
+        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performer/detail/'}
     }
     app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
@@ -855,7 +857,8 @@ def browse_bucket(bucket_name):
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
-        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
+        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performer/detail/'}
     }
 
     if bucket_name not in buckets:
@@ -1112,7 +1115,8 @@ def delete_object_route(bucket_name, object_key):
         'incredible': S3_INCREDIBLE_BUCKET,
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
-        'issue': S3_ISSUE_BUCKET
+        'issue': S3_ISSUE_BUCKET,
+        'performers': S3_PERFORMER_BUCKET
     }
     
     if bucket_name not in buckets:
@@ -1146,7 +1150,8 @@ def delete_all_objects_route(bucket_name):
         'incredible': {'name': 'Incredible Images', 'bucket': S3_INCREDIBLE_BUCKET, 'prefix': 'incredible_images/'},
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
-        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'}
+        'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performer/detail/'}
     }
     
     if bucket_name not in buckets:
@@ -1217,7 +1222,8 @@ def delete_selected_route(bucket_name):
         'incredible': S3_INCREDIBLE_BUCKET,
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
-        'issue': S3_ISSUE_BUCKET
+        'issue': S3_ISSUE_BUCKET,
+        'performers': S3_PERFORMER_BUCKET
     }
     
     if bucket_name not in buckets:
@@ -1283,7 +1289,8 @@ def get_image_preview(bucket_name, object_key):
         'incredible': S3_INCREDIBLE_BUCKET,
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
-        'issue': S3_ISSUE_BUCKET
+        'issue': S3_ISSUE_BUCKET,
+        'performers': S3_PERFORMER_BUCKET
     }
     
     if bucket_name not in buckets:
@@ -1341,7 +1348,8 @@ def toggle_perfimg_status_route(bucket_name, object_key):
         'incredible': S3_INCREDIBLE_BUCKET,
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
-        'issue': S3_ISSUE_BUCKET
+        'issue': S3_ISSUE_BUCKET,
+        'performers': S3_PERFORMER_BUCKET
     }
     
     if bucket_name not in buckets:
