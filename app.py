@@ -291,13 +291,18 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_init
         
         # Add metadata with uploader initials if provided
         extra_args = {'ContentType': content_type}
-        if uploader_initials:
-            extra_args['Metadata'] = {
-                'uploader-initials': uploader_initials, 
-                'review_status': 'FALSE',
-                'perfimg_status': 'FALSE'
-            }
-            app.logger.info(f"Adding uploader initials metadata: {uploader_initials}")
+        metadata = {
+            'review_status': 'FALSE',
+            'perfimg_status': 'FALSE',
+            'uploader-initials': uploader_initials if uploader_initials else 'Unknown'
+        }
+        
+        # Set upload timestamp 
+        upload_time = datetime.utcnow().isoformat()
+        metadata['upload_time'] = upload_time
+        
+        extra_args['Metadata'] = metadata
+        app.logger.info(f"Adding metadata: {metadata}")
         
         # Upload to S3 using BytesIO for memory efficiency
         file_obj = BytesIO(file_data)
@@ -317,7 +322,8 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_init
             'message': 'Upload successful',
             's3_path': upload_path,
             'filename': filename,
-            'uploader_initials': uploader_initials
+            'uploader_initials': uploader_initials,
+            'metadata': metadata
         }
     except Exception as e:
         app.logger.error(f"Error processing {filename}: {str(e)}")
@@ -457,16 +463,28 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         try:
             head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
             metadata = head_response.get('Metadata', {})
-        except:
-            metadata = {}
+        except ClientError as e:
+            app.logger.error(f"Error getting metadata for {original_key}: {e}")
+            # Initialize with default values instead of empty dict
+            metadata = {
+                'review_status': 'FALSE',
+                'perfimg_status': 'FALSE'
+            }
             
-        # Add upload_time metadata if destination is good bucket
-        if dest_bucket == S3_GOOD_BUCKET or destination == 'good':
-            metadata['upload_time'] = datetime.utcnow().isoformat()
+        # Ensure all metadata fields exist with appropriate defaults
+        if 'review_status' not in metadata:
+            metadata['review_status'] = 'FALSE'
             
-        # Ensure perfimg_status is preserved or set to FALSE if not already in metadata
         if 'perfimg_status' not in metadata:
             metadata['perfimg_status'] = 'FALSE'
+            
+        # Add upload_time metadata if destination is good bucket and it doesn't exist
+        if (dest_bucket == S3_GOOD_BUCKET or destination == 'good') and 'upload_time' not in metadata:
+            metadata['upload_time'] = datetime.utcnow().isoformat()
+            
+        # Set review_status to TRUE for incredible bucket
+        if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
+            metadata['review_status'] = 'TRUE'
         
         s3_client.copy_object(
             CopySource=copy_source,
@@ -571,12 +589,20 @@ def move_image_route(action, image_key):
             current_metadata = head_response.get('Metadata', {})
             content_type = head_response.get('ContentType', 'image/webp')
             
+            # Ensure all metadata fields exist with appropriate defaults
+            if 'uploader-initials' not in current_metadata:
+                current_metadata['uploader-initials'] = 'Unknown'
+                
             # Update review status
             current_metadata['review_status'] = 'TRUE'
             
             # Ensure perfimg_status is preserved or set to FALSE if not already in metadata
             if 'perfimg_status' not in current_metadata:
                 current_metadata['perfimg_status'] = 'FALSE'
+                
+            # Ensure upload_time exists
+            if 'upload_time' not in current_metadata:
+                current_metadata['upload_time'] = datetime.utcnow().isoformat()
             
             # For BAD action, move the image from Good to Bad bucket
             if action == 'bad':
@@ -620,20 +646,19 @@ def move_image_route(action, image_key):
                 # Create the destination path in the incredible bucket
                 incredible_dest_key = f"incredible_images/{filename}"
                 
-                # Copy to incredible bucket
+                # Copy to incredible bucket - ensure review_status is TRUE
+                current_metadata['review_status'] = 'TRUE'
+                
                 s3_client.copy_object(
                     CopySource={'Bucket': source_bucket, 'Key': image_key},
                     Bucket=S3_INCREDIBLE_BUCKET,
                     Key=incredible_dest_key,
                     Metadata=current_metadata,
-                    ContentType=content_type
+                    ContentType=content_type,
+                    MetadataDirective='REPLACE'
                 )
                 
                 # Update metadata in the good bucket
-                # Update the upload_time if it doesn't exist
-                if 'upload_time' not in current_metadata:
-                    current_metadata['upload_time'] = datetime.utcnow().isoformat()
-                
                 s3_client.copy_object(
                     CopySource={'Bucket': source_bucket, 'Key': image_key},
                     Bucket=source_bucket,
@@ -647,10 +672,6 @@ def move_image_route(action, image_key):
                 flash(f"Image '{image_key.split('/')[-1]}' marked as reviewed and copied to incredible bucket.", "success")
             else:
                 # For GOOD action, just update metadata
-                # Update the upload_time if it doesn't exist
-                if 'upload_time' not in current_metadata:
-                    current_metadata['upload_time'] = datetime.utcnow().isoformat()
-                
                 s3_client.copy_object(
                     CopySource={'Bucket': source_bucket, 'Key': image_key},
                     Bucket=source_bucket,
@@ -746,16 +767,24 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         try:
             head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
             metadata = head_response.get('Metadata', {})
-        except:
-            metadata = {}
+        except ClientError as e:
+            app.logger.error(f"Error getting metadata for {original_key}: {e}")
+            # Initialize with default values instead of empty dict
+            metadata = {
+                'review_status': 'FALSE',
+                'perfimg_status': 'FALSE'
+            }
             
-        # Add upload_time metadata if destination is good bucket
-        if dest_bucket == S3_GOOD_BUCKET or destination == 'good':
-            metadata['upload_time'] = datetime.utcnow().isoformat()
+        # Ensure all metadata fields exist with appropriate defaults
+        if 'review_status' not in metadata:
+            metadata['review_status'] = 'FALSE'
             
-        # Ensure perfimg_status is preserved or set to FALSE if not already in metadata
         if 'perfimg_status' not in metadata:
             metadata['perfimg_status'] = 'FALSE'
+            
+        # Add upload_time metadata if destination is good bucket and it doesn't exist
+        if (dest_bucket == S3_GOOD_BUCKET or destination == 'good') and 'upload_time' not in metadata:
+            metadata['upload_time'] = datetime.utcnow().isoformat()
             
         # Set review_status to TRUE for incredible bucket
         if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
@@ -1329,6 +1358,21 @@ def toggle_perfimg_status_route(bucket_name, object_key):
         # Extract metadata and content type
         current_metadata = head_response.get('Metadata', {})
         content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Ensure all important metadata fields exist
+        if 'uploader-initials' not in current_metadata:
+            current_metadata['uploader-initials'] = 'Unknown'
+        
+        if 'review_status' not in current_metadata:
+            # Default review status based on bucket
+            if bucket_name == 'incredible':
+                current_metadata['review_status'] = 'TRUE'
+            else:
+                current_metadata['review_status'] = 'FALSE'
+        
+        # Add upload_time for good bucket if missing
+        if bucket_name == 'good' and 'upload_time' not in current_metadata:
+            current_metadata['upload_time'] = datetime.utcnow().isoformat()
         
         # Toggle perfimg_status (TRUE -> FALSE, FALSE -> TRUE)
         current_perfimg_status = current_metadata.get('perfimg_status', 'FALSE')
