@@ -87,6 +87,9 @@
                             <a class="nav-link {% if request.endpoint == 'perf_ven_review_image_route' %}active{% endif %}" href="{{ url_for('perf_ven_review_image_route') }}">Perf Ven Review</a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint == 'perf_review_image_route' %}active{% endif %}" href="{{ url_for('perf_review_image_route') }}">Perf Review</a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link {% if request.endpoint == 'browse_buckets' %}active{% endif %}" href="{{ url_for('browse_buckets') }}">Browse</a>
                         </li>
                     {% endif %}
