@@ -425,7 +425,7 @@ def get_random_image_key(bucket_name, filter_by_review=None):
         flash("An unexpected error occurred while listing files.", "danger")
     return None
 
-def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
+def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Moves an object from source_bucket to dest_bucket."""
     dest_key = object_key
     original_key = object_key
@@ -486,6 +486,10 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         # Set review_status to TRUE for incredible bucket
         if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
             metadata['review_status'] = 'TRUE'
+        
+        # If bad_reason provided, add it to metadata
+        if bad_reason:
+            metadata['bad_reason'] = bad_reason
         
         s3_client.copy_object(
             CopySource=copy_source,
@@ -576,8 +580,13 @@ def move_image_route(action, image_key):
     # Get the source bucket from the form data
     source_bucket = request.form.get('source_bucket', S3_UPLOAD_BUCKET)
     
+    # Get the bad reason if provided (for bad action)
+    bad_reason = request.form.get('bad_reason', None)
+    
     # Log the action
     app.logger.info(f"Moving image with key: {image_key} from {source_bucket} to {action} bucket")
+    if bad_reason:
+        app.logger.info(f"Bad reason selected: {bad_reason}")
 
     # If we're already in the good bucket, we need to update the metadata to mark as reviewed
     if source_bucket == S3_GOOD_BUCKET:
@@ -607,6 +616,10 @@ def move_image_route(action, image_key):
             
             # For BAD action, move the image from Good to Bad bucket
             if action == 'bad':
+                # If bad_reason provided, add it to metadata
+                if bad_reason:
+                    current_metadata['bad_reason'] = bad_reason
+                
                 # Extract the filename from the path
                 filename = image_key.split('/')[-1]
                 
@@ -716,7 +729,7 @@ def move_image_route(action, image_key):
     else:
         # For good and bad actions, use the original logic
         destination_bucket = S3_GOOD_BUCKET if action == 'good' else S3_BAD_BUCKET
-        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action):
+        if move_s3_object(source_bucket, destination_bucket, image_key, destination=action, bad_reason=bad_reason):
             success = True
             # Only log to the app logger, don't use flash messages twice
             app.logger.info(f"Image '{image_key}' moved to {action} bucket.")
@@ -729,7 +742,7 @@ def move_image_route(action, image_key):
 
     return redirect(url_for('review_image_route'))
 
-def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
+def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
     dest_key = object_key
     original_key = object_key
@@ -790,6 +803,10 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         # Set review_status to TRUE for incredible bucket
         if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
             metadata['review_status'] = 'TRUE'
+            
+        # Add bad_reason to metadata if provided (for bad action)
+        if bad_reason and (dest_bucket == S3_BAD_BUCKET or destination == 'bad'):
+            metadata['bad_reason'] = bad_reason
         
         s3_client.copy_object(
             CopySource=copy_source,

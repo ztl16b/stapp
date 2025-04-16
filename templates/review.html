@@ -44,6 +44,21 @@
     .btn-group-centered form {
         margin: 0 5px;
     }
+    
+    /* Styling for the bad reason dropdown */
+    .bad-form-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .bad-reason-select {
+        width: 100%;
+        margin-bottom: 8px;
+        padding: 6px;
+        border-radius: 4px;
+        border: 1px solid #ced4da;
+    }
 </style>
 {% endblock %}
 
@@ -76,10 +91,19 @@
                         <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
                         <button type="submit" class="btn btn-warning btn-lg">INCREDIBLE</button>
                     </form>
-                    <form action="{{ url_for('move_image_route', action='bad', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-danger btn-lg">BAD</button>
-                    </form>
+                    <div class="bad-form-container">
+                        <form action="{{ url_for('move_image_route', action='bad', image_key=image_key) }}" method="post">
+                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                            <select name="bad_reason" class="bad-reason-select" required>
+                                <option value="" disabled selected>Select reason</option>
+                                <option value="text">Text</option>
+                                <option value="warping">Warping</option>
+                                <option value="bad positioning">Bad Positioning</option>
+                                <option value="stylization">Stylization</option>
+                            </select>
+                            <button type="submit" class="btn btn-danger btn-lg">BAD</button>
+                        </form>
+                    </div>
                 </div>
             </div>
             

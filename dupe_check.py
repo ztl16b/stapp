@@ -191,7 +191,7 @@ def check_duplicates():
                                 img['content_type']
                             )
         
-        logger.info(f"Duplicate check completed. Found {duplicates_found} duplicate sets")
+        logger.info(f"Duplicate check done: [{duplicates_found}] duplicates")
                 
     except Exception as e:
         logger.error(f"Error checking for duplicates: {e}")
