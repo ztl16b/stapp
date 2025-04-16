@@ -478,11 +478,7 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
             
         if 'perfimg_status' not in metadata:
             metadata['perfimg_status'] = 'FALSE'
-            
-        # Add upload_time metadata if destination is good bucket and it doesn't exist
-        if (dest_bucket == S3_GOOD_BUCKET or destination == 'good') and 'upload_time' not in metadata:
-            metadata['upload_time'] = datetime.utcnow().isoformat()
-            
+        
         # Set review_status to TRUE for incredible bucket
         if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
             metadata['review_status'] = 'TRUE'
@@ -617,10 +613,6 @@ def move_image_route(action, image_key):
             if 'perfimg_status' not in current_metadata:
                 current_metadata['perfimg_status'] = 'FALSE'
                 
-            # Ensure upload_time exists
-            if 'upload_time' not in current_metadata:
-                current_metadata['upload_time'] = datetime.utcnow().isoformat()
-            
             # For BAD action, move the image from Good to Bad bucket
             if action == 'bad':
                 # If bad_reason provided, add it to metadata
@@ -802,15 +794,11 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
             
         if 'perfimg_status' not in metadata:
             metadata['perfimg_status'] = 'FALSE'
-            
-        # Add upload_time metadata if destination is good bucket and it doesn't exist
-        if (dest_bucket == S3_GOOD_BUCKET or destination == 'good') and 'upload_time' not in metadata:
-            metadata['upload_time'] = datetime.utcnow().isoformat()
-            
+        
         # Set review_status to TRUE for incredible bucket
         if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
             metadata['review_status'] = 'TRUE'
-            
+        
         # Add bad_reason to metadata if provided (for bad action)
         if bad_reason and (dest_bucket == S3_BAD_BUCKET or destination == 'bad'):
             metadata['bad_reason'] = bad_reason
@@ -1497,10 +1485,6 @@ def toggle_perfimg_status_route(bucket_name, object_key):
             else:
                 current_metadata['review_status'] = 'FALSE'
         
-        # Add upload_time for good bucket if missing
-        if bucket_name == 'good' and 'upload_time' not in current_metadata:
-            current_metadata['upload_time'] = datetime.utcnow().isoformat()
-        
         # Toggle perfimg_status (TRUE -> FALSE, FALSE -> TRUE)
         current_perfimg_status = current_metadata.get('perfimg_status', 'FALSE')
         new_perfimg_status = 'FALSE' if current_perfimg_status == 'TRUE' else 'TRUE'
@@ -1664,9 +1648,6 @@ def performer_action_route(action, image_key):
                 
             if 'perfimg_status' not in current_metadata:
                 current_metadata['perfimg_status'] = 'FALSE'
-                
-            if 'upload_time' not in current_metadata:
-                current_metadata['upload_time'] = datetime.utcnow().isoformat()
             
             # Copy object to itself with updated metadata
             s3_client.copy_object(
