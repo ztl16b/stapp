@@ -529,11 +529,11 @@ def get_presigned_url(bucket_name, object_key, expiration=3600):
         flash("An unexpected error occurred while generating the image URL.", "danger")
     return None
 
-@app.route('/review')
+@app.route('/perf_ven_review')
 @login_required
-def review_image_route():
+def perf_ven_review_image_route():
     # Log session information for debugging
-    app.logger.info(f"Review page accessed by user {session.get('user_id', 'unknown')}")
+    app.logger.info(f"Perf Ven Review page accessed by user {session.get('user_id', 'unknown')}")
     
     # Check the Good bucket for unreviewed images only
     image_key = get_random_image_key(S3_GOOD_BUCKET, filter_by_review='unreviewed')
@@ -562,7 +562,7 @@ def review_image_route():
         except Exception as e:
             app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
-    return render_template('review.html', 
+    return render_template('perf_ven_review.html', 
                           image_url=image_url, 
                           image_key=image_key, 
                           source_bucket=source_bucket,
@@ -575,7 +575,7 @@ def review_image_route():
 def move_image_route(action, image_key):
     if not image_key:
         flash("No image key provided for move operation.", "danger")
-        return redirect(url_for('review_image_route'))
+        return redirect(url_for('perf_ven_review_image_route'))
 
     # Get the source bucket from the form data
     source_bucket = request.form.get('source_bucket', S3_UPLOAD_BUCKET)
@@ -657,7 +657,7 @@ def move_image_route(action, image_key):
                 
                 app.logger.info(f"Moved {image_key} from Good bucket to Bad bucket")
                 flash(f"Image '{filename}' moved to bad bucket.", "success")
-                return redirect(url_for('review_image_route'))
+                return redirect(url_for('perf_ven_review_image_route'))
                 
             # For INCREDIBLE action, also copy to the incredible bucket
             elif action == 'incredible':
@@ -705,12 +705,12 @@ def move_image_route(action, image_key):
                 app.logger.info(f"Updated metadata for {image_key} to mark as reviewed")
                 flash(f"Image '{image_key.split('/')[-1]}' marked as reviewed.", "success")
                 
-            return redirect(url_for('review_image_route'))
+            return redirect(url_for('perf_ven_review_image_route'))
             
         except Exception as e:
             app.logger.error(f"Error updating metadata: {e}")
             flash(f"Error updating review status: {str(e)}", "danger")
-            return redirect(url_for('review_image_route'))
+            return redirect(url_for('perf_ven_review_image_route'))
 
     # Original logic for moving between buckets
     success = False
@@ -747,7 +747,7 @@ def move_image_route(action, image_key):
     if not success:
         flash(f"Failed to move image '{image_key}' to {action} bucket.", "danger")
 
-    return redirect(url_for('review_image_route'))
+    return redirect(url_for('perf_ven_review_image_route'))
 
 def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
