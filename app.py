@@ -893,12 +893,8 @@ def browse_bucket(bucket_name):
 
         app.logger.info(f"Starting scan for bucket '{bucket_name}' prefix '{prefix}', max_scan={max_items_to_scan}")
 
-        # Special case for performers bucket - don't filter by prefix
-        use_prefix = prefix if bucket_name != 'performers' else ''
-        app.logger.info(f"Using prefix: '{use_prefix}' for bucket '{bucket_name}'")
-
         # Scan up to max_items_to_scan or until paginator finishes
-        for page_obj in s3_paginator.paginate(Bucket=bucket_info['bucket'], Prefix=use_prefix):
+        for page_obj in s3_paginator.paginate(Bucket=bucket_info['bucket'], Prefix=prefix):
             page_truncated = False
             if 'Contents' in page_obj:
                 for item in page_obj['Contents']:
@@ -1170,15 +1166,11 @@ def delete_all_objects_route(bucket_name):
         # Get all objects in the bucket with the specified prefix
         paginator = s3_client.get_paginator('list_objects_v2')
         
-        # Special case for performers bucket - don't filter by prefix
-        use_prefix = bucket_info['prefix'] if bucket_name != 'performers' else ''
-        app.logger.info(f"Using prefix: '{use_prefix}' for bucket '{bucket_name}' in delete operation")
-        
         # Collect all keys to delete
         keys_to_delete = []
         for page in paginator.paginate(
             Bucket=bucket_info['bucket'],
-            Prefix=use_prefix
+            Prefix=bucket_info['prefix']
         ):
             if 'Contents' in page:
                 for item in page['Contents']:
