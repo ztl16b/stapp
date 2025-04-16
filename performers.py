@@ -23,6 +23,8 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_REGION")
 S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
+S3_INCREDIBLE_BUCKET = os.getenv("S3_INCREDIBLE_BUCKET")
+S3_BAD_BUCKET = os.getenv("S3_BAD_BUCKET")
 S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 
 # S3 client setup
@@ -126,6 +128,90 @@ def get_good_images_with_performer_id(performer_id):
         logger.error(f"Error searching for images with performer ID {performer_id}: {e}")
         return []
 
+def get_incredible_images_with_performer_id(performer_id):
+    """
+    Finds all images in the Incredible bucket that match a specific performer ID.
+    
+    Args:
+        performer_id (str): The performer ID to search for
+        
+    Returns:
+        list: List of image keys that match the performer ID
+    """
+    matching_images = []
+    prefix = 'incredible_images/'
+    
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        
+        for page in paginator.paginate(
+            Bucket=S3_INCREDIBLE_BUCKET,
+            Prefix=prefix
+        ):
+            if 'Contents' in page:
+                for item in page['Contents']:
+                    # Extract filename without path
+                    filename = item['Key'].split('/')[-1]
+                    
+                    # Skip non-webp files
+                    if not filename.lower().endswith('.webp'):
+                        continue
+                    
+                    # Extract first part before the first dot (performer ID)
+                    file_perf_id = filename.split('.')[0]
+                    
+                    # Check if this is the performer ID we're looking for
+                    if file_perf_id == performer_id:
+                        matching_images.append(item['Key'])
+        
+        return matching_images
+        
+    except Exception as e:
+        logger.error(f"Error searching for images with performer ID {performer_id} in Incredible bucket: {e}")
+        return []
+
+def get_bad_images_with_performer_id(performer_id):
+    """
+    Finds all images in the Bad bucket that match a specific performer ID.
+    
+    Args:
+        performer_id (str): The performer ID to search for
+        
+    Returns:
+        list: List of image keys that match the performer ID
+    """
+    matching_images = []
+    prefix = 'bad_images/'
+    
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        
+        for page in paginator.paginate(
+            Bucket=S3_BAD_BUCKET,
+            Prefix=prefix
+        ):
+            if 'Contents' in page:
+                for item in page['Contents']:
+                    # Extract filename without path
+                    filename = item['Key'].split('/')[-1]
+                    
+                    # Skip non-webp files
+                    if not filename.lower().endswith('.webp'):
+                        continue
+                    
+                    # Extract first part before the first dot (performer ID)
+                    file_perf_id = filename.split('.')[0]
+                    
+                    # Check if this is the performer ID we're looking for
+                    if file_perf_id == performer_id:
+                        matching_images.append(item['Key'])
+        
+        return matching_images
+        
+    except Exception as e:
+        logger.error(f"Error searching for images with performer ID {performer_id} in Bad bucket: {e}")
+        return []
+
 def update_perfimg_status(image_key, dry_run=False):
     """
     Updates the perfimg_status metadata for a specific image to TRUE.
@@ -144,8 +230,12 @@ def update_perfimg_status(image_key, dry_run=False):
             Key=image_key
         )
         
-        current_metadata = head_response.get('Metadata', {})
+        # Create a new copy of the metadata to avoid modifying the original response
+        current_metadata = dict(head_response.get('Metadata', {}))
         content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Explicitly save the original upload_time if it exists
+        original_upload_time = current_metadata.get('upload_time')
         
         # Check if perfimg_status is already TRUE
         if current_metadata.get('perfimg_status') == 'TRUE':
@@ -158,12 +248,13 @@ def update_perfimg_status(image_key, dry_run=False):
             
         if 'review_status' not in current_metadata:
             current_metadata['review_status'] = 'FALSE'
-            
-        if 'upload_time' not in current_metadata:
-            current_metadata['upload_time'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
         
         # Update perfimg_status to TRUE
         current_metadata['perfimg_status'] = 'TRUE'
+        
+        # Restore the original upload_time exactly as it was
+        if original_upload_time:
+            current_metadata['upload_time'] = original_upload_time
         
         if dry_run:
             logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to TRUE")
@@ -186,6 +277,136 @@ def update_perfimg_status(image_key, dry_run=False):
         logger.error(f"Error updating perfimg_status for {image_key}: {e}")
         return False
 
+def update_incredible_perfimg_status(image_key, dry_run=False):
+    """
+    Updates the perfimg_status metadata for a specific image in the Incredible bucket to TRUE.
+    
+    Args:
+        image_key (str): The S3 key of the image to update
+        dry_run (bool): If True, only log what would be done without making changes
+        
+    Returns:
+        bool: True if update was successful, False otherwise
+    """
+    try:
+        # Get current metadata
+        head_response = s3_client.head_object(
+            Bucket=S3_INCREDIBLE_BUCKET,
+            Key=image_key
+        )
+        
+        # Create a new copy of the metadata to avoid modifying the original response
+        current_metadata = dict(head_response.get('Metadata', {}))
+        content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Explicitly save the original upload_time if it exists
+        original_upload_time = current_metadata.get('upload_time')
+        
+        # Check if perfimg_status is already TRUE
+        if current_metadata.get('perfimg_status') == 'TRUE':
+            logger.debug(f"Image {image_key} already has perfimg_status=TRUE in Incredible bucket. Skipping.")
+            return True
+        
+        # Ensure all important metadata fields exist with appropriate defaults
+        if 'uploader-initials' not in current_metadata:
+            current_metadata['uploader-initials'] = 'Unknown'
+            
+        if 'review_status' not in current_metadata:
+            current_metadata['review_status'] = 'TRUE'  # Always TRUE for incredible bucket
+        
+        # Update perfimg_status to TRUE
+        current_metadata['perfimg_status'] = 'TRUE'
+        
+        # Restore the original upload_time exactly as it was
+        if original_upload_time:
+            current_metadata['upload_time'] = original_upload_time
+        
+        if dry_run:
+            logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to TRUE in Incredible bucket")
+            return True
+        
+        # Copy object to itself with updated metadata
+        s3_client.copy_object(
+            CopySource={'Bucket': S3_INCREDIBLE_BUCKET, 'Key': image_key},
+            Bucket=S3_INCREDIBLE_BUCKET,
+            Key=image_key,
+            Metadata=current_metadata,
+            MetadataDirective='REPLACE',
+            ContentType=content_type
+        )
+        
+        logger.info(f"Updated perfimg_status for {image_key} to TRUE in Incredible bucket")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating perfimg_status for {image_key} in Incredible bucket: {e}")
+        return False
+
+def update_bad_perfimg_status(image_key, dry_run=False):
+    """
+    Updates the perfimg_status metadata for a specific image in the Bad bucket to TRUE.
+    
+    Args:
+        image_key (str): The S3 key of the image to update
+        dry_run (bool): If True, only log what would be done without making changes
+        
+    Returns:
+        bool: True if update was successful, False otherwise
+    """
+    try:
+        # Get current metadata
+        head_response = s3_client.head_object(
+            Bucket=S3_BAD_BUCKET,
+            Key=image_key
+        )
+        
+        # Create a new copy of the metadata to avoid modifying the original response
+        current_metadata = dict(head_response.get('Metadata', {}))
+        content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Explicitly save the original upload_time if it exists
+        original_upload_time = current_metadata.get('upload_time')
+        
+        # Check if perfimg_status is already TRUE
+        if current_metadata.get('perfimg_status') == 'TRUE':
+            logger.debug(f"Image {image_key} already has perfimg_status=TRUE in Bad bucket. Skipping.")
+            return True
+        
+        # Ensure all important metadata fields exist with appropriate defaults
+        if 'uploader-initials' not in current_metadata:
+            current_metadata['uploader-initials'] = 'Unknown'
+            
+        if 'review_status' not in current_metadata:
+            current_metadata['review_status'] = 'TRUE'  # Usually TRUE for bad bucket too
+        
+        # Update perfimg_status to TRUE
+        current_metadata['perfimg_status'] = 'TRUE'
+        
+        # Restore the original upload_time exactly as it was
+        if original_upload_time:
+            current_metadata['upload_time'] = original_upload_time
+        
+        if dry_run:
+            logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to TRUE in Bad bucket")
+            return True
+        
+        # Copy object to itself with updated metadata
+        s3_client.copy_object(
+            CopySource={'Bucket': S3_BAD_BUCKET, 'Key': image_key},
+            Bucket=S3_BAD_BUCKET,
+            Key=image_key,
+            Metadata=current_metadata,
+            MetadataDirective='REPLACE',
+            ContentType=content_type
+        )
+        
+        logger.info(f"Updated perfimg_status for {image_key} to TRUE in Bad bucket")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating perfimg_status for {image_key} in Bad bucket: {e}")
+        return False
+
 def process_performer_id(performer_id, dry_run=False):
     """
     Process a single performer ID - find matching images and update their metadata.
@@ -197,17 +418,47 @@ def process_performer_id(performer_id, dry_run=False):
     Returns:
         tuple: (performer_id, count of updated images)
     """
-    matching_images = get_good_images_with_performer_id(performer_id)
-    updated_count = 0
+    total_updated = 0
     
-    if matching_images:
-        logger.info(f"Found {len(matching_images)} images with performer ID {performer_id}")
+    # Process Good bucket
+    good_images = get_good_images_with_performer_id(performer_id)
+    good_updated = 0
+    
+    if good_images:
+        logger.info(f"Found {len(good_images)} images with performer ID {performer_id} in Good bucket")
         
-        for image_key in matching_images:
+        for image_key in good_images:
             if update_perfimg_status(image_key, dry_run):
-                updated_count += 1
+                good_updated += 1
     
-    return performer_id, updated_count
+    # Process Incredible bucket
+    incredible_images = get_incredible_images_with_performer_id(performer_id)
+    incredible_updated = 0
+    
+    if incredible_images:
+        logger.info(f"Found {len(incredible_images)} images with performer ID {performer_id} in Incredible bucket")
+        
+        for image_key in incredible_images:
+            if update_incredible_perfimg_status(image_key, dry_run):
+                incredible_updated += 1
+    
+    # Process Bad bucket
+    bad_images = get_bad_images_with_performer_id(performer_id)
+    bad_updated = 0
+    
+    if bad_images:
+        logger.info(f"Found {len(bad_images)} images with performer ID {performer_id} in Bad bucket")
+        
+        for image_key in bad_images:
+            if update_bad_perfimg_status(image_key, dry_run):
+                bad_updated += 1
+    
+    total_updated = good_updated + incredible_updated + bad_updated
+    
+    if total_updated > 0:
+        logger.info(f"Total updated for performer ID {performer_id}: {total_updated} (Good: {good_updated}, Incredible: {incredible_updated}, Bad: {bad_updated})")
+    
+    return performer_id, total_updated
 
 def run_worker(dry_run=False):
     """Run a single worker pass."""
