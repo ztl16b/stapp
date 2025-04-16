@@ -756,6 +756,10 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None):
         # Ensure perfimg_status is preserved or set to FALSE if not already in metadata
         if 'perfimg_status' not in metadata:
             metadata['perfimg_status'] = 'FALSE'
+            
+        # Set review_status to TRUE for incredible bucket
+        if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
+            metadata['review_status'] = 'TRUE'
         
         s3_client.copy_object(
             CopySource=copy_source,
