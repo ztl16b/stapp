@@ -191,6 +191,9 @@
                             <th>Uploader Initials</th>
                             <th>Reviewed</th>
                             <th>Perf Img</th>
+                            {% if bucket_name == 'bad' %}
+                            <th>Bad Reason</th>
+                            {% endif %}
                             <th>Preview</th>
                         </tr>
                     </thead>
@@ -227,6 +230,15 @@
                                     <span class="badge bg-danger">FALSE</span>
                                 {% endif %}
                             </td>
+                            {% if bucket_name == 'bad' %}
+                            <td>
+                                {% if file.metadata.get('bad_reason') %}
+                                    <span class="badge bg-warning text-dark">{{ file.metadata.get('bad_reason') }}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Not specified</span>
+                                {% endif %}
+                            </td>
+                            {% endif %}
                             <td>
                                 <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
                                    target="_blank" 
