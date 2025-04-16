@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Perf Review - Image Interface{% endblock %}
+{% block title %}Performer Image Review - Image Interface{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -49,6 +49,10 @@
 
 {% block content %}
 <div class="container mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1>Performer Image Review</h1>
+    </div>
+
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
@@ -64,7 +68,7 @@
         <div class="review-container">
             <div class="image-review-area">
                 <div class="image-container">
-                    <img src="{{ image_url }}" alt="Review Image" class="img-fluid rounded shadow">
+                    <img src="{{ image_url }}" alt="Performer Image" class="img-fluid rounded shadow">
                 </div>
                 
                 <div class="btn-group-centered">
@@ -81,7 +85,7 @@
             
             <div class="metadata-area">
                 <div class="metadata-box">
-                    <h5 class="mb-3">Image Information</h5>
+                    <h5 class="mb-3">Performer Image Information</h5>
                     <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
                     <p class="mb-2"><strong>Review Status:</strong> 
                         {% if review_status == 'TRUE' %}
@@ -104,13 +108,15 @@
         </div>
     {% else %}
         <div class="alert alert-info mt-4" role="alert">
-            No images found in the performers bucket to review, or there was an error accessing the bucket.
-            <a href="{{ url_for('upload') }}" class="alert-link">Upload some images?</a>
+            <h4 class="alert-heading">No Performer Images Found</h4>
+            <p>No unreviewed performer images were found in the <code>images/performers/detail/</code> folder of the performers bucket.</p>
+            <hr>
+            <p class="mb-0">You can browse all images in the <a href="{{ url_for('browse_bucket', bucket_name='performers') }}" class="alert-link">performers bucket</a> or <a href="{{ url_for('upload') }}" class="alert-link">upload new images</a>.</p>
         </div>
     {% endif %}
 
     <hr class="my-4">
-    <p><a href="{{ url_for('upload') }}" class="btn btn-secondary">&laquo; Go to Upload Page</a></p>
+    <p><a href="{{ url_for('browse_bucket', bucket_name='performers') }}" class="btn btn-secondary">&laquo; Browse Performer Images</a></p>
 </div>
 {% endblock %}
 
