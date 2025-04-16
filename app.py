@@ -345,12 +345,39 @@ def get_random_image_key(bucket_name, filter_by_review=None):
             prefix = 'tmp_upload/'
         elif bucket_name == S3_GOOD_BUCKET:
             prefix = 'images/performer-at-venue/detail/'
+        elif bucket_name == S3_PERFORMER_BUCKET:
+            prefix = 'images/performers/detail/'
+            
+        app.logger.info(f"Listing objects in bucket {bucket_name} with prefix '{prefix}'")
             
         # Get list of objects with the appropriate prefix
         response = s3_client.list_objects_v2(
             Bucket=bucket_name,
             Prefix=prefix if prefix else ''
         )
+        
+        # Add more detailed logging for performer bucket
+        if bucket_name == S3_PERFORMER_BUCKET:
+            if 'Contents' in response:
+                app.logger.info(f"Found {len(response['Contents'])} objects in performers bucket with prefix '{prefix}'")
+                # Log the first few items to help diagnose issues
+                for i, obj in enumerate(response['Contents'][:5]):
+                    app.logger.info(f"  Item {i+1}: {obj['Key']}")
+            else:
+                app.logger.warning(f"No objects found in performers bucket with prefix '{prefix}'")
+                
+                # Try listing without prefix as a fallback
+                alt_response = s3_client.list_objects_v2(
+                    Bucket=bucket_name,
+                    Prefix=''
+                )
+                if 'Contents' in alt_response:
+                    app.logger.info(f"However, found {len(alt_response['Contents'])} objects without a prefix")
+                    # Log the first few items
+                    for i, obj in enumerate(alt_response['Contents'][:5]):
+                        app.logger.info(f"  Item {i+1}: {obj['Key']}")
+                else:
+                    app.logger.warning(f"Bucket appears to be empty")
             
         if 'Contents' in response and response['Contents']:
             all_objects = response['Contents']
@@ -379,8 +406,35 @@ def get_random_image_key(bucket_name, filter_by_review=None):
                     except Exception as e:
                         app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
                         continue
+            # For Performers bucket, filter by review status if requested
+            elif bucket_name == S3_PERFORMER_BUCKET and filter_by_review:
+                for obj in all_objects:
+                    # Get metadata to check review status
+                    try:
+                        head_response = s3_client.head_object(
+                            Bucket=bucket_name,
+                            Key=obj['Key']
+                        )
+                        metadata = head_response.get('Metadata', {})
+                        review_status = metadata.get('review_status', 'FALSE')
+                        
+                        # If filtering for unreviewed images, only include those with FALSE status
+                        if filter_by_review == 'unreviewed' and review_status != 'TRUE':
+                            image_objects.append(obj)
+                        # If filtering for reviewed images, only include those with TRUE status
+                        elif filter_by_review == 'reviewed' and review_status == 'TRUE':
+                            image_objects.append(obj)
+                    except Exception as e:
+                        app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
+                        continue
             # For temp bucket, accept all image file types
             elif bucket_name == S3_TEMP_BUCKET:
+                image_objects = [
+                    obj for obj in all_objects
+                    if obj['Key'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
+                ]
+            # For performers bucket with no filter
+            elif bucket_name == S3_PERFORMER_BUCKET:
                 image_objects = [
                     obj for obj in all_objects
                     if obj['Key'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
@@ -416,6 +470,8 @@ def get_random_image_key(bucket_name, filter_by_review=None):
                         continue
                 
             if image_objects:
+                # Log which bucket and how many images found
+                app.logger.info(f"Found {len(image_objects)} images in {bucket_name} with prefix {prefix}")
                 return random.choice(image_objects)['Key']
     except ClientError as e:
         app.logger.error(f"Error listing objects in bucket {bucket_name}: {e}")
@@ -1536,6 +1592,9 @@ def perf_review_image_route():
     # Log session information for debugging
     app.logger.info(f"Perf Review page accessed by user {session.get('user_id', 'unknown')}")
     
+    # Explicitly use the performers bucket
+    app.logger.info(f"Looking for images in performers bucket: {S3_PERFORMER_BUCKET}")
+    
     # Check the Performer bucket for unreviewed images only
     image_key = get_random_image_key(S3_PERFORMER_BUCKET, filter_by_review='unreviewed')
     source_bucket = S3_PERFORMER_BUCKET
@@ -1562,6 +1621,8 @@ def perf_review_image_route():
             app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
         except Exception as e:
             app.logger.error(f"Error getting metadata for {image_key}: {e}")
+    else:
+        app.logger.warning(f"No unreviewed images found in {S3_PERFORMER_BUCKET}")
 
     return render_template('perf_review.html', 
                           image_url=image_url, 
