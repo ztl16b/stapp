@@ -819,6 +819,7 @@ def browse_buckets():
     app.logger.info(f"S3_UPLOAD_BUCKET: {S3_UPLOAD_BUCKET}")
     app.logger.info(f"S3_TEMP_BUCKET: {S3_TEMP_BUCKET}")
     app.logger.info(f"S3_ISSUE_BUCKET: {S3_ISSUE_BUCKET}")
+    app.logger.info(f"S3_PERFORMER_BUCKET: {S3_PERFORMER_BUCKET}")
     
     # Clear success messages related to uploads from session
     flashed_messages = session.get('_flashes', [])
