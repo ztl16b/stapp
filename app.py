@@ -901,8 +901,30 @@ def browse_bucket(bucket_name):
                 test_prefix_response = s3.list_objects_v2(
                     Bucket=bucket_info['bucket'],
                     Prefix=prefix,
+                    MaxKeys=5
+                )
+                
+                # Log the complete response to debug
+                app.logger.info(f"DEBUG: Prefix search response for '{prefix}': {test_prefix_response}")
+                
+                # Try to locate the specific 10.webp file
+                app.logger.info(f"DEBUG: Checking for 10.webp in bucket {bucket_info['bucket']}")
+                # Check with prefix
+                file_with_prefix = s3.list_objects_v2(
+                    Bucket=bucket_info['bucket'],
+                    Prefix=f"{prefix}10.webp",
                     MaxKeys=1
                 )
+                app.logger.info(f"DEBUG: Search with prefix '{prefix}10.webp' result: {file_with_prefix}")
+                
+                # Check without prefix
+                file_without_prefix = s3.list_objects_v2(
+                    Bucket=bucket_info['bucket'],
+                    Prefix="10.webp",
+                    MaxKeys=1
+                )
+                app.logger.info(f"DEBUG: Search with just '10.webp' result: {file_without_prefix}")
+                
                 if 'Contents' not in test_prefix_response or len(test_prefix_response['Contents']) == 0:
                     app.logger.info(f"DEBUG: No objects found with prefix '{prefix}'. Will try without prefix.")
                     try_without_prefix = True
@@ -925,9 +947,30 @@ def browse_bucket(bucket_name):
 
         # Scan up to max_items_to_scan or until paginator finishes
         scan_prefix = prefix
-        if bucket_name == 'performers' and try_without_prefix:
+        if bucket_name == 'performers':
+            # Always use empty prefix for performers bucket to find all files
             scan_prefix = ''
-            app.logger.info(f"Using empty prefix for performers bucket scan")
+            app.logger.info(f"Using empty prefix for performers bucket scan to find all files")
+            
+            # Check if the file "10.webp" exists directly in the bucket
+            try:
+                app.logger.info(f"Special check for '10.webp' in the bucket")
+                direct_check = s3.head_object(
+                    Bucket=bucket_info['bucket'],
+                    Key="10.webp"
+                )
+                app.logger.info(f"10.webp found directly in bucket: {direct_check}")
+                
+                # If we found the file, add it to the scanned files directly
+                all_scanned_files.append({
+                    'key': "10.webp",
+                    'size': direct_check.get('ContentLength', 0),
+                    'last_modified': direct_check.get('LastModified', datetime.now()),
+                    'metadata': direct_check.get('Metadata', {})
+                })
+                
+            except Exception as e:
+                app.logger.error(f"Error checking for 10.webp directly: {str(e)}")
         
         for page_obj in s3_paginator.paginate(Bucket=bucket_info['bucket'], Prefix=scan_prefix):
             page_truncated = False
@@ -940,20 +983,22 @@ def browse_bucket(bucket_name):
                     
                     # For performers bucket, check if it's an image file
                     if bucket_name == 'performers':
+                        # If it doesn't have an extension, skip it
                         file_ext = item['Key'].lower().split('.')[-1] if '.' in item['Key'] else ''
                         if file_ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
                             continue
-                            
-                        # If using empty prefix, only keep files that match our target path pattern
-                        if try_without_prefix:
-                            # First, check if it starts with the original prefix
-                            if item['Key'].startswith(prefix):
-                                pass  # Keep files that match our original prefix
-                            else:
-                                # Also keep any image file with "performer" in the path
-                                if "performer" not in item['Key'].lower():
-                                    continue
-                            
+                        
+                        # For performers bucket, we want to include:
+                        # 1. Files with the prefix path (images/performer/detail/)
+                        # 2. Files directly in the bucket with image extensions
+                        # 3. Any files with "performer" in the path
+                        if not (item['Key'].startswith(prefix) or 
+                                '/' not in item['Key'] or 
+                                "performer" in item['Key'].lower()):
+                            continue
+                        
+                        app.logger.info(f"Including file in performers bucket: {item['Key']}")
+                        
                     items_scanned += 1
                     # Store raw data needed for initial filtering
                     all_scanned_files.append({
