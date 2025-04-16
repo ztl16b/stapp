@@ -94,13 +94,19 @@
                     <div class="bad-form-container">
                         <form action="{{ url_for('move_image_route', action='bad', image_key=image_key) }}" method="post">
                             <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                            <select name="bad_reason" class="bad-reason-select" required>
+                            <select name="bad_reason" class="bad-reason-select" required id="badReasonSelect">
                                 <option value="" disabled selected>Select reason</option>
                                 <option value="text">Text</option>
                                 <option value="warping">Warping</option>
                                 <option value="bad positioning">Bad Positioning</option>
                                 <option value="stylization">Stylization</option>
+                                <option value="facial expression">Facial Expression</option>
+                                <option value="other">Other</option>
                             </select>
+                            <div id="otherReasonContainer" style="display: none; width: 100%; margin-bottom: 8px;">
+                                <input type="text" name="other_reason" id="otherReasonInput" class="form-control" 
+                                    placeholder="Please specify reason..." style="margin-bottom: 8px;">
+                            </div>
                             <button type="submit" class="btn btn-danger btn-lg">BAD</button>
                         </form>
                     </div>
@@ -151,6 +157,43 @@
         
         // Add a timestamp to help with debugging
         console.log("Page loaded at:", new Date().toISOString());
+        
+        // Handle the "Other" option in bad reason dropdown
+        const badReasonSelect = document.getElementById('badReasonSelect');
+        const otherReasonContainer = document.getElementById('otherReasonContainer');
+        const otherReasonInput = document.getElementById('otherReasonInput');
+        
+        if (badReasonSelect && otherReasonContainer && otherReasonInput) {
+            badReasonSelect.addEventListener('change', function() {
+                if (this.value === 'other') {
+                    otherReasonContainer.style.display = 'block';
+                    otherReasonInput.setAttribute('required', 'required');
+                } else {
+                    otherReasonContainer.style.display = 'none';
+                    otherReasonInput.removeAttribute('required');
+                }
+            });
+            
+            // Handle form submission
+            const badForm = badReasonSelect.closest('form');
+            if (badForm) {
+                badForm.addEventListener('submit', function(e) {
+                    if (badReasonSelect.value === 'other' && !otherReasonInput.value.trim()) {
+                        e.preventDefault();
+                        alert('Please specify a reason when selecting "Other"');
+                    }
+                    
+                    // If "Other" is selected, use the text input value as the bad_reason
+                    if (badReasonSelect.value === 'other' && otherReasonInput.value.trim()) {
+                        const hiddenInput = document.createElement('input');
+                        hiddenInput.type = 'hidden';
+                        hiddenInput.name = 'bad_reason';
+                        hiddenInput.value = 'Other: ' + otherReasonInput.value.trim();
+                        badForm.appendChild(hiddenInput);
+                    }
+                });
+            }
+        }
     });
 </script>
 {% endblock %} 

@@ -583,6 +583,13 @@ def move_image_route(action, image_key):
     # Get the bad reason if provided (for bad action)
     bad_reason = request.form.get('bad_reason', None)
     
+    # Get the custom reason for "Other" option (if provided)
+    other_reason = request.form.get('other_reason', None)
+    
+    # If "Other" is selected and other_reason is provided, use that as bad_reason
+    if bad_reason == 'other' and other_reason:
+        bad_reason = f"{other_reason}"
+    
     # Log the action
     app.logger.info(f"Moving image with key: {image_key} from {source_bucket} to {action} bucket")
     if bad_reason:
