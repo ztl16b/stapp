@@ -1,94 +1,84 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Perf Review</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            padding: 20px;
-            background-color: #f8f9fa;
-        }
-        .image-container {
-            max-width: 100%;
-            margin: 0 auto;
-            text-align: center;
-        }
-        .image-container img {
-            max-width: 100%;
-            max-height: 80vh;
-            margin: 20px auto;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        }
-        .button-container {
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            margin-top: 20px;
-        }
-        .button-container form {
-            margin: 0 5px;
-        }
-        .metadata {
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #fff;
-            border-radius: 5px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-        }
-        .action-btn {
-            min-width: 120px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1 class="text-center mb-4">Add Perf Review</h1>
+{% extends "base.html" %}
+
+{% block title %}Add Perf Review{% endblock %}
+
+{% block extra_css %}
+<style>
+    .image-container {
+        max-width: 100%;
+        margin: 0 auto;
+        text-align: center;
+    }
+    .image-container img {
+        max-width: 100%;
+        max-height: 80vh;
+        margin: 20px auto;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+    .button-container {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 20px;
+    }
+    .button-container form {
+        margin: 0 5px;
+    }
+    .metadata {
+        margin-top: 20px;
+        padding: 15px;
+        background-color: #fff;
+        border-radius: 5px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    .action-btn {
+        min-width: 120px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 class="text-center mb-4">Add Perf Review</h1>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+{% endwith %}
+
+<div class="image-container">
+    {% if image_url %}
+        <img src="{{ image_url }}" alt="Image for review" class="img-fluid">
         
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
-        <div class="image-container">
-            {% if image_url %}
-                <img src="{{ image_url }}" alt="Image for review" class="img-fluid">
-                
-                <div class="metadata">
-                    <h4>Image Metadata</h4>
-                    <p><strong>File:</strong> {{ image_key }}</p>
-                    <p><strong>Uploader:</strong> {{ uploader_initials }}</p>
-                    <p><strong>Review Status:</strong> {{ review_status }}</p>
-                    <p><strong>PerfImg Status:</strong> {{ perfimg_status }}</p>
-                </div>
-                
-                <div class="button-container">
-                    <form action="{{ url_for('add_perf_action_route', action='good', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-success action-btn">Good</button>
-                    </form>
-                    
-                    <form action="{{ url_for('add_perf_action_route', action='skip', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-secondary action-btn">Skip</button>
-                    </form>
-                </div>
-            {% else %}
-                <div class="alert alert-info">
-                    No images available for review with perfimg_status=FALSE in the Good bucket.
-                </div>
-            {% endif %}
+        <div class="metadata">
+            <h4>Image Metadata</h4>
+            <p><strong>File:</strong> {{ image_key }}</p>
+            <p><strong>Uploader:</strong> {{ uploader_initials }}</p>
+            <p><strong>Review Status:</strong> {{ review_status }}</p>
+            <p><strong>PerfImg Status:</strong> {{ perfimg_status }}</p>
         </div>
         
-        <div class="text-center mt-4">
-            <a href="{{ url_for('browse_buckets') }}" class="btn btn-primary">Back to Browse</a>
+        <div class="button-container">
+            <form action="{{ url_for('add_perf_action_route', action='good', image_key=image_key) }}" method="post">
+                <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                <button type="submit" class="btn btn-success action-btn">Good</button>
+            </form>
+            
+            <form action="{{ url_for('add_perf_action_route', action='skip', image_key=image_key) }}" method="post">
+                <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                <button type="submit" class="btn btn-secondary action-btn">Skip</button>
+            </form>
         </div>
-    </div>
-    
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html> 
+    {% else %}
+        <div class="alert alert-info">
+            No images available for review with perfimg_status=FALSE in the Good bucket.
+        </div>
+    {% endif %}
+</div>
+
+<div class="text-center mt-4">
+    <a href="{{ url_for('browse_buckets') }}" class="btn btn-primary">Back to Browse</a>
+</div>
+{% endblock %} 
