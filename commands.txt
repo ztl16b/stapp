@@ -16,29 +16,33 @@ heroku logs --tail
 
 
 
-
-
 TROUBLESHOOTING WORKERS
 heroku ps --app stapp
 
 heroku restart --app stapp
 
-heroku ps:restart dupe_worker --app stapp
 heroku ps:restart bytescale_worker --app stapp
 heroku ps:restart perf_worker --app stapp
 
-heroku ps:scale dupe_worker=1 --app stapp
 heroku ps:scale bytescale_worker=1 --app stapp
 heroku ps:scale perf_worker=1 --app stapp
 
-heroku ps:scale dupe_worker=0 --app stapp
 heroku ps:scale bytescale_worker=0 --app stapp
 heroku ps:scale perf_worker=0 --app stapp
 
-heroku logs --app stapp --ps dupe_worker -t 
 heroku logs --app stapp --ps bytescale_worker -t
 heroku logs --app stapp --ps perf_worker -t
 
+
+
+
+
+
+
+heroku ps:restart dupe_worker --app stapp
+heroku ps:scale dupe_worker=1 --app stapp
+heroku ps:scale dupe_worker=0 --app stapp
+heroku logs --app stapp --ps dupe_worker -t
 
 
 

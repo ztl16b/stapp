@@ -1,4 +1,3 @@
-
 import random
 import os
 import boto3 #type:ignore   
@@ -1630,6 +1629,178 @@ def performer_action_route(action, image_key):
         flash(f"Error processing action: {str(e)}", "danger")
     
     return redirect(url_for('perf_review_image_route'))
+
+def get_good_image_with_false_perfimg():
+    """Gets a random object key from the good bucket where perfimg_status is FALSE."""
+    try:
+        # Define the specific prefix for good images
+        prefix = 'images/performer-at-venue/detail/'
+        
+        # Get list of objects with the good images prefix
+        response = s3_client.list_objects_v2(
+            Bucket=S3_GOOD_BUCKET,
+            Prefix=prefix
+        )
+            
+        if 'Contents' in response and response['Contents']:
+            all_objects = response['Contents']
+            
+            # Filter to include only images with perfimg_status=FALSE
+            eligible_objects = []
+            
+            for obj in all_objects:
+                # Skip the prefix itself or any folder objects
+                if obj['Key'] == prefix or obj['Key'].endswith('/'):
+                    continue
+                
+                # Only include image files
+                file_ext = obj['Key'].lower().split('.')[-1] if '.' in obj['Key'] else ''
+                if file_ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
+                    continue
+                
+                # Check perfimg_status in metadata
+                try:
+                    head_response = s3_client.head_object(
+                        Bucket=S3_GOOD_BUCKET,
+                        Key=obj['Key']
+                    )
+                    metadata = head_response.get('Metadata', {})
+                    perfimg_status = metadata.get('perfimg_status', 'FALSE')
+                    
+                    # Only include images with perfimg_status=FALSE
+                    if perfimg_status != 'TRUE':
+                        eligible_objects.append(obj)
+                except Exception as e:
+                    app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
+                    continue
+            
+            if eligible_objects:
+                return random.choice(eligible_objects)['Key']
+    except ClientError as e:
+        app.logger.error(f"Error listing objects in Good bucket: {e}")
+        flash(f"Error accessing Good bucket: {e.response['Error']['Message']}", "danger")
+    except Exception as e:
+        app.logger.error(f"Unexpected error listing good objects: {e}")
+        flash("An unexpected error occurred while listing good files.", "danger")
+    return None
+
+@app.route('/add_perf')
+@login_required
+def add_perf_review_route():
+    # Log session information for debugging
+    app.logger.info(f"Add Perf page accessed by user {session.get('user_id', 'unknown')}")
+    
+    # Get a random image from Good bucket with perfimg_status=FALSE
+    image_key = get_good_image_with_false_perfimg()
+    source_bucket = S3_GOOD_BUCKET
+    
+    image_url = None
+    uploader_initials = "Unknown"
+    review_status = "FALSE"
+    perfimg_status = "FALSE"
+    
+    if image_key:
+        image_url = get_presigned_url(source_bucket, image_key)
+        app.logger.info(f"Loading image for Add Perf review: {image_key} from {source_bucket}")
+        
+        # Get metadata for the image
+        try:
+            head_response = s3_client.head_object(
+                Bucket=source_bucket,
+                Key=image_key
+            )
+            metadata = head_response.get('Metadata', {})
+            uploader_initials = metadata.get('uploader-initials', 'Unknown')
+            review_status = metadata.get('review_status', 'FALSE')
+            perfimg_status = metadata.get('perfimg_status', 'FALSE')
+            app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
+        except Exception as e:
+            app.logger.error(f"Error getting metadata for {image_key}: {e}")
+
+    return render_template('add_perf.html', 
+                          image_url=image_url, 
+                          image_key=image_key, 
+                          source_bucket=source_bucket,
+                          uploader_initials=uploader_initials,
+                          review_status=review_status,
+                          perfimg_status=perfimg_status)
+
+@app.route('/add_perf_action/<action>/<path:image_key>', methods=['POST'])
+@login_required
+def add_perf_action_route(action, image_key):
+    if not image_key:
+        flash("No image key provided for action.", "danger")
+        return redirect(url_for('add_perf_review_route'))
+
+    source_bucket = request.form.get('source_bucket', S3_GOOD_BUCKET)
+    
+    # Log the action
+    app.logger.info(f"Add Perf action: {action} for image with key: {image_key} from {source_bucket}")
+    
+    # Skip action just redirects to load another image
+    if action == 'skip':
+        return redirect(url_for('add_perf_review_route'))
+    
+    # Good action - Copy to performers bucket with placeholder name
+    if action == 'good':
+        try:
+            # Get current metadata and content
+            head_response = s3_client.head_object(
+                Bucket=source_bucket,
+                Key=image_key
+            )
+            current_metadata = head_response.get('Metadata', {})
+            content_type = head_response.get('ContentType', 'image/webp')
+            
+            # Get the object data
+            get_response = s3_client.get_object(
+                Bucket=source_bucket,
+                Key=image_key
+            )
+            file_data = get_response['Body'].read()
+            
+            # Extract the filename and extension from the path
+            original_filename = image_key.split('/')[-1]
+            file_ext = original_filename.split('.')[-1] if '.' in original_filename else 'webp'
+            
+            # Placeholder for new name - will be defined later
+            # For now, use the original filename in the performers detail directory
+            new_key = f"images/performers/detail/{original_filename}"
+            
+            # Create or update metadata for the performers bucket
+            perf_metadata = current_metadata.copy()
+            perf_metadata['original_source'] = f"{source_bucket}/{image_key}"
+            perf_metadata['perfimg_status'] = 'TRUE'  # Mark as processed
+            
+            # Upload to performers bucket
+            s3_client.put_object(
+                Bucket=S3_PERFORMER_BUCKET,
+                Key=new_key,
+                Body=file_data,
+                ContentType=content_type,
+                Metadata=perf_metadata
+            )
+            
+            # Update the original image's metadata to mark perfimg_status as TRUE
+            current_metadata['perfimg_status'] = 'TRUE'
+            
+            s3_client.copy_object(
+                CopySource={'Bucket': source_bucket, 'Key': image_key},
+                Bucket=source_bucket,
+                Key=image_key,
+                ContentType=content_type,
+                Metadata=current_metadata,
+                MetadataDirective='REPLACE'
+            )
+            
+            app.logger.info(f"Copied {image_key} to Performers bucket as {new_key} and updated perfimg_status")
+            flash("Image successfully added to Performers bucket.", "success")
+            
+        except Exception as e:
+            app.logger.error(f"Error during Add Perf action for {image_key}: {e}")
+            flash(f"Error processing action: {str(e)}", "danger")
+    
+    return redirect(url_for('add_perf_review_route'))
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 import os
 import time
-import boto3
+import boto3 #type:ignore
 import logging
 import traceback
 import sys
 from io import BytesIO
-from dotenv import load_dotenv
-import schedule
+from dotenv import load_dotenv #type:ignore
+import schedule #type:ignore
 from datetime import datetime
 from collections import defaultdict
 
