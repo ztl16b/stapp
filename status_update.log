@@ -1,0 +1,269 @@
+2025-04-17 16:32:05,376 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/1testImages
+2025-04-17 16:32:05,376 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True
+2025-04-17 16:32:05,376 - status_updater - INFO - Found 8 images in /Users/zacklung/local_files/1testImages
+2025-04-17 16:32:05,376 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:32:05,773 - status_updater - INFO - Found 1000 objects in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:32:05,773 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix bad_images/
+2025-04-17 16:32:05,969 - status_updater - INFO - Found 1 objects in etickets-content-test-bucket/bad_images/
+2025-04-17 16:32:05,969 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix incredible_images/
+2025-04-17 16:32:06,069 - status_updater - INFO - Found 118 objects in etickets-content-test-bucket/incredible_images/
+2025-04-17 16:32:06,070 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix tmp_upload/
+2025-04-17 16:32:06,118 - status_updater - INFO - Found 0 objects in etickets-content-test-bucket/tmp_upload/
+2025-04-17 16:32:06,118 - status_updater - INFO - Checking bucket etickets-resources with prefix 
+2025-04-17 16:32:06,451 - status_updater - INFO - Found 1000 objects in etickets-resources/
+2025-04-17 16:32:06,452 - status_updater - INFO - Summary: 0 updated, 0 skipped, 0 errors
+2025-04-17 16:38:34,408 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/1testImages
+2025-04-17 16:38:34,409 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True
+2025-04-17 16:38:34,409 - status_updater - INFO - Found 9 images in /Users/zacklung/local_files/1testImages
+2025-04-17 16:38:34,409 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:38:34,906 - status_updater - INFO - Found 1000 objects in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:38:34,906 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix bad_images/
+2025-04-17 16:38:35,100 - status_updater - INFO - Found 1 objects in etickets-content-test-bucket/bad_images/
+2025-04-17 16:38:35,100 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix incredible_images/
+2025-04-17 16:38:35,204 - status_updater - INFO - Found 118 objects in etickets-content-test-bucket/incredible_images/
+2025-04-17 16:38:35,205 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix tmp_upload/
+2025-04-17 16:38:35,254 - status_updater - INFO - Found 0 objects in etickets-content-test-bucket/tmp_upload/
+2025-04-17 16:38:35,254 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix temp_performer_at_venue_images/
+2025-04-17 16:38:35,305 - status_updater - INFO - Found 0 objects in etickets-content-test-bucket/temp_performer_at_venue_images/
+2025-04-17 16:38:35,305 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performers/detail/
+2025-04-17 16:38:35,574 - status_updater - INFO - Found 1000 objects in etickets-resources/images/performers/detail/
+2025-04-17 16:38:35,574 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix issue_files/
+2025-04-17 16:38:35,632 - status_updater - INFO - Found 9 objects in etickets-content-test-bucket/issue_files/
+2025-04-17 16:38:35,632 - status_updater - INFO - Summary: 0 updated, 0 skipped, 0 errors
+2025-04-17 16:39:07,073 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:39:07,073 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True
+2025-04-17 16:39:07,073 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:39:07,073 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:39:07,495 - status_updater - INFO - Found 1000 objects in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:39:07,496 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix bad_images/
+2025-04-17 16:39:07,665 - status_updater - INFO - Found 1 objects in etickets-content-test-bucket/bad_images/
+2025-04-17 16:39:07,665 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix incredible_images/
+2025-04-17 16:39:07,773 - status_updater - INFO - Found 118 objects in etickets-content-test-bucket/incredible_images/
+2025-04-17 16:39:07,773 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix tmp_upload/
+2025-04-17 16:39:07,821 - status_updater - INFO - Found 0 objects in etickets-content-test-bucket/tmp_upload/
+2025-04-17 16:39:07,821 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix temp_performer_at_venue_images/
+2025-04-17 16:39:07,868 - status_updater - INFO - Found 0 objects in etickets-content-test-bucket/temp_performer_at_venue_images/
+2025-04-17 16:39:07,868 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performers/detail/
+2025-04-17 16:39:08,096 - status_updater - INFO - Found 1000 objects in etickets-resources/images/performers/detail/
+2025-04-17 16:39:08,097 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix issue_files/
+2025-04-17 16:39:08,148 - status_updater - INFO - Found 9 objects in etickets-content-test-bucket/issue_files/
+2025-04-17 16:39:08,148 - status_updater - INFO - Summary: 0 updated, 0 skipped, 0 errors
+2025-04-17 16:40:41,399 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:40:41,399 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=False
+2025-04-17 16:40:41,399 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:40:41,399 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:40:41,871 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix bad_images/
+2025-04-17 16:40:42,017 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix incredible_images/
+2025-04-17 16:40:42,122 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix tmp_upload/
+2025-04-17 16:40:42,173 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix temp_performer_at_venue_images/
+2025-04-17 16:40:42,222 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performers/detail/
+2025-04-17 16:40:42,469 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix issue_files/
+2025-04-17 16:40:42,522 - status_updater - INFO - Summary: 0 updated, 0 skipped, 0 errors
+2025-04-17 16:44:02,992 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:44:02,992 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True, verbose=False
+2025-04-17 16:44:02,992 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:44:04,024 - status_updater - WARNING - No matches found for local file: 79.23248.webp
+2025-04-17 16:44:04,024 - status_updater - INFO - Summary: 0 updated, 0 skipped, 0 errors
+2025-04-17 16:44:04,024 - status_updater - INFO - Total matches found: 0 for 1 local files
+2025-04-17 16:50:28,618 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:50:28,618 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True, simple_match=False, debug=False
+2025-04-17 16:50:28,618 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:50:28,618 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:50:29,142 - status_updater - INFO - No matches found in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:50:29,142 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix bad_images/
+2025-04-17 16:50:29,305 - status_updater - INFO - No matches found in etickets-content-test-bucket/bad_images/
+2025-04-17 16:50:29,306 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix incredible_images/
+2025-04-17 16:50:29,412 - status_updater - INFO - No matches found in etickets-content-test-bucket/incredible_images/
+2025-04-17 16:50:29,412 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix tmp_upload/
+2025-04-17 16:50:29,459 - status_updater - INFO - No matches found in etickets-content-test-bucket/tmp_upload/
+2025-04-17 16:50:29,460 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix temp_performer_at_venue_images/
+2025-04-17 16:50:29,505 - status_updater - INFO - No matches found in etickets-content-test-bucket/temp_performer_at_venue_images/
+2025-04-17 16:50:29,506 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performers/detail/
+2025-04-17 16:50:29,768 - status_updater - INFO - No matches found in etickets-resources/images/performers/detail/
+2025-04-17 16:50:29,768 - status_updater - INFO - Checking bucket etickets-content-test-bucket with prefix issue_files/
+2025-04-17 16:50:29,822 - status_updater - INFO - No matches found in etickets-content-test-bucket/issue_files/
+2025-04-17 16:50:29,822 - status_updater - INFO - === SUMMARY ===
+2025-04-17 16:50:29,822 - status_updater - INFO - Total local images: 1
+2025-04-17 16:50:29,822 - status_updater - INFO - Total matches found in S3: 0
+2025-04-17 16:50:29,822 - status_updater - INFO - Updates: 0 updated, 0 skipped, 0 errors
+2025-04-17 16:50:30,688 - status_updater - WARNING - No matches found for 1 local files:
+2025-04-17 16:50:30,688 - status_updater - WARNING -   - 79.23248.webp
+2025-04-17 16:53:06,004 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:53:06,004 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True, simple_match=False, debug=False, bucket=good
+2025-04-17 16:53:06,004 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:53:06,004 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:53:06,408 - status_updater - INFO - No matches found in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:53:06,408 - status_updater - INFO - === SUMMARY ===
+2025-04-17 16:53:06,408 - status_updater - INFO - Total local images: 1
+2025-04-17 16:53:06,408 - status_updater - INFO - Total matches found in S3: 0
+2025-04-17 16:53:06,408 - status_updater - INFO - Updates: 0 updated, 0 skipped, 0 errors
+2025-04-17 16:53:06,770 - status_updater - WARNING - No matches found for 1 local files:
+2025-04-17 16:53:06,770 - status_updater - WARNING -   - 79.23248.webp
+2025-04-17 16:56:07,282 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:56:07,282 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True, ignore_prefix=False, brute_force=False, debug=False, bucket=good
+2025-04-17 16:56:07,282 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:56:07,282 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:56:07,680 - status_updater - INFO - Found matches for 1 local files in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:56:07,680 - status_updater - INFO - Processing 1 matches for 79.23248.webp
+2025-04-17 16:56:07,729 - status_updater - INFO - DRY RUN: Would update images/performer-at-venue/detail/ in etickets-resources
+2025-04-17 16:56:07,729 - status_updater - INFO - === SUMMARY ===
+2025-04-17 16:56:07,729 - status_updater - INFO - Total local images: 1
+2025-04-17 16:56:07,729 - status_updater - INFO - Total matches found in S3: 1
+2025-04-17 16:56:07,729 - status_updater - INFO - Updates: 1 updated, 0 skipped, 0 errors
+2025-04-17 16:56:18,981 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:56:18,981 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=False, ignore_prefix=False, brute_force=False, debug=False, bucket=good
+2025-04-17 16:56:18,981 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:56:18,981 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:56:19,391 - status_updater - INFO - Found matches for 1 local files in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:56:19,392 - status_updater - INFO - Processing 1 matches for 79.23248.webp
+2025-04-17 16:56:19,549 - status_updater - INFO - Updated metadata for images/performer-at-venue/detail/ in etickets-resources
+2025-04-17 16:56:19,549 - status_updater - INFO - Updated images/performer-at-venue/detail/ in etickets-resources
+2025-04-17 16:56:19,549 - status_updater - INFO - === SUMMARY ===
+2025-04-17 16:56:19,549 - status_updater - INFO - Total local images: 1
+2025-04-17 16:56:19,549 - status_updater - INFO - Total matches found in S3: 1
+2025-04-17 16:56:19,549 - status_updater - INFO - Updates: 1 updated, 0 skipped, 0 errors
+2025-04-17 16:58:51,335 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 16:58:51,335 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=False, ignore_prefix=False, brute_force=False, debug=False, bucket=good
+2025-04-17 16:58:51,335 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 16:58:51,335 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 16:58:51,737 - status_updater - INFO - Found matches for 1 local files in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 16:58:51,737 - status_updater - INFO - Processing 1 matches for 79.23248.webp
+2025-04-17 16:58:51,788 - status_updater - INFO - Skipping images/performer-at-venue/detail/ - metadata already set correctly
+2025-04-17 16:58:51,788 - status_updater - INFO - === SUMMARY ===
+2025-04-17 16:58:51,788 - status_updater - INFO - Total local images: 1
+2025-04-17 16:58:51,788 - status_updater - INFO - Total matches found in S3: 1
+2025-04-17 16:58:51,788 - status_updater - INFO - Updates: 0 updated, 1 skipped, 0 errors
+2025-04-17 17:05:00,876 - status_updater - INFO - Starting status update for images in /Users/zacklung/local_files/test_images
+2025-04-17 17:05:00,876 - status_updater - INFO - Settings: review_status=TRUE, perfimg_status=None, dry_run=True, ignore_prefix=True, brute_force=False, debug=True, bucket=good
+2025-04-17 17:05:00,876 - status_updater - INFO - Found 1 images in /Users/zacklung/local_files/test_images
+2025-04-17 17:05:00,876 - status_updater - INFO -   1. 79.23248.webp
+2025-04-17 17:05:00,876 - status_updater - INFO - STARTING DEBUG MODE - LISTING BUCKET CONTENTS
+2025-04-17 17:05:00,876 - status_updater - INFO - Listing contents of bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 17:05:01,321 - status_updater - INFO - Found 1000 objects (showing max 100):
+2025-04-17 17:05:01,368 - status_updater - INFO -   1. images/performer-at-venue/detail/ (0 bytes, review_status: TRUE)
+2025-04-17 17:05:01,411 - status_updater - INFO -   2. images/performer-at-venue/detail/10.20084.webp (42648 bytes, review_status: FALSE)
+2025-04-17 17:05:01,457 - status_updater - INFO -   3. images/performer-at-venue/detail/10.832.webp (28534 bytes, review_status: FALSE)
+2025-04-17 17:05:01,519 - status_updater - INFO -   4. images/performer-at-venue/detail/10006.2964.webp (39600 bytes, review_status: FALSE)
+2025-04-17 17:05:01,566 - status_updater - INFO -   5. images/performer-at-venue/detail/10009.3661.webp (31140 bytes, review_status: FALSE)
+2025-04-17 17:05:01,613 - status_updater - INFO -   6. images/performer-at-venue/detail/1001.576.webp (30422 bytes, review_status: FALSE)
+2025-04-17 17:05:01,696 - status_updater - INFO -   7. images/performer-at-venue/detail/100118.23259.webp (19318 bytes, review_status: NOT SET)
+2025-04-17 17:05:01,745 - status_updater - INFO -   8. images/performer-at-venue/detail/100128.10023.webp (29588 bytes, review_status: FALSE)
+2025-04-17 17:05:01,803 - status_updater - INFO -   9. images/performer-at-venue/detail/100128.11381.webp (27610 bytes, review_status: FALSE)
+2025-04-17 17:05:01,851 - status_updater - INFO -   10. images/performer-at-venue/detail/100128.2411.webp (36110 bytes, review_status: FALSE)
+2025-04-17 17:05:01,900 - status_updater - INFO -   11. images/performer-at-venue/detail/100128.299.webp (33596 bytes, review_status: FALSE)
+2025-04-17 17:05:01,952 - status_updater - INFO -   12. images/performer-at-venue/detail/100128.30226.webp (30370 bytes, review_status: FALSE)
+2025-04-17 17:05:02,000 - status_updater - INFO -   13. images/performer-at-venue/detail/100128.37437.webp (30442 bytes, review_status: FALSE)
+2025-04-17 17:05:02,047 - status_updater - INFO -   14. images/performer-at-venue/detail/100128.41395.webp (32236 bytes, review_status: FALSE)
+2025-04-17 17:05:02,095 - status_updater - INFO -   15. images/performer-at-venue/detail/100137.2346.webp (28508 bytes, review_status: FALSE)
+2025-04-17 17:05:02,140 - status_updater - INFO -   16. images/performer-at-venue/detail/100137.7026.webp (30118 bytes, review_status: FALSE)
+2025-04-17 17:05:02,184 - status_updater - INFO -   17. images/performer-at-venue/detail/100144.24332.webp (32426 bytes, review_status: FALSE)
+2025-04-17 17:05:02,234 - status_updater - INFO -   18. images/performer-at-venue/detail/10017.15257.webp (24908 bytes, review_status: FALSE)
+2025-04-17 17:05:02,280 - status_updater - INFO -   19. images/performer-at-venue/detail/10018.5466.webp (32834 bytes, review_status: FALSE)
+2025-04-17 17:05:02,325 - status_updater - INFO -   20. images/performer-at-venue/detail/10020.126.webp (26812 bytes, review_status: FALSE)
+2025-04-17 17:05:02,372 - status_updater - INFO -   21. images/performer-at-venue/detail/10020.15521.webp (29054 bytes, review_status: FALSE)
+2025-04-17 17:05:02,416 - status_updater - INFO -   22. images/performer-at-venue/detail/10020.22652.webp (29912 bytes, review_status: FALSE)
+2025-04-17 17:05:02,463 - status_updater - INFO -   23. images/performer-at-venue/detail/10020.33856.webp (34698 bytes, review_status: FALSE)
+2025-04-17 17:05:02,520 - status_updater - INFO -   24. images/performer-at-venue/detail/10020.9778.webp (35526 bytes, review_status: FALSE)
+2025-04-17 17:05:02,568 - status_updater - INFO -   25. images/performer-at-venue/detail/100230.280.webp (29844 bytes, review_status: FALSE)
+2025-04-17 17:05:02,615 - status_updater - INFO -   26. images/performer-at-venue/detail/100240.15521.webp (16636 bytes, review_status: NOT SET)
+2025-04-17 17:05:02,664 - status_updater - INFO -   27. images/performer-at-venue/detail/100240.33219.webp (13584 bytes, review_status: FALSE)
+2025-04-17 17:05:02,713 - status_updater - INFO -   28. images/performer-at-venue/detail/100271.1107.webp (42588 bytes, review_status: NOT SET)
+2025-04-17 17:05:02,764 - status_updater - INFO -   29. images/performer-at-venue/detail/100271.126.webp (22918 bytes, review_status: NOT SET)
+2025-04-17 17:05:02,812 - status_updater - INFO -   30. images/performer-at-venue/detail/100271.13955.webp (38282 bytes, review_status: NOT SET)
+2025-04-17 17:05:02,861 - status_updater - INFO -   31. images/performer-at-venue/detail/100271.23989.webp (42864 bytes, review_status: FALSE)
+2025-04-17 17:05:02,908 - status_updater - INFO -   32. images/performer-at-venue/detail/100271.2422.webp (38038 bytes, review_status: NOT SET)
+2025-04-17 17:05:02,954 - status_updater - INFO -   33. images/performer-at-venue/detail/100271.33856.webp (29828 bytes, review_status: NOT SET)
+2025-04-17 17:05:03,002 - status_updater - INFO -   34. images/performer-at-venue/detail/100299.9173.webp (29206 bytes, review_status: FALSE)
+2025-04-17 17:05:03,050 - status_updater - INFO -   35. images/performer-at-venue/detail/100317.11381.webp (14870 bytes, review_status: FALSE)
+2025-04-17 17:05:03,096 - status_updater - INFO -   36. images/performer-at-venue/detail/100317.1141.webp (24404 bytes, review_status: FALSE)
+2025-04-17 17:05:03,142 - status_updater - INFO -   37. images/performer-at-venue/detail/100317.1431.webp (32326 bytes, review_status: FALSE)
+2025-04-17 17:05:03,189 - status_updater - INFO -   38. images/performer-at-venue/detail/100317.2004.webp (18790 bytes, review_status: FALSE)
+2025-04-17 17:05:03,236 - status_updater - INFO -   39. images/performer-at-venue/detail/100317.2411.webp (26152 bytes, review_status: FALSE)
+2025-04-17 17:05:03,285 - status_updater - INFO -   40. images/performer-at-venue/detail/100317.26436.webp (27474 bytes, review_status: FALSE)
+2025-04-17 17:05:03,335 - status_updater - INFO -   41. images/performer-at-venue/detail/100364.21527.webp (23770 bytes, review_status: NOT SET)
+2025-04-17 17:05:03,387 - status_updater - INFO -   42. images/performer-at-venue/detail/100364.2450.webp (51954 bytes, review_status: FALSE)
+2025-04-17 17:05:03,435 - status_updater - INFO -   43. images/performer-at-venue/detail/10043.3661.webp (34668 bytes, review_status: NOT SET)
+2025-04-17 17:05:03,486 - status_updater - INFO -   44. images/performer-at-venue/detail/10043.39966.webp (27560 bytes, review_status: FALSE)
+2025-04-17 17:05:03,534 - status_updater - INFO -   45. images/performer-at-venue/detail/10043.4837.webp (29480 bytes, review_status: NOT SET)
+2025-04-17 17:05:03,583 - status_updater - INFO -   46. images/performer-at-venue/detail/10062.2004.webp (45206 bytes, review_status: FALSE)
+2025-04-17 17:05:03,629 - status_updater - INFO -   47. images/performer-at-venue/detail/10062.20068.webp (40588 bytes, review_status: FALSE)
+2025-04-17 17:05:03,677 - status_updater - INFO -   48. images/performer-at-venue/detail/10062.2422.webp (19090 bytes, review_status: FALSE)
+2025-04-17 17:05:03,725 - status_updater - INFO -   49. images/performer-at-venue/detail/10062.4707.webp (41662 bytes, review_status: FALSE)
+2025-04-17 17:05:03,771 - status_updater - INFO -   50. images/performer-at-venue/detail/10062.4755.webp (39462 bytes, review_status: FALSE)
+2025-04-17 17:05:03,816 - status_updater - INFO -   51. images/performer-at-venue/detail/100625.12704.webp (28478 bytes, review_status: FALSE)
+2025-04-17 17:05:03,862 - status_updater - INFO -   52. images/performer-at-venue/detail/100625.15257.webp (36136 bytes, review_status: FALSE)
+2025-04-17 17:05:03,908 - status_updater - INFO -   53. images/performer-at-venue/detail/100625.24077.webp (33806 bytes, review_status: FALSE)
+2025-04-17 17:05:03,955 - status_updater - INFO -   54. images/performer-at-venue/detail/100625.26115.webp (31350 bytes, review_status: FALSE)
+2025-04-17 17:05:04,006 - status_updater - INFO -   55. images/performer-at-venue/detail/100656.287.webp (36734 bytes, review_status: FALSE)
+2025-04-17 17:05:04,054 - status_updater - INFO -   56. images/performer-at-venue/detail/100656.447.webp (44226 bytes, review_status: FALSE)
+2025-04-17 17:05:04,105 - status_updater - INFO -   57. images/performer-at-venue/detail/100844.25405.webp (21630 bytes, review_status: FALSE)
+2025-04-17 17:05:04,154 - status_updater - INFO -   58. images/performer-at-venue/detail/100844.280.webp (22150 bytes, review_status: FALSE)
+2025-04-17 17:05:04,203 - status_updater - INFO -   59. images/performer-at-venue/detail/100855.2753.webp (30100 bytes, review_status: NOT SET)
+2025-04-17 17:05:04,276 - status_updater - INFO -   60. images/performer-at-venue/detail/100896.5466.webp (22626 bytes, review_status: NOT SET)
+2025-04-17 17:05:04,324 - status_updater - INFO -   61. images/performer-at-venue/detail/100949.755.webp (25934 bytes, review_status: FALSE)
+2025-04-17 17:05:04,371 - status_updater - INFO -   62. images/performer-at-venue/detail/100952.30265.webp (20832 bytes, review_status: FALSE)
+2025-04-17 17:05:04,417 - status_updater - INFO -   63. images/performer-at-venue/detail/10100.280.webp (31276 bytes, review_status: FALSE)
+2025-04-17 17:05:04,466 - status_updater - INFO -   64. images/performer-at-venue/detail/101091.6645.webp (30210 bytes, review_status: FALSE)
+2025-04-17 17:05:04,512 - status_updater - INFO -   65. images/performer-at-venue/detail/101201.1345.webp (37806 bytes, review_status: FALSE)
+2025-04-17 17:05:04,558 - status_updater - INFO -   66. images/performer-at-venue/detail/101201.1922.webp (37894 bytes, review_status: FALSE)
+2025-04-17 17:05:04,622 - status_updater - INFO -   67. images/performer-at-venue/detail/101201.3684.webp (38332 bytes, review_status: FALSE)
+2025-04-17 17:05:04,667 - status_updater - INFO -   68. images/performer-at-venue/detail/101201.40936.webp (40472 bytes, review_status: FALSE)
+2025-04-17 17:05:04,716 - status_updater - INFO -   69. images/performer-at-venue/detail/101314.44502.webp (21638 bytes, review_status: FALSE)
+2025-04-17 17:05:04,766 - status_updater - INFO -   70. images/performer-at-venue/detail/1014.3161.webp (36322 bytes, review_status: FALSE)
+2025-04-17 17:05:04,812 - status_updater - INFO -   71. images/performer-at-venue/detail/101446.26177.webp (30908 bytes, review_status: FALSE)
+2025-04-17 17:05:04,858 - status_updater - INFO -   72. images/performer-at-venue/detail/101481.22509.webp (26772 bytes, review_status: FALSE)
+2025-04-17 17:05:04,904 - status_updater - INFO -   73. images/performer-at-venue/detail/101481.45.webp (32922 bytes, review_status: FALSE)
+2025-04-17 17:05:04,949 - status_updater - INFO -   74. images/performer-at-venue/detail/101487.21657.webp (31692 bytes, review_status: FALSE)
+2025-04-17 17:05:04,997 - status_updater - INFO -   75. images/performer-at-venue/detail/101554.111.webp (25436 bytes, review_status: FALSE)
+2025-04-17 17:05:05,043 - status_updater - INFO -   76. images/performer-at-venue/detail/101554.286.webp (41788 bytes, review_status: FALSE)
+2025-04-17 17:05:05,091 - status_updater - INFO -   77. images/performer-at-venue/detail/101554.303.webp (40046 bytes, review_status: TRUE)
+2025-04-17 17:05:05,138 - status_updater - INFO -   78. images/performer-at-venue/detail/101554.528.webp (20440 bytes, review_status: FALSE)
+2025-04-17 17:05:05,185 - status_updater - INFO -   79. images/performer-at-venue/detail/10156.5542.webp (40100 bytes, review_status: NOT SET)
+2025-04-17 17:05:05,233 - status_updater - INFO -   80. images/performer-at-venue/detail/101561.39490.webp (25960 bytes, review_status: FALSE)
+2025-04-17 17:05:05,285 - status_updater - INFO -   81. images/performer-at-venue/detail/101594.23897.webp (19488 bytes, review_status: FALSE)
+2025-04-17 17:05:05,333 - status_updater - INFO -   82. images/performer-at-venue/detail/101594.38556.webp (35850 bytes, review_status: FALSE)
+2025-04-17 17:05:05,400 - status_updater - INFO -   83. images/performer-at-venue/detail/10161.3561.webp (20198 bytes, review_status: FALSE)
+2025-04-17 17:05:05,448 - status_updater - INFO -   84. images/performer-at-venue/detail/10161.39965.webp (23448 bytes, review_status: FALSE)
+2025-04-17 17:05:05,502 - status_updater - INFO -   85. images/performer-at-venue/detail/1017.13955.webp (34670 bytes, review_status: FALSE)
+2025-04-17 17:05:05,552 - status_updater - INFO -   86. images/performer-at-venue/detail/1017.1986.webp (31164 bytes, review_status: FALSE)
+2025-04-17 17:05:05,603 - status_updater - INFO -   87. images/performer-at-venue/detail/1017.525.webp (27656 bytes, review_status: FALSE)
+2025-04-17 17:05:05,651 - status_updater - INFO -   88. images/performer-at-venue/detail/101714.280.webp (30754 bytes, review_status: FALSE)
+2025-04-17 17:05:05,703 - status_updater - INFO -   89. images/performer-at-venue/detail/101714.36718.webp (31964 bytes, review_status: FALSE)
+2025-04-17 17:05:05,752 - status_updater - INFO -   90. images/performer-at-venue/detail/101740.4228.webp (43608 bytes, review_status: NOT SET)
+2025-04-17 17:05:05,803 - status_updater - INFO -   91. images/performer-at-venue/detail/10179.2752.webp (26236 bytes, review_status: FALSE)
+2025-04-17 17:05:05,851 - status_updater - INFO -   92. images/performer-at-venue/detail/101890.36619.webp (22486 bytes, review_status: FALSE)
+2025-04-17 17:05:05,896 - status_updater - INFO -   93. images/performer-at-venue/detail/101920.12320.webp (26060 bytes, review_status: FALSE)
+2025-04-17 17:05:05,943 - status_updater - INFO -   94. images/performer-at-venue/detail/101920.5542.webp (26874 bytes, review_status: FALSE)
+2025-04-17 17:05:05,991 - status_updater - INFO -   95. images/performer-at-venue/detail/101927.3763.webp (26178 bytes, review_status: FALSE)
+2025-04-17 17:05:06,038 - status_updater - INFO -   96. images/performer-at-venue/detail/101962.26492.webp (19162 bytes, review_status: FALSE)
+2025-04-17 17:05:06,086 - status_updater - INFO -   97. images/performer-at-venue/detail/101962.43322.webp (20048 bytes, review_status: FALSE)
+2025-04-17 17:05:06,135 - status_updater - INFO -   98. images/performer-at-venue/detail/102057.840.webp (36064 bytes, review_status: FALSE)
+2025-04-17 17:05:06,182 - status_updater - INFO -   99. images/performer-at-venue/detail/102057.892.webp (24572 bytes, review_status: FALSE)
+2025-04-17 17:05:06,337 - status_updater - INFO -   100. images/performer-at-venue/detail/102116.9794.webp (35202 bytes, review_status: NOT SET)
+2025-04-17 17:05:06,338 - status_updater - INFO - ... and 900 more
+2025-04-17 17:05:06,338 - status_updater - INFO - END OF BUCKET LISTINGS
+2025-04-17 17:05:06,338 - status_updater - INFO - Checking bucket etickets-resources with prefix images/performer-at-venue/detail/
+2025-04-17 17:05:06,609 - status_updater - INFO - Found matches for 1 local files in etickets-resources/images/performer-at-venue/detail/
+2025-04-17 17:05:06,609 - status_updater - INFO - Processing 6 matches for 79.23248.webp
+2025-04-17 17:05:06,659 - status_updater - INFO - DRY RUN: Would update content/ in etickets-resources
+2025-04-17 17:05:06,659 - status_updater - INFO -   Current metadata: {}
+2025-04-17 17:05:06,659 - status_updater - INFO -   New metadata: {'review_status': 'TRUE'}
+2025-04-17 17:05:06,707 - status_updater - INFO - DRY RUN: Would update content/category-in-city/ in etickets-resources
+2025-04-17 17:05:06,707 - status_updater - INFO -   Current metadata: {}
+2025-04-17 17:05:06,707 - status_updater - INFO -   New metadata: {'review_status': 'TRUE'}
+2025-04-17 17:05:06,754 - status_updater - INFO - DRY RUN: Would update content/category/ in etickets-resources
+2025-04-17 17:05:06,754 - status_updater - INFO -   Current metadata: {}
+2025-04-17 17:05:06,754 - status_updater - INFO -   New metadata: {'review_status': 'TRUE'}
+2025-04-17 17:05:06,834 - status_updater - INFO - DRY RUN: Would update content/city/ in etickets-resources
+2025-04-17 17:05:06,834 - status_updater - INFO -   Current metadata: {}
+2025-04-17 17:05:06,834 - status_updater - INFO -   New metadata: {'review_status': 'TRUE'}
+2025-04-17 17:05:06,881 - status_updater - INFO - DRY RUN: Would update content/match-up/ in etickets-resources
+2025-04-17 17:05:06,881 - status_updater - INFO -   Current metadata: {}
+2025-04-17 17:05:06,881 - status_updater - INFO -   New metadata: {'review_status': 'TRUE'}
+2025-04-17 17:05:06,928 - status_updater - INFO - DRY RUN: Would update content/performer-at-venue/ in etickets-resources
+2025-04-17 17:05:06,928 - status_updater - INFO -   Current metadata: {}
+2025-04-17 17:05:06,928 - status_updater - INFO -   New metadata: {'review_status': 'TRUE'}
+2025-04-17 17:05:06,928 - status_updater - INFO - === SUMMARY ===
+2025-04-17 17:05:06,928 - status_updater - INFO - Total local images: 1
+2025-04-17 17:05:06,928 - status_updater - INFO - Total matches found in S3: 6
+2025-04-17 17:05:06,928 - status_updater - INFO - Updates: 6 updated, 0 skipped, 0 errors

@@ -851,6 +851,7 @@ def browse_bucket(bucket_name):
         s3_paginator = s3.get_paginator('list_objects_v2')
         is_truncated = False
         items_scanned = 0
+        unreviewed_count = 0  # Initialize counter for unreviewed images
 
         app.logger.info(f"Starting scan for bucket '{bucket_name}' prefix '{prefix}', max_scan={max_items_to_scan}")
         
@@ -1114,6 +1115,38 @@ def browse_bucket(bucket_name):
                 for f in current_page_files:
                     if f['key'] in fetched_metadata:
                         f['metadata'] = fetched_metadata[f['key']]
+        
+        # Count unreviewed images for all filtered files
+        # We need to fetch metadata for all files to get accurate count
+        keys_for_unreviewed_count = [f['key'] for f in filtered_files if not f.get('metadata')]
+        if keys_for_unreviewed_count:
+            app.logger.info(f"Fetching metadata for unreviewed count for {len(keys_for_unreviewed_count)} items")
+            fetched_metadata = {}
+            
+            # Use batching for large datasets
+            batch_size = 100
+            for i in range(0, len(keys_for_unreviewed_count), batch_size):
+                batch_keys = keys_for_unreviewed_count[i:i+batch_size]
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_key = {executor.submit(fetch_meta, key): key for key in batch_keys}
+                    for future in concurrent.futures.as_completed(future_to_key):
+                        key = future_to_key[future]
+                        try:
+                            _, meta = future.result()
+                            fetched_metadata[key] = meta
+                        except Exception as exc:
+                            app.logger.error(f'{key} generated an exception during metadata fetch for unreviewed count: {exc}')
+                            fetched_metadata[key] = {}
+            
+            # Update metadata for all filtered files
+            for f in filtered_files:
+                if f['key'] in fetched_metadata:
+                    f['metadata'] = fetched_metadata[f['key']]
+        
+        # Count unreviewed images across all filtered files
+        unreviewed_count = sum(1 for f in filtered_files if f.get('metadata', {}).get('review_status', 'FALSE') != 'TRUE')
+        app.logger.info(f"Found {unreviewed_count} unreviewed images out of {total_files} total filtered files")
 
         # --- Render ---
         return render_template('browse_bucket.html',
@@ -1129,7 +1162,8 @@ def browse_bucket(bucket_name):
                              uploader_filter=uploader_filter_display, # Pass original case uploader filter
                              sort_order=sort_order,
                              date_from=date_from,
-                             date_to=date_to)
+                             date_to=date_to,
+                             unreviewed_count=unreviewed_count) # Pass unreviewed count to template
 
     except Exception as e:
         app.logger.error(f"Error browsing bucket '{bucket_name}': {str(e)}", exc_info=True) # Log traceback

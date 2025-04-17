@@ -103,6 +103,10 @@
                 Showing {{ files|length }} of {{ total_files }}{{ '+' if total_files_estimate else '' }} files (Page {{ current_page }} of {{ total_pages }}{{ '+' if total_files_estimate else '' }})
             {% endif %}
 
+            {% if unreviewed_count is defined %}
+                <span class="ms-2 badge bg-warning text-dark">{{ unreviewed_count }} Unreviewed Images</span>
+            {% endif %}
+
             {# Optionally show filter criteria #}
             <small class="text-muted ms-2">
             {% if search_query %}
