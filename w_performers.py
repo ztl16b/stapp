@@ -566,6 +566,434 @@ def process_performer_id(performer_id, dry_run=False):
     
     return performer_id, total_updated, total_skipped
 
+def get_all_good_images():
+    """
+    Retrieves all images from the Good bucket.
+    
+    Returns:
+        list: A list of image keys
+    """
+    all_images = []
+    prefix = 'images/performer-at-venue/detail/'
+    
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        
+        for page in paginator.paginate(
+            Bucket=S3_GOOD_BUCKET,
+            Prefix=prefix
+        ):
+            if 'Contents' in page:
+                for item in page['Contents']:
+                    # Extract filename without path
+                    filename = item['Key'].split('/')[-1]
+                    
+                    # Skip non-webp files
+                    if not filename.lower().endswith('.webp'):
+                        continue
+                    
+                    all_images.append(item['Key'])
+        
+        return all_images
+        
+    except Exception as e:
+        logger.error(f"Error retrieving images from Good bucket: {e}")
+        return []
+
+def get_all_incredible_images():
+    """
+    Retrieves all images from the Incredible bucket.
+    
+    Returns:
+        list: A list of image keys
+    """
+    all_images = []
+    prefix = 'incredible_images/'
+    
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        
+        for page in paginator.paginate(
+            Bucket=S3_INCREDIBLE_BUCKET,
+            Prefix=prefix
+        ):
+            if 'Contents' in page:
+                for item in page['Contents']:
+                    # Extract filename without path
+                    filename = item['Key'].split('/')[-1]
+                    
+                    # Skip non-webp files
+                    if not filename.lower().endswith('.webp'):
+                        continue
+                    
+                    all_images.append(item['Key'])
+        
+        return all_images
+        
+    except Exception as e:
+        logger.error(f"Error retrieving images from Incredible bucket: {e}")
+        return []
+
+def get_all_bad_images():
+    """
+    Retrieves all images from the Bad bucket.
+    
+    Returns:
+        list: A list of image keys
+    """
+    all_images = []
+    prefix = 'bad_images/'
+    
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        
+        for page in paginator.paginate(
+            Bucket=S3_BAD_BUCKET,
+            Prefix=prefix
+        ):
+            if 'Contents' in page:
+                for item in page['Contents']:
+                    # Extract filename without path
+                    filename = item['Key'].split('/')[-1]
+                    
+                    # Skip non-webp files
+                    if not filename.lower().endswith('.webp'):
+                        continue
+                    
+                    all_images.append(item['Key'])
+        
+        return all_images
+        
+    except Exception as e:
+        logger.error(f"Error retrieving images from Bad bucket: {e}")
+        return []
+
+def update_perfimg_status_false(image_key, dry_run=False):
+    """
+    Updates the perfimg_status metadata for a specific image to FALSE.
+    
+    Args:
+        image_key (str): The S3 key of the image to update
+        dry_run (bool): If True, only log what would be done without making changes
+        
+    Returns:
+        str: 'updated' if update was performed, 'skipped' if already had FALSE status, 'failed' on error
+    """
+    try:
+        # Get current metadata
+        head_response = s3_client.head_object(
+            Bucket=S3_GOOD_BUCKET,
+            Key=image_key
+        )
+        
+        # Log original metadata for debugging
+        original_metadata = head_response.get('Metadata', {})
+        logger.debug(f"ORIGINAL METADATA for {image_key}: {original_metadata}")
+        
+        # Store the content type
+        content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Check if perfimg_status is already FALSE or not set (default is FALSE)
+        if original_metadata.get('perfimg_status', 'FALSE') == 'FALSE':
+            logger.info(f"Image {image_key} already has perfimg_status=FALSE. Skipping.")
+            return 'skipped'
+        
+        # Create a new metadata dictionary with only the fields we want to preserve
+        new_metadata = {}
+        
+        # First, copy any existing metadata fields we always want to keep
+        for key in ['uploader-initials', 'review_status', 'bad_reason']:
+            if key in original_metadata:
+                new_metadata[key] = original_metadata[key]
+        
+        # CRUCIAL: Preserve upload_time exactly as is, only if it exists
+        if 'upload_time' in original_metadata:
+            new_metadata['upload_time'] = original_metadata['upload_time']
+            logger.debug(f"Preserving original upload_time: {new_metadata['upload_time']}")
+        
+        # Ensure required fields exist with appropriate defaults
+        if 'uploader-initials' not in new_metadata:
+            new_metadata['uploader-initials'] = 'Unknown'
+            
+        if 'review_status' not in new_metadata:
+            new_metadata['review_status'] = 'FALSE'
+        
+        # Set the perfimg_status to FALSE - this is the only field we're changing
+        new_metadata['perfimg_status'] = 'FALSE'
+        
+        # Log the new metadata for comparison
+        logger.debug(f"NEW METADATA for {image_key}: {new_metadata}")
+        
+        if dry_run:
+            logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to FALSE")
+            return 'updated'
+        
+        # Copy object to itself with new metadata
+        s3_client.copy_object(
+            CopySource={'Bucket': S3_GOOD_BUCKET, 'Key': image_key},
+            Bucket=S3_GOOD_BUCKET,
+            Key=image_key,
+            Metadata=new_metadata,
+            MetadataDirective='REPLACE',
+            ContentType=content_type
+        )
+        
+        logger.info(f"Updated perfimg_status for {image_key} to FALSE")
+        return 'updated'
+        
+    except Exception as e:
+        logger.error(f"Error updating perfimg_status for {image_key}: {e}")
+        return 'failed'
+
+def update_incredible_perfimg_status_false(image_key, dry_run=False):
+    """
+    Updates the perfimg_status metadata for a specific image in the Incredible bucket to FALSE.
+    
+    Args:
+        image_key (str): The S3 key of the image to update
+        dry_run (bool): If True, only log what would be done without making changes
+        
+    Returns:
+        str: 'updated' if update was performed, 'skipped' if already had FALSE status, 'failed' on error
+    """
+    try:
+        # Get current metadata
+        head_response = s3_client.head_object(
+            Bucket=S3_INCREDIBLE_BUCKET,
+            Key=image_key
+        )
+        
+        # Log original metadata for debugging
+        original_metadata = head_response.get('Metadata', {})
+        logger.debug(f"ORIGINAL METADATA for {image_key}: {original_metadata}")
+        
+        # Store the content type
+        content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Check if perfimg_status is already FALSE or not set (default is FALSE)
+        if original_metadata.get('perfimg_status', 'FALSE') == 'FALSE':
+            logger.info(f"Image {image_key} already has perfimg_status=FALSE in Incredible bucket. Skipping.")
+            return 'skipped'
+        
+        # Create a new metadata dictionary with only the fields we want to preserve
+        new_metadata = {}
+        
+        # First, copy any existing metadata fields we always want to keep
+        for key in ['uploader-initials', 'review_status', 'bad_reason']:
+            if key in original_metadata:
+                new_metadata[key] = original_metadata[key]
+        
+        # CRUCIAL: Preserve upload_time exactly as is, only if it exists
+        if 'upload_time' in original_metadata:
+            new_metadata['upload_time'] = original_metadata['upload_time']
+            logger.debug(f"Preserving original upload_time: {new_metadata['upload_time']}")
+        
+        # Ensure required fields exist with appropriate defaults
+        if 'uploader-initials' not in new_metadata:
+            new_metadata['uploader-initials'] = 'Unknown'
+            
+        if 'review_status' not in new_metadata:
+            new_metadata['review_status'] = 'TRUE'  # Always TRUE for incredible bucket
+        
+        # Set the perfimg_status to FALSE - this is the only field we're changing
+        new_metadata['perfimg_status'] = 'FALSE'
+        
+        # Log the new metadata for comparison
+        logger.debug(f"NEW METADATA for {image_key}: {new_metadata}")
+        
+        if dry_run:
+            logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to FALSE in Incredible bucket")
+            return 'updated'
+        
+        # Copy object to itself with new metadata
+        s3_client.copy_object(
+            CopySource={'Bucket': S3_INCREDIBLE_BUCKET, 'Key': image_key},
+            Bucket=S3_INCREDIBLE_BUCKET,
+            Key=image_key,
+            Metadata=new_metadata,
+            MetadataDirective='REPLACE',
+            ContentType=content_type
+        )
+        
+        logger.info(f"Updated perfimg_status for {image_key} to FALSE in Incredible bucket")
+        return 'updated'
+        
+    except Exception as e:
+        logger.error(f"Error updating perfimg_status for {image_key} in Incredible bucket: {e}")
+        return 'failed'
+
+def update_bad_perfimg_status_false(image_key, dry_run=False):
+    """
+    Updates the perfimg_status metadata for a specific image in the Bad bucket to FALSE.
+    
+    Args:
+        image_key (str): The S3 key of the image to update
+        dry_run (bool): If True, only log what would be done without making changes
+        
+    Returns:
+        str: 'updated' if update was performed, 'skipped' if already had FALSE status, 'failed' on error
+    """
+    try:
+        # Get current metadata
+        head_response = s3_client.head_object(
+            Bucket=S3_BAD_BUCKET,
+            Key=image_key
+        )
+        
+        # Log original metadata for debugging
+        original_metadata = head_response.get('Metadata', {})
+        logger.debug(f"ORIGINAL METADATA for {image_key}: {original_metadata}")
+        
+        # Store the content type
+        content_type = head_response.get('ContentType', 'image/webp')
+        
+        # Check if perfimg_status is already FALSE or not set (default is FALSE)
+        if original_metadata.get('perfimg_status', 'FALSE') == 'FALSE':
+            logger.info(f"Image {image_key} already has perfimg_status=FALSE in Bad bucket. Skipping.")
+            return 'skipped'
+        
+        # Create a new metadata dictionary with only the fields we want to preserve
+        new_metadata = {}
+        
+        # First, copy any existing metadata fields we always want to keep
+        for key in ['uploader-initials', 'review_status', 'bad_reason']:
+            if key in original_metadata:
+                new_metadata[key] = original_metadata[key]
+        
+        # CRUCIAL: Preserve upload_time exactly as is, only if it exists
+        if 'upload_time' in original_metadata:
+            new_metadata['upload_time'] = original_metadata['upload_time']
+            logger.debug(f"Preserving original upload_time: {new_metadata['upload_time']}")
+        
+        # Ensure required fields exist with appropriate defaults
+        if 'uploader-initials' not in new_metadata:
+            new_metadata['uploader-initials'] = 'Unknown'
+            
+        if 'review_status' not in new_metadata:
+            new_metadata['review_status'] = 'TRUE'  # Usually TRUE for bad bucket too
+        
+        # Set the perfimg_status to FALSE - this is the only field we're changing
+        new_metadata['perfimg_status'] = 'FALSE'
+        
+        # Log the new metadata for comparison
+        logger.debug(f"NEW METADATA for {image_key}: {new_metadata}")
+        
+        if dry_run:
+            logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to FALSE in Bad bucket")
+            return 'updated'
+        
+        # Copy object to itself with new metadata
+        s3_client.copy_object(
+            CopySource={'Bucket': S3_BAD_BUCKET, 'Key': image_key},
+            Bucket=S3_BAD_BUCKET,
+            Key=image_key,
+            Metadata=new_metadata,
+            MetadataDirective='REPLACE',
+            ContentType=content_type
+        )
+        
+        logger.info(f"Updated perfimg_status for {image_key} to FALSE in Bad bucket")
+        return 'updated'
+        
+    except Exception as e:
+        logger.error(f"Error updating perfimg_status for {image_key} in Bad bucket: {e}")
+        return 'failed'
+
+def process_non_matching_images(performer_ids, dry_run=False):
+    """
+    Process all images that don't match any performer ID and set their perfimg_status to FALSE.
+    
+    Args:
+        performer_ids (set): Set of valid performer IDs
+        dry_run (bool): If True, only log what would be done without making changes
+        
+    Returns:
+        tuple: (counts of updated images, counts of skipped images)
+    """
+    # Stats tracking
+    good_updated = 0
+    good_skipped = 0
+    incredible_updated = 0
+    incredible_skipped = 0
+    bad_updated = 0
+    bad_skipped = 0
+    
+    # Process Good bucket
+    logger.info("Processing Good bucket for non-matching performer IDs...")
+    good_images = get_all_good_images()
+    if good_images:
+        logger.info(f"Found {len(good_images)} total images in Good bucket")
+        
+        for image_key in good_images:
+            # Extract filename and performer ID
+            filename = image_key.split('/')[-1]
+            perf_id = filename.split('.')[0]
+            
+            # If this performer ID is not in our valid list, set to FALSE
+            if perf_id not in performer_ids:
+                result = update_perfimg_status_false(image_key, dry_run)
+                if result == 'updated':
+                    good_updated += 1
+                elif result == 'skipped':
+                    good_skipped += 1
+                
+                if (good_updated + good_skipped) % 100 == 0:
+                    logger.info(f"Processed {good_updated + good_skipped} non-matching images in Good bucket")
+    
+    # Process Incredible bucket
+    logger.info("Processing Incredible bucket for non-matching performer IDs...")
+    incredible_images = get_all_incredible_images()
+    if incredible_images:
+        logger.info(f"Found {len(incredible_images)} total images in Incredible bucket")
+        
+        for image_key in incredible_images:
+            # Extract filename and performer ID
+            filename = image_key.split('/')[-1]
+            perf_id = filename.split('.')[0]
+            
+            # If this performer ID is not in our valid list, set to FALSE
+            if perf_id not in performer_ids:
+                result = update_incredible_perfimg_status_false(image_key, dry_run)
+                if result == 'updated':
+                    incredible_updated += 1
+                elif result == 'skipped':
+                    incredible_skipped += 1
+                
+                if (incredible_updated + incredible_skipped) % 100 == 0:
+                    logger.info(f"Processed {incredible_updated + incredible_skipped} non-matching images in Incredible bucket")
+    
+    # Process Bad bucket
+    logger.info("Processing Bad bucket for non-matching performer IDs...")
+    bad_images = get_all_bad_images()
+    if bad_images:
+        logger.info(f"Found {len(bad_images)} total images in Bad bucket")
+        
+        for image_key in bad_images:
+            # Extract filename and performer ID
+            filename = image_key.split('/')[-1]
+            perf_id = filename.split('.')[0]
+            
+            # If this performer ID is not in our valid list, set to FALSE
+            if perf_id not in performer_ids:
+                result = update_bad_perfimg_status_false(image_key, dry_run)
+                if result == 'updated':
+                    bad_updated += 1
+                elif result == 'skipped':
+                    bad_skipped += 1
+                
+                if (bad_updated + bad_skipped) % 100 == 0:
+                    logger.info(f"Processed {bad_updated + bad_skipped} non-matching images in Bad bucket")
+    
+    # Prepare statistics
+    updated = (good_updated, incredible_updated, bad_updated)
+    skipped = (good_skipped, incredible_skipped, bad_skipped)
+    
+    logger.info("Non-matching images summary:")
+    logger.info(f"  - Updated to FALSE: {sum(updated)} (Good: {good_updated}, Incredible: {incredible_updated}, Bad: {bad_updated})")
+    logger.info(f"  - Skipped (already FALSE): {sum(skipped)} (Good: {good_skipped}, Incredible: {incredible_skipped}, Bad: {bad_skipped})")
+    
+    return updated, skipped
+
 def run_worker(dry_run=False):
     """Run a single worker pass."""
     start_time = time.time()
@@ -576,14 +1004,14 @@ def run_worker(dry_run=False):
     
     if not performer_ids:
         logger.warning("No performer IDs found. Exiting.")
-        return 0, 0, 0
+        return 0, 0, 0, 0, 0
     
-    # Statistics
-    total_updated = 0
-    total_skipped = 0
+    # Statistics for TRUE updates
+    true_total_updated = 0
+    true_total_skipped = 0
     processed_ids = 0
     
-    # Process performer IDs in parallel
+    # Process performer IDs in parallel (setting perfimg_status to TRUE for matching images)
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_performer = {executor.submit(process_performer_id, performer_id, dry_run): performer_id for performer_id in performer_ids}
         
@@ -593,8 +1021,8 @@ def run_worker(dry_run=False):
             
             try:
                 _, updated_count, skipped_count = future.result()
-                total_updated += updated_count
-                total_skipped += skipped_count
+                true_total_updated += updated_count
+                true_total_skipped += skipped_count
                 
                 # Log progress periodically
                 if processed_ids % 50 == 0 or processed_ids == len(performer_ids):
@@ -603,13 +1031,21 @@ def run_worker(dry_run=False):
             except Exception as e:
                 logger.error(f"Error processing performer ID {performer_id}: {e}")
     
+    # Process images that don't match any performer ID (setting perfimg_status to FALSE)
+    logger.info("Starting to process images that don't match any performer ID...")
+    false_updated, false_skipped = process_non_matching_images(performer_ids, dry_run)
+    false_total_updated = sum(false_updated)
+    false_total_skipped = sum(false_skipped)
+    
     elapsed_time = time.time() - start_time
     logger.info(f"Completed performers_worker in {elapsed_time:.2f} seconds")
     logger.info(f"Processed {processed_ids} performer IDs")
-    logger.info(f"Updated perfimg_status for {total_updated} images")
-    logger.info(f"Skipped {total_skipped} images that already had perfimg_status=TRUE")
+    logger.info(f"Updated perfimg_status=TRUE for {true_total_updated} images")
+    logger.info(f"Skipped {true_total_skipped} images that already had perfimg_status=TRUE")
+    logger.info(f"Updated perfimg_status=FALSE for {false_total_updated} non-matching images")
+    logger.info(f"Skipped {false_total_skipped} non-matching images that already had perfimg_status=FALSE")
     
-    return processed_ids, total_updated, total_skipped
+    return processed_ids, true_total_updated, true_total_skipped, false_total_updated, false_total_skipped
 
 def parse_args():
     """Parse command line arguments."""
@@ -617,6 +1053,7 @@ def parse_args():
     parser.add_argument('--dry-run', action='store_true', help='Run without making any changes')
     parser.add_argument('--loop', action='store_true', help='Run continuously every 30 seconds')
     parser.add_argument('--interval', type=int, default=30, help='Interval in seconds for loop mode (default: 30)')
+    parser.add_argument('--skip-false', action='store_true', help='Skip updating perfimg_status to FALSE')
     return parser.parse_args()
 
 def main():
@@ -626,6 +1063,10 @@ def main():
     dry_run = args.dry_run
     loop_mode = args.loop
     interval = args.interval
+    skip_false = args.skip_false
+    
+    if skip_false:
+        logger.info("Skip-false mode enabled - will not update any images to perfimg_status=FALSE")
     
     if loop_mode:
         logger.info(f"Starting performer worker in loop mode (interval: {interval}s)")
@@ -635,10 +1076,60 @@ def main():
                 run_count += 1
                 logger.info(f"Starting run #{run_count}")
                 
-                processed_ids, total_updated, total_skipped = run_worker(dry_run)
+                if skip_false:
+                    # Override the run_worker function to skip FALSE updates
+                    old_run_worker = run_worker
+                    def wrapped_run_worker(dry_run):
+                        start_time = time.time()
+                        logger.info(f"Starting performers_worker{'(DRY RUN)' if dry_run else ''} with skip-false mode")
+                        
+                        # Get all performer IDs
+                        performer_ids = get_performer_ids()
+                        
+                        if not performer_ids:
+                            logger.warning("No performer IDs found. Exiting.")
+                            return 0, 0, 0, 0, 0
+                        
+                        # Statistics for TRUE updates
+                        true_total_updated = 0
+                        true_total_skipped = 0
+                        processed_ids = 0
+                        
+                        # Process performer IDs in parallel (setting perfimg_status to TRUE for matching images)
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                            future_to_performer = {executor.submit(process_performer_id, performer_id, dry_run): performer_id for performer_id in performer_ids}
+                            
+                            for future in concurrent.futures.as_completed(future_to_performer):
+                                performer_id = future_to_performer[future]
+                                processed_ids += 1
+                                
+                                try:
+                                    _, updated_count, skipped_count = future.result()
+                                    true_total_updated += updated_count
+                                    true_total_skipped += skipped_count
+                                    
+                                    # Log progress periodically
+                                    if processed_ids % 50 == 0 or processed_ids == len(performer_ids):
+                                        logger.info(f"Progress: {processed_ids}/{len(performer_ids)} performer IDs processed")
+                                    
+                                except Exception as e:
+                                    logger.error(f"Error processing performer ID {performer_id}: {e}")
+                        
+                        elapsed_time = time.time() - start_time
+                        logger.info(f"Completed performers_worker in {elapsed_time:.2f} seconds")
+                        logger.info(f"Processed {processed_ids} performer IDs")
+                        logger.info(f"Updated perfimg_status=TRUE for {true_total_updated} images")
+                        logger.info(f"Skipped {true_total_skipped} images that already had perfimg_status=TRUE")
+                        logger.info(f"Skipped FALSE status updates as requested")
+                        
+                        return processed_ids, true_total_updated, true_total_skipped, 0, 0
+                    
+                    processed_ids, true_updated, true_skipped, _, _ = wrapped_run_worker(dry_run)
+                else:
+                    processed_ids, true_updated, true_skipped, false_updated, false_skipped = run_worker(dry_run)
                 
                 if processed_ids == 0:
-                    logger.warning("No performer IDs found. Will retry in {interval} seconds.")
+                    logger.warning(f"No performer IDs found. Will retry in {interval} seconds.")
                 
                 logger.info(f"Sleeping for {interval} seconds...")
                 time.sleep(interval)
@@ -647,7 +1138,51 @@ def main():
             return
     else:
         # Run once
-        run_worker(dry_run)
+        if skip_false:
+            # Override the run_worker function to skip FALSE updates
+            start_time = time.time()
+            logger.info(f"Starting performers_worker{'(DRY RUN)' if dry_run else ''} with skip-false mode")
+            
+            # Get all performer IDs
+            performer_ids = get_performer_ids()
+            
+            if not performer_ids:
+                logger.warning("No performer IDs found. Exiting.")
+                return
+            
+            # Statistics for TRUE updates
+            true_total_updated = 0
+            true_total_skipped = 0
+            processed_ids = 0
+            
+            # Process performer IDs in parallel (setting perfimg_status to TRUE for matching images)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_performer = {executor.submit(process_performer_id, performer_id, dry_run): performer_id for performer_id in performer_ids}
+                
+                for future in concurrent.futures.as_completed(future_to_performer):
+                    performer_id = future_to_performer[future]
+                    processed_ids += 1
+                    
+                    try:
+                        _, updated_count, skipped_count = future.result()
+                        true_total_updated += updated_count
+                        true_total_skipped += skipped_count
+                        
+                        # Log progress periodically
+                        if processed_ids % 50 == 0 or processed_ids == len(performer_ids):
+                            logger.info(f"Progress: {processed_ids}/{len(performer_ids)} performer IDs processed")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing performer ID {performer_id}: {e}")
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"Completed performers_worker in {elapsed_time:.2f} seconds")
+            logger.info(f"Processed {processed_ids} performer IDs")
+            logger.info(f"Updated perfimg_status=TRUE for {true_total_updated} images")
+            logger.info(f"Skipped {true_total_skipped} images that already had perfimg_status=TRUE")
+            logger.info(f"Skipped FALSE status updates as requested")
+        else:
+            run_worker(dry_run)
 
 if __name__ == "__main__":
     main()
