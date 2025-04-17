@@ -1741,7 +1741,7 @@ def add_perf_action_route(action, image_key):
     if action == 'skip':
         return redirect(url_for('add_perf_review_route'))
     
-    # Good action - Copy to performers bucket with placeholder name
+    # Good action - Copy to performers bucket with new name
     if action == 'good':
         try:
             # Get current metadata and content
@@ -1761,18 +1761,37 @@ def add_perf_action_route(action, image_key):
             
             # Extract the filename and extension from the path
             original_filename = image_key.split('/')[-1]
-            file_ext = original_filename.split('.')[-1] if '.' in original_filename else 'webp'
             
-            # Placeholder for new name - will be defined later
-            # For now, use the original filename in the performers detail directory
-            new_key = f"images/performers/detail/{original_filename}"
+            # Extract the perf_id from the original filename (format: perf_id.ven_id.webp)
+            filename_parts = original_filename.split('.')
+            
+            # Default new name in case parsing fails
+            new_filename = original_filename
+            
+            # Try to extract perf_id from format perf_id.ven_id.webp
+            if len(filename_parts) >= 3:
+                # If filename has at least two dots (perf_id.ven_id.ext)
+                perf_id = filename_parts[0]
+                file_ext = filename_parts[-1]  # Get the extension
+                new_filename = f"{perf_id}.{file_ext}"
+            elif len(filename_parts) == 2:
+                # If filename has only one dot (perf_id.ext)
+                perf_id = filename_parts[0]
+                file_ext = filename_parts[-1]
+                new_filename = original_filename  # Already in correct format
+            
+            app.logger.info(f"Renaming image from '{original_filename}' to '{new_filename}'")
+            
+            # Create the new key for performers bucket
+            new_key = f"images/performers/detail/{new_filename}"
             
             # Create or update metadata for the performers bucket
             perf_metadata = current_metadata.copy()
             perf_metadata['original_source'] = f"{source_bucket}/{image_key}"
             perf_metadata['perfimg_status'] = 'TRUE'  # Mark as processed
+            perf_metadata['review_status'] = 'TRUE'   # Mark as reviewed
             
-            # Upload to performers bucket
+            # Upload to performers bucket with new name
             s3_client.put_object(
                 Bucket=S3_PERFORMER_BUCKET,
                 Key=new_key,
@@ -1781,8 +1800,9 @@ def add_perf_action_route(action, image_key):
                 Metadata=perf_metadata
             )
             
-            # Update the original image's metadata to mark perfimg_status as TRUE
+            # Update the original image's metadata to mark perfimg_status and review_status as TRUE
             current_metadata['perfimg_status'] = 'TRUE'
+            current_metadata['review_status'] = 'TRUE'
             
             s3_client.copy_object(
                 CopySource={'Bucket': source_bucket, 'Key': image_key},
@@ -1793,8 +1813,8 @@ def add_perf_action_route(action, image_key):
                 MetadataDirective='REPLACE'
             )
             
-            app.logger.info(f"Copied {image_key} to Performers bucket as {new_key} and updated perfimg_status")
-            flash("Image successfully added to Performers bucket.", "success")
+            app.logger.info(f"Copied {image_key} to Performers bucket as {new_key} and updated metadata")
+            flash(f"Image successfully added to Performers bucket as '{new_filename}'.", "success")
             
         except Exception as e:
             app.logger.error(f"Error during Add Perf action for {image_key}: {e}")
