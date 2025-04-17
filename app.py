@@ -75,9 +75,6 @@ S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
 S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 
-BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
-BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
-
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
 
@@ -95,14 +92,10 @@ def get_s3_client():
         )
     return thread_local.s3_client
 
-# Main S3 client for non-worker operations
+# Initialize main S3 client and configuration
 try:
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION
-    )
+    # Use the same client creation function for consistency
+    s3_client = get_s3_client()
     
     # Create a reusable S3 upload configuration 
     s3_upload_config = boto3.s3.transfer.TransferConfig(
@@ -115,15 +108,6 @@ except NoCredentialsError:
     raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
-
-# Cache for image format validation
-VALID_IMAGE_SIGNATURES = {
-    b'\xff\xd8\xff': 'JPEG',    # JPEG
-    b'\x89\x50\x4e\x47': 'PNG', # PNG
-    b'\x47\x49\x46': 'GIF',     # GIF
-    b'\x42\x4d': 'BMP',         # BMP
-    b'\x52\x49\x46\x46': 'WEBP' # WEBP
-}
 
 def login_required(f):
     @wraps(f)
@@ -261,7 +245,7 @@ def upload():
     
     return render_template('upload.html')
 
-def process_image(file_data, filename, content_type, timeout=None, uploader_initials=None):
+def process_image(file_data, filename, content_type, uploader_initials=None):
     """
     Upload an image directly to the S3 temp bucket in its original format.
     
@@ -269,7 +253,6 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_init
         file_data: The file data as bytes
         filename: The original filename (with perf_id-ven_id format)
         content_type: The content type of the file
-        timeout: Kept for backwards compatibility
         uploader_initials: Initials of the person uploading the file
         
     Returns:
@@ -278,7 +261,17 @@ def process_image(file_data, filename, content_type, timeout=None, uploader_init
     try:
         # Quick validation of file format using first few bytes
         file_start = file_data[:8]  # First 8 bytes is enough for all formats
-        is_valid_image = any(file_start.startswith(sig) for sig in VALID_IMAGE_SIGNATURES)
+        
+        # Valid image signatures for different formats
+        valid_signatures = {
+            b'\xff\xd8\xff': 'JPEG',    # JPEG
+            b'\x89\x50\x4e\x47': 'PNG', # PNG
+            b'\x47\x49\x46': 'GIF',     # GIF
+            b'\x42\x4d': 'BMP',         # BMP
+            b'\x52\x49\x46\x46': 'WEBP' # WEBP
+        }
+        
+        is_valid_image = any(file_start.startswith(sig) for sig in valid_signatures)
                 
         if not is_valid_image:
             return {
@@ -425,8 +418,8 @@ def get_random_image_key(bucket_name, filter_by_review=None):
         flash("An unexpected error occurred while listing files.", "danger")
     return None
 
-def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
-    """Moves an object from source_bucket to dest_bucket."""
+def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
+    """Common preparation for S3 operations like copy and move."""
     dest_key = object_key
     original_key = object_key
     
@@ -447,65 +440,77 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
     elif destination == 'incredible' or (dest_bucket == S3_INCREDIBLE_BUCKET and destination is None):
         dest_key = f"incredible_images/{filename}"
     
-    copy_source = {'Bucket': source_bucket, 'Key': original_key}
+    # Determine content type based on file extension
+    content_type = 'image/jpeg'  # Default
+    if filename.lower().endswith('.png'):
+        content_type = 'image/png'
+    elif filename.lower().endswith('.gif'):
+        content_type = 'image/gif'
+    elif filename.lower().endswith('.webp'):
+        content_type = 'image/webp'
+    elif filename.lower().endswith(('.jpg', '.jpeg')):
+        content_type = 'image/jpeg'
+        
+    # Get metadata from source object if it exists
     try:
-        # Determine content type based on file extension
-        content_type = 'image/jpeg'  # Default
-        if filename.lower().endswith('.png'):
-            content_type = 'image/png'
-        elif filename.lower().endswith('.gif'):
-            content_type = 'image/gif'
-        elif filename.lower().endswith('.webp'):
-            content_type = 'image/webp'
-        elif filename.lower().endswith(('.jpg', '.jpeg')):
-            content_type = 'image/jpeg'
-            
-        # Get metadata from source object if it exists
-        try:
-            head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
-            metadata = head_response.get('Metadata', {})
-        except ClientError as e:
-            app.logger.error(f"Error getting metadata for {original_key}: {e}")
-            # Initialize with default values instead of empty dict
-            metadata = {
-                'review_status': 'FALSE',
-                'perfimg_status': 'FALSE'
-            }
-            
-        # Ensure all metadata fields exist with appropriate defaults
-        if 'review_status' not in metadata:
-            metadata['review_status'] = 'FALSE'
-            
-        if 'perfimg_status' not in metadata:
-            metadata['perfimg_status'] = 'FALSE'
+        head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
+        metadata = head_response.get('Metadata', {})
+    except ClientError as e:
+        app.logger.error(f"Error getting metadata for {original_key}: {e}")
+        # Initialize with default values
+        metadata = {
+            'review_status': 'FALSE',
+            'perfimg_status': 'FALSE'
+        }
         
-        # Set review_status to TRUE for incredible bucket
-        if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
-            metadata['review_status'] = 'TRUE'
+    # Ensure all metadata fields exist with appropriate defaults
+    if 'review_status' not in metadata:
+        metadata['review_status'] = 'FALSE'
         
-        # If bad_reason provided, add it to metadata
-        if bad_reason:
-            metadata['bad_reason'] = bad_reason
+    if 'perfimg_status' not in metadata:
+        metadata['perfimg_status'] = 'FALSE'
+    
+    # Set review_status to TRUE for incredible bucket
+    if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
+        metadata['review_status'] = 'TRUE'
+    
+    # If bad_reason provided, add it to metadata
+    if bad_reason and (dest_bucket == S3_BAD_BUCKET or destination == 'bad'):
+        metadata['bad_reason'] = bad_reason
+    
+    return {
+        'copy_source': {'Bucket': source_bucket, 'Key': original_key},
+        'dest_key': dest_key,
+        'content_type': content_type,
+        'metadata': metadata,
+        'original_key': original_key,
+        'filename': filename
+    }
+
+def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
+    """Moves an object from source_bucket to dest_bucket."""
+    try:
+        op_data = _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination, bad_reason)
         
         s3_client.copy_object(
-            CopySource=copy_source,
+            CopySource=op_data['copy_source'],
             Bucket=dest_bucket,
-            Key=dest_key,
-            ContentType=content_type,
-            Metadata=metadata,
+            Key=op_data['dest_key'],
+            ContentType=op_data['content_type'],
+            Metadata=op_data['metadata'],
             MetadataDirective='REPLACE'
         )
-        app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
+        app.logger.info(f"Copied {op_data['original_key']} from {source_bucket} to {dest_bucket} as {op_data['dest_key']}")
 
         if dest_bucket != S3_INCREDIBLE_BUCKET or source_bucket == S3_UPLOAD_BUCKET:
-            s3_client.delete_object(Bucket=source_bucket, Key=original_key)
-            app.logger.info(f"Deleted {original_key} from {source_bucket}")
+            s3_client.delete_object(Bucket=source_bucket, Key=op_data['original_key'])
+            app.logger.info(f"Deleted {op_data['original_key']} from {source_bucket}")
         return True
     except ClientError as e:
-        app.logger.error(f"Error moving object {original_key}: {e}")
+        app.logger.error(f"Error moving object {object_key}: {e}")
         flash(f"Error moving file: {e.response['Error']['Message']}", "danger")
     except Exception as e:
-        app.logger.error(f"Unexpected error moving object {original_key}: {e}")
+        app.logger.error(f"Unexpected error moving object {object_key}: {e}")
         flash("An unexpected error occurred while moving the file.", "danger")
     return False
 
@@ -743,81 +748,24 @@ def move_image_route(action, image_key):
 
 def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
-    dest_key = object_key
-    original_key = object_key
-    
-    # Extract the filename from the path, handling both old and new formats
-    filename = object_key.split('/')[-1]
-    
-    # Remove any timestamp prefixes for the destination
-    if '_' in filename:
-        # Handle new timestamp_uuid_filename.ext format
-        parts = filename.split('_', 2)
-        if len(parts) >= 3:
-            filename = parts[2]  # Get just the original filename part
-    
-    if destination == 'bad' or (dest_bucket == S3_BAD_BUCKET and destination is None):
-        dest_key = f"bad_images/{filename}"
-    elif destination == 'good' or (dest_bucket == S3_GOOD_BUCKET and destination is None):
-        dest_key = f"images/performer-at-venue/detail/{filename}"
-    elif destination == 'incredible' or (dest_bucket == S3_INCREDIBLE_BUCKET and destination is None):
-        dest_key = f"incredible_images/{filename}"
-    
-    copy_source = {'Bucket': source_bucket, 'Key': original_key}
     try:
-        # Determine content type based on file extension
-        content_type = 'image/jpeg'  # Default
-        if filename.lower().endswith('.png'):
-            content_type = 'image/png'
-        elif filename.lower().endswith('.gif'):
-            content_type = 'image/gif'
-        elif filename.lower().endswith('.webp'):
-            content_type = 'image/webp'
-        elif filename.lower().endswith(('.jpg', '.jpeg')):
-            content_type = 'image/jpeg'
-            
-        # Get metadata from source object if it exists
-        try:
-            head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
-            metadata = head_response.get('Metadata', {})
-        except ClientError as e:
-            app.logger.error(f"Error getting metadata for {original_key}: {e}")
-            # Initialize with default values instead of empty dict
-            metadata = {
-                'review_status': 'FALSE',
-                'perfimg_status': 'FALSE'
-            }
-            
-        # Ensure all metadata fields exist with appropriate defaults
-        if 'review_status' not in metadata:
-            metadata['review_status'] = 'FALSE'
-            
-        if 'perfimg_status' not in metadata:
-            metadata['perfimg_status'] = 'FALSE'
-        
-        # Set review_status to TRUE for incredible bucket
-        if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
-            metadata['review_status'] = 'TRUE'
-        
-        # Add bad_reason to metadata if provided (for bad action)
-        if bad_reason and (dest_bucket == S3_BAD_BUCKET or destination == 'bad'):
-            metadata['bad_reason'] = bad_reason
+        op_data = _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination, bad_reason)
         
         s3_client.copy_object(
-            CopySource=copy_source,
+            CopySource=op_data['copy_source'],
             Bucket=dest_bucket,
-            Key=dest_key,
-            ContentType=content_type,
-            Metadata=metadata,
+            Key=op_data['dest_key'],
+            ContentType=op_data['content_type'],
+            Metadata=op_data['metadata'],
             MetadataDirective='REPLACE'
         )
-        app.logger.info(f"Copied {original_key} from {source_bucket} to {dest_bucket} as {dest_key}")
+        app.logger.info(f"Copied {op_data['original_key']} from {source_bucket} to {dest_bucket} as {op_data['dest_key']}")
         return True
     except ClientError as e:
-        app.logger.error(f"Error copying object {original_key}: {e}")
+        app.logger.error(f"Error copying object {object_key}: {e}")
         flash(f"Error copying file: {e.response['Error']['Message']}", "danger")
     except Exception as e:
-        app.logger.error(f"Unexpected error copying object {original_key}: {e}")
+        app.logger.error(f"Unexpected error copying object {object_key}: {e}")
         flash("An unexpected error occurred while copying the file.", "danger")
     return False
 
