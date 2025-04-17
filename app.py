@@ -1,14 +1,15 @@
-import os
+
 import random
-import boto3
-import requests
-from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify
-from dotenv import load_dotenv
-from botocore.exceptions import NoCredentialsError, ClientError
+import os
+import boto3 #type:ignore   
+import requests #type:ignore
+from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify #type:ignore
+from dotenv import load_dotenv #type:ignore
+from botocore.exceptions import NoCredentialsError, ClientError #type:ignore
 from functools import wraps
 from datetime import datetime, timedelta, timezone
-from werkzeug.utils import secure_filename
-from requests.exceptions import RequestException
+from werkzeug.utils import secure_filename #type:ignore
+from requests.exceptions import RequestException #type:ignore
 import uuid
 import time
 from io import BytesIO
@@ -19,7 +20,7 @@ import threading
 import re
 import hashlib
 import mimetypes
-import psutil
+import psutil #type:ignore
 import concurrent.futures
 from zoneinfo import ZoneInfo
 

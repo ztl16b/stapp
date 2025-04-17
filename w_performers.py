@@ -1,10 +1,10 @@
 import os
-import boto3
+import boto3 #type:ignore
 import logging
 import argparse
 import sys
-from dotenv import load_dotenv
-from botocore.exceptions import NoCredentialsError, ClientError
+from dotenv import load_dotenv #type:ignore 
+from botocore.exceptions import NoCredentialsError, ClientError #type:ignore
 import time
 import concurrent.futures
 
@@ -221,7 +221,7 @@ def update_perfimg_status(image_key, dry_run=False):
         dry_run (bool): If True, only log what would be done without making changes
         
     Returns:
-        bool: True if update was successful, False otherwise
+        str: 'updated' if update was performed, 'skipped' if already had TRUE status, 'failed' on error
     """
     try:
         # Get current metadata
@@ -239,8 +239,8 @@ def update_perfimg_status(image_key, dry_run=False):
         
         # Check if perfimg_status is already TRUE
         if original_metadata.get('perfimg_status') == 'TRUE':
-            logger.debug(f"Image {image_key} already has perfimg_status=TRUE. Skipping.")
-            return True
+            logger.info(f"Image {image_key} already has perfimg_status=TRUE. Skipping.")
+            return 'skipped'
         
         # Create a new metadata dictionary with only the fields we want to preserve
         new_metadata = {}
@@ -270,7 +270,7 @@ def update_perfimg_status(image_key, dry_run=False):
         
         if dry_run:
             logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to TRUE")
-            return True
+            return 'updated'
         
         # Copy object to itself with new metadata
         s3_client.copy_object(
@@ -301,11 +301,11 @@ def update_perfimg_status(image_key, dry_run=False):
             logger.error(f"Error verifying metadata update for {image_key}: {e}")
         
         logger.info(f"Updated perfimg_status for {image_key} to TRUE")
-        return True
+        return 'updated'
         
     except Exception as e:
         logger.error(f"Error updating perfimg_status for {image_key}: {e}")
-        return False
+        return 'failed'
 
 def update_incredible_perfimg_status(image_key, dry_run=False):
     """
@@ -316,7 +316,7 @@ def update_incredible_perfimg_status(image_key, dry_run=False):
         dry_run (bool): If True, only log what would be done without making changes
         
     Returns:
-        bool: True if update was successful, False otherwise
+        str: 'updated' if update was performed, 'skipped' if already had TRUE status, 'failed' on error
     """
     try:
         # Get current metadata
@@ -334,8 +334,8 @@ def update_incredible_perfimg_status(image_key, dry_run=False):
         
         # Check if perfimg_status is already TRUE
         if original_metadata.get('perfimg_status') == 'TRUE':
-            logger.debug(f"Image {image_key} already has perfimg_status=TRUE in Incredible bucket. Skipping.")
-            return True
+            logger.info(f"Image {image_key} already has perfimg_status=TRUE in Incredible bucket. Skipping.")
+            return 'skipped'
         
         # Create a new metadata dictionary with only the fields we want to preserve
         new_metadata = {}
@@ -365,7 +365,7 @@ def update_incredible_perfimg_status(image_key, dry_run=False):
         
         if dry_run:
             logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to TRUE in Incredible bucket")
-            return True
+            return 'updated'
         
         # Copy object to itself with new metadata
         s3_client.copy_object(
@@ -396,11 +396,11 @@ def update_incredible_perfimg_status(image_key, dry_run=False):
             logger.error(f"Error verifying metadata update for {image_key}: {e}")
         
         logger.info(f"Updated perfimg_status for {image_key} to TRUE in Incredible bucket")
-        return True
+        return 'updated'
         
     except Exception as e:
         logger.error(f"Error updating perfimg_status for {image_key} in Incredible bucket: {e}")
-        return False
+        return 'failed'
 
 def update_bad_perfimg_status(image_key, dry_run=False):
     """
@@ -411,7 +411,7 @@ def update_bad_perfimg_status(image_key, dry_run=False):
         dry_run (bool): If True, only log what would be done without making changes
         
     Returns:
-        bool: True if update was successful, False otherwise
+        str: 'updated' if update was performed, 'skipped' if already had TRUE status, 'failed' on error
     """
     try:
         # Get current metadata
@@ -429,8 +429,8 @@ def update_bad_perfimg_status(image_key, dry_run=False):
         
         # Check if perfimg_status is already TRUE
         if original_metadata.get('perfimg_status') == 'TRUE':
-            logger.debug(f"Image {image_key} already has perfimg_status=TRUE in Bad bucket. Skipping.")
-            return True
+            logger.info(f"Image {image_key} already has perfimg_status=TRUE in Bad bucket. Skipping.")
+            return 'skipped'
         
         # Create a new metadata dictionary with only the fields we want to preserve
         new_metadata = {}
@@ -460,7 +460,7 @@ def update_bad_perfimg_status(image_key, dry_run=False):
         
         if dry_run:
             logger.info(f"DRY RUN: Would update perfimg_status for {image_key} to TRUE in Bad bucket")
-            return True
+            return 'updated'
         
         # Copy object to itself with new metadata
         s3_client.copy_object(
@@ -491,11 +491,11 @@ def update_bad_perfimg_status(image_key, dry_run=False):
             logger.error(f"Error verifying metadata update for {image_key}: {e}")
         
         logger.info(f"Updated perfimg_status for {image_key} to TRUE in Bad bucket")
-        return True
+        return 'updated'
         
     except Exception as e:
         logger.error(f"Error updating perfimg_status for {image_key} in Bad bucket: {e}")
-        return False
+        return 'failed'
 
 def process_performer_id(performer_id, dry_run=False):
     """
@@ -506,49 +506,65 @@ def process_performer_id(performer_id, dry_run=False):
         dry_run (bool): If True, only log what would be done without making changes
         
     Returns:
-        tuple: (performer_id, count of updated images)
+        tuple: (performer_id, count of updated images, count of skipped images)
     """
     total_updated = 0
+    total_skipped = 0
     
     # Process Good bucket
     good_images = get_good_images_with_performer_id(performer_id)
     good_updated = 0
+    good_skipped = 0
     
     if good_images:
         logger.info(f"Found {len(good_images)} images with performer ID {performer_id} in Good bucket")
         
         for image_key in good_images:
-            if update_perfimg_status(image_key, dry_run):
+            result = update_perfimg_status(image_key, dry_run)
+            if result == 'updated':
                 good_updated += 1
+            elif result == 'skipped':
+                good_skipped += 1
     
     # Process Incredible bucket
     incredible_images = get_incredible_images_with_performer_id(performer_id)
     incredible_updated = 0
+    incredible_skipped = 0
     
     if incredible_images:
         logger.info(f"Found {len(incredible_images)} images with performer ID {performer_id} in Incredible bucket")
         
         for image_key in incredible_images:
-            if update_incredible_perfimg_status(image_key, dry_run):
+            result = update_incredible_perfimg_status(image_key, dry_run)
+            if result == 'updated':
                 incredible_updated += 1
+            elif result == 'skipped':
+                incredible_skipped += 1
     
     # Process Bad bucket
     bad_images = get_bad_images_with_performer_id(performer_id)
     bad_updated = 0
+    bad_skipped = 0
     
     if bad_images:
         logger.info(f"Found {len(bad_images)} images with performer ID {performer_id} in Bad bucket")
         
         for image_key in bad_images:
-            if update_bad_perfimg_status(image_key, dry_run):
+            result = update_bad_perfimg_status(image_key, dry_run)
+            if result == 'updated':
                 bad_updated += 1
+            elif result == 'skipped':
+                bad_skipped += 1
     
     total_updated = good_updated + incredible_updated + bad_updated
+    total_skipped = good_skipped + incredible_skipped + bad_skipped
     
-    if total_updated > 0:
-        logger.info(f"Total updated for performer ID {performer_id}: {total_updated} (Good: {good_updated}, Incredible: {incredible_updated}, Bad: {bad_updated})")
+    if total_updated > 0 or total_skipped > 0:
+        logger.info(f"Performer ID {performer_id} summary:")
+        logger.info(f"  - Updated: {total_updated} (Good: {good_updated}, Incredible: {incredible_updated}, Bad: {bad_updated})")
+        logger.info(f"  - Skipped: {total_skipped} (Good: {good_skipped}, Incredible: {incredible_skipped}, Bad: {bad_skipped})")
     
-    return performer_id, total_updated
+    return performer_id, total_updated, total_skipped
 
 def run_worker(dry_run=False):
     """Run a single worker pass."""
@@ -560,10 +576,11 @@ def run_worker(dry_run=False):
     
     if not performer_ids:
         logger.warning("No performer IDs found. Exiting.")
-        return 0, 0
+        return 0, 0, 0
     
     # Statistics
     total_updated = 0
+    total_skipped = 0
     processed_ids = 0
     
     # Process performer IDs in parallel
@@ -575,8 +592,9 @@ def run_worker(dry_run=False):
             processed_ids += 1
             
             try:
-                _, updated_count = future.result()
+                _, updated_count, skipped_count = future.result()
                 total_updated += updated_count
+                total_skipped += skipped_count
                 
                 # Log progress periodically
                 if processed_ids % 50 == 0 or processed_ids == len(performer_ids):
@@ -589,8 +607,9 @@ def run_worker(dry_run=False):
     logger.info(f"Completed performers_worker in {elapsed_time:.2f} seconds")
     logger.info(f"Processed {processed_ids} performer IDs")
     logger.info(f"Updated perfimg_status for {total_updated} images")
+    logger.info(f"Skipped {total_skipped} images that already had perfimg_status=TRUE")
     
-    return processed_ids, total_updated
+    return processed_ids, total_updated, total_skipped
 
 def parse_args():
     """Parse command line arguments."""
@@ -616,7 +635,7 @@ def main():
                 run_count += 1
                 logger.info(f"Starting run #{run_count}")
                 
-                processed_ids, total_updated = run_worker(dry_run)
+                processed_ids, total_updated, total_skipped = run_worker(dry_run)
                 
                 if processed_ids == 0:
                     logger.warning("No performer IDs found. Will retry in {interval} seconds.")
