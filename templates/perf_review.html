@@ -48,71 +48,59 @@
 {% endblock %}
 
 {% block content %}
-<div class="container mt-3">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h1>Performer Image Review</h1>
-    </div>
-
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for category, message in messages %}
-          <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-            {{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-          </div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
+<div class="container mt-4">
+    <h1 class="text-center mb-4">Performer Image Review</h1>
+    
     {% if image_url %}
-        <div class="review-container">
-            <div class="image-review-area">
-                <div class="image-container">
-                    <img src="{{ image_url }}" alt="Performer Image" class="img-fluid rounded shadow">
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Performer Information</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h3 class="text-primary">{{ performer_name }}</h3>
+                    <p><strong>Uploader:</strong> {{ uploader_initials }}</p>
+                    <p><strong>Review Status:</strong> {{ review_status }}</p>
                 </div>
+                <div class="col-md-6">
+                    <p><strong>Image Key:</strong> <small class="text-muted">{{ image_key }}</small></p>
+                    <p><strong>Source:</strong> {{ source_bucket }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="text-center mb-4">
+                <img src="{{ image_url }}" alt="Performer Image" class="img-fluid rounded shadow">
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-6 offset-md-3">
+            <div class="d-flex justify-content-between">
+                <form action="{{ url_for('performer_action_route', action='good', image_key=image_key) }}" method="post">
+                    <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                    <button type="submit" class="btn btn-success btn-lg px-5">GOOD</button>
+                </form>
                 
-                <div class="btn-group-centered">
-                    <form action="{{ url_for('performer_action_route', action='good', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-success btn-lg">GOOD</button>
-                    </form>
-                    <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-danger btn-lg">BAD</button>
-                    </form>
-                </div>
-            </div>
-            
-            <div class="metadata-area">
-                <div class="metadata-box">
-                    <h5 class="mb-3">Performer Image Information</h5>
-                    <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
-                    <p class="mb-2"><strong>Review Status:</strong> 
-                        {% if review_status == 'TRUE' %}
-                            <span class="badge bg-success">Reviewed</span>
-                        {% else %}
-                            <span class="badge bg-danger">Not Reviewed</span>
-                        {% endif %}
-                    </p>
-                    <p class="mb-2"><strong>Perf Img Status:</strong> 
-                        {% if perfimg_status == 'TRUE' %}
-                            <span class="badge bg-success">TRUE</span>
-                        {% else %}
-                            <span class="badge bg-danger">FALSE</span>
-                        {% endif %}
-                    </p>
-                    <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
-                    <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
-                </div>
+                <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
+                    <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                    <button type="submit" class="btn btn-danger btn-lg px-5">BAD</button>
+                </form>
             </div>
         </div>
+    </div>
     {% else %}
-        <div class="alert alert-info mt-4" role="alert">
-            <h4 class="alert-heading">No Performer Images Found</h4>
-            <p>No unreviewed performer images were found in the <code>images/performers/detail/</code> folder of the performers bucket.</p>
-            <hr>
-            <p class="mb-0">You can browse all images in the <a href="{{ url_for('browse_bucket', bucket_name='performers') }}" class="alert-link">performers bucket</a> or <a href="{{ url_for('upload') }}" class="alert-link">upload new images</a>.</p>
-        </div>
+    <div class="alert alert-info mt-4" role="alert">
+        <h4 class="alert-heading">No Performer Images Found</h4>
+        <p>No unreviewed performer images were found in the <code>images/performers/detail/</code> folder of the performers bucket.</p>
+        <hr>
+        <p class="mb-0">You can browse all images in the <a href="{{ url_for('browse_bucket', bucket_name='performers') }}" class="alert-link">performers bucket</a> or <a href="{{ url_for('upload') }}" class="alert-link">upload new images</a>.</p>
+    </div>
     {% endif %}
 
     <hr class="my-4">

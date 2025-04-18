@@ -38,43 +38,58 @@
 {% endblock %}
 
 {% block content %}
-<h1 class="text-center mb-4">Add Perf Review</h1>
-
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-        {% for category, message in messages %}
-            <div class="alert alert-{{ category }}">{{ message }}</div>
-        {% endfor %}
-    {% endif %}
-{% endwith %}
-
-<div class="image-container">
+<div class="container mt-4">
+    <h1 class="text-center mb-4">Add Performer Image</h1>
+    
     {% if image_url %}
-        <img src="{{ image_url }}" alt="Image for review" class="img-fluid">
-        
-        <div class="metadata">
-            <h4>Image Metadata</h4>
-            <p><strong>File:</strong> {{ image_key }}</p>
-            <p><strong>Uploader:</strong> {{ uploader_initials }}</p>
-            <p><strong>Review Status:</strong> {{ review_status }}</p>
-            <p><strong>PerfImg Status:</strong> {{ perfimg_status }}</p>
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Image Information</h5>
         </div>
-        
-        <div class="button-container">
-            <form action="{{ url_for('add_perf_action_route', action='good', image_key=image_key) }}" method="post">
-                <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                <button type="submit" class="btn btn-success action-btn">Good</button>
-            </form>
-            
-            <form action="{{ url_for('add_perf_action_route', action='skip', image_key=image_key) }}" method="post">
-                <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                <button type="submit" class="btn btn-secondary action-btn">Skip</button>
-            </form>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h3 class="text-primary">{{ performer_name }}</h3>
+                    <p><strong>Uploader:</strong> {{ uploader_initials }}</p>
+                    <p><strong>Review Status:</strong> {{ review_status }}</p>
+                    <p><strong>Perfect Image Status:</strong> {{ perfimg_status }}</p>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Image Key:</strong> <small class="text-muted">{{ image_key }}</small></p>
+                    <p><strong>Source:</strong> {{ source_bucket }}</p>
+                    <p><strong>Action:</strong> Add this performer image to the performers bucket</p>
+                </div>
+            </div>
         </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="text-center mb-4">
+                <img src="{{ image_url }}" alt="Performer Image" class="img-fluid rounded shadow">
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <div class="d-flex justify-content-between">
+                <form action="{{ url_for('add_perf_action_route', action='good', image_key=image_key) }}" method="post">
+                    <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                    <button type="submit" class="btn btn-success btn-lg">Add to Performers</button>
+                </form>
+                
+                <form action="{{ url_for('add_perf_action_route', action='skip', image_key=image_key) }}" method="post">
+                    <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                    <button type="submit" class="btn btn-secondary btn-lg">Skip</button>
+                </form>
+            </div>
+        </div>
+    </div>
     {% else %}
-        <div class="alert alert-info">
-            No images available for review with perfimg_status=FALSE in the Good bucket.
-        </div>
+    <div class="alert alert-info">
+        No images available for review with perfimg_status=FALSE in the Good bucket.
+    </div>
     {% endif %}
 </div>
 

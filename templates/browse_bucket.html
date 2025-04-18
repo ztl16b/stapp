@@ -172,79 +172,64 @@
 
     {% if files %}
         <form id="batchDeleteForm" action="{{ url_for('delete_selected_route', bucket_name=bucket_name) }}" method="post">
-            <div class="table-responsive">
-                <table class="table table-striped">
-                    <thead class="table-light">
+            <div class="table-responsive mt-3">
+                <table class="table table-striped table-hover">
+                    <thead class="table-dark">
                         <tr>
-                            <th>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="selectAll">
-                                </div>
+                            <th style="width: 5%">
+                                <input type="checkbox" id="selectAll" class="form-check-input">
                             </th>
-                            <th>File Name</th>
-                            <th>Size</th>
-                            <th>
-                                <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, uploader=uploader_filter, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to) }}" class="text-dark text-decoration-none">
-                                    Last Modified
-                                    {% if sort_order == 'desc' %}
-                                        <i class="fas fa-sort-down"></i>
-                                    {% else %}
-                                        <i class="fas fa-sort-up"></i>
-                                    {% endif %}
-                                </a>
-                            </th>
-                            <th>Upload Time</th>
-                            <th>Uploader Initials</th>
-                            <th>Reviewed</th>
-                            <th>Perf Img</th>
-                            {% if bucket_name == 'bad' %}
-                            <th>Bad Reason</th>
-                            {% endif %}
-                            <th>Preview</th>
+                            <th style="width: 5%">Preview</th>
+                            <th style="width: 30%">File</th>
+                            <th style="width: 15%">Performer</th>
+                            <th style="width: 10%">Size</th>
+                            <th style="width: 15%">Modified</th>
+                            <th style="width: 10%">Status</th>
+                            <th style="width: 10%">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for file in files %}
-                        <tr class="file-row">
+                        <tr>
                             <td>
-                                <div class="form-check">
-                                    <input class="form-check-input file-checkbox" type="checkbox" name="selected_files" value="{{ file.key }}">
-                                </div>
+                                <input type="checkbox" name="selected_files" value="{{ file.key }}" class="form-check-input file-checkbox">
                             </td>
-                            <td>{{ file.key }}</td>
-                            <td>{{ (file.size / 1024)|round(1) }} KB</td>
-                            <td>{{ file.last_modified | datetime_mst }}</td>
                             <td>
-                                {% if file.metadata.get('upload_time') %}
-                                    {{ file.metadata.get('upload_time') | datetime_mst }}
-                                {% else %}
-                                    N/A
-                                {% endif %}
+                                <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
+                                   target="_blank" title="View full size">
+                                    <img src="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key, thumbnail='true') }}" 
+                                         alt="Thumbnail" style="max-height: 40px; max-width: 40px;">
+                                </a>
                             </td>
-                            <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
+                            <td>
+                                <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
+                                   target="_blank" title="View full size">
+                                    {{ file.key }}
+                                </a>
+                            </td>
+                            <td>
+                                <span class="badge bg-info">{{ file.performer_name }}</span>
+                            </td>
+                            <td>{{ (file.size / 1024)|round(2) }} KB</td>
+                            <td>{{ file.last_modified|datetime_mst }}</td>
                             <td>
                                 {% if file.metadata.get('review_status', 'FALSE') == 'TRUE' %}
-                                    <span class="badge bg-success">TRUE</span>
+                                    <span class="badge bg-success">Reviewed</span>
                                 {% else %}
-                                    <span class="badge bg-danger">FALSE</span>
+                                    <span class="badge bg-danger">Not Reviewed</span>
                                 {% endif %}
-                            </td>
-                            <td>
+                                <br>
                                 {% if file.metadata.get('perfimg_status', 'FALSE') == 'TRUE' %}
-                                    <span class="badge bg-success">TRUE</span>
+                                    <span class="badge bg-primary">Perf: Yes</span>
                                 {% else %}
-                                    <span class="badge bg-danger">FALSE</span>
+                                    <span class="badge bg-secondary">Perf: No</span>
                                 {% endif %}
                             </td>
-                            {% if bucket_name == 'bad' %}
                             <td>
-                                {% if file.metadata.get('bad_reason') %}
-                                    <span class="badge bg-warning text-dark">{{ file.metadata.get('bad_reason') }}</span>
-                                {% else %}
-                                    <span class="badge bg-secondary">Not specified</span>
+                                {% if bucket_name == 'bad' %}
+                                <span class="badge bg-warning text-dark">{{ file.metadata.get('bad_reason') }}</span>
                                 {% endif %}
                             </td>
-                            {% endif %}
                             <td>
                                 <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
                                    target="_blank" 
