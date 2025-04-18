@@ -22,6 +22,8 @@ import mimetypes
 import psutil #type:ignore
 import concurrent.futures
 from zoneinfo import ZoneInfo
+import csv
+import os.path
 
 load_dotenv()
 
@@ -77,7 +79,6 @@ S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
-# Thread local storage for S3 clients
 thread_local = threading.local()
 
 def get_s3_client():
@@ -542,6 +543,7 @@ def perf_ven_review_image_route():
     uploader_initials = "Unknown"
     review_status = "FALSE"
     perfimg_status = "FALSE"
+    performer_name = "Unknown Performer"  # Default value
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
@@ -558,8 +560,37 @@ def perf_ven_review_image_route():
             review_status = metadata.get('review_status', 'FALSE')
             perfimg_status = metadata.get('perfimg_status', 'FALSE')
             app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
+            
+            # Extract performer_id from the image filename (format: performer_id.venue_id.webp)
+            filename = image_key.split('/')[-1]
+            app.logger.info(f"Processing filename: {filename}")
+            
+            # Check if the filename has the expected format
+            if '.' in filename:
+                parts = filename.split('.')
+                if len(parts) >= 2:
+                    performer_id = parts[0]
+                    
+                    # Try to convert to integer to verify it's a numeric ID
+                    try:
+                        performer_id = int(performer_id)
+                        
+                        # Look up the performer name in the CSV file
+                        csv_path = os.path.join(os.path.dirname(__file__), 'performer-infos.csv')
+                        if os.path.exists(csv_path):
+                            with open(csv_path, 'r', encoding='utf-8') as csvfile:
+                                reader = csv.DictReader(csvfile)
+                                for row in reader:
+                                    if row['performer_id'] == str(performer_id):
+                                        performer_name = row['name_alias']
+                                        app.logger.info(f"Found performer name: {performer_name}")
+                                        break
+                        else:
+                            app.logger.warning(f"CSV file not found: {csv_path}")
+                    except ValueError:
+                        app.logger.warning(f"Invalid performer_id format: {performer_id}")
         except Exception as e:
-            app.logger.error(f"Error getting metadata for {image_key}: {e}")
+            app.logger.error(f"Error getting metadata or performer name for {image_key}: {e}")
 
     return render_template('perf_ven_review.html', 
                           image_url=image_url, 
@@ -567,7 +598,8 @@ def perf_ven_review_image_route():
                           source_bucket=source_bucket,
                           uploader_initials=uploader_initials,
                           review_status=review_status,
-                          perfimg_status=perfimg_status)
+                          perfimg_status=perfimg_status,
+                          performer_name=performer_name)  # Pass performer name to template
 
 @app.route('/move/<action>/<path:image_key>', methods=['POST'])
 @login_required
@@ -842,6 +874,21 @@ def browse_bucket(bucket_name):
         max_items_to_scan = 500000 # Limit initial scan
 
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
+        
+        # Load performer names from CSV file
+        performer_names = {}
+        csv_path = os.path.join(os.path.dirname(__file__), 'performer-infos.csv')
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    for row in reader:
+                        performer_names[row['performer_id']] = row['name_alias']
+                app.logger.info(f"Loaded {len(performer_names)} performer names from CSV")
+            except Exception as e:
+                app.logger.error(f"Error loading performer names from CSV: {e}")
+        else:
+            app.logger.warning(f"CSV file not found: {csv_path}")
 
         # --- Fetch and Filter Data ---
         all_scanned_files = []
@@ -1146,6 +1193,26 @@ def browse_bucket(bucket_name):
         unreviewed_count = sum(1 for f in filtered_files if f.get('metadata', {}).get('review_status', 'FALSE') != 'TRUE')
         app.logger.info(f"Found {unreviewed_count} unreviewed images out of {total_files} total filtered files")
 
+        # --- Extract performer names for all filtered files ---
+        for file in filtered_files:
+            filename = file['key'].split('/')[-1]
+            performer_id = None
+            
+            # Extract performer_id from filename (format: performer_id.venue_id.webp)
+            if '.' in filename:
+                parts = filename.split('.')
+                if len(parts) >= 2:
+                    try:
+                        performer_id = parts[0]
+                        # Try to verify it's numeric
+                        int(performer_id)
+                        # Add performer name if available
+                        file['performer_name'] = performer_names.get(performer_id, "Unknown")
+                    except (ValueError, TypeError):
+                        file['performer_name'] = "Unknown"
+            else:
+                file['performer_name'] = "Unknown"
+                
         # --- Render ---
         return render_template('browse_bucket.html',
                              bucket=bucket_info,
