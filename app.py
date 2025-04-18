@@ -22,6 +22,8 @@ import mimetypes
 import psutil #type:ignore
 import concurrent.futures
 from zoneinfo import ZoneInfo
+import csv
+import pandas as pd  #type:ignore
 
 load_dotenv()
 
@@ -34,6 +36,40 @@ app.secret_key = os.environ.get('SECRET_KEY', 'your-fixed-secret-key-for-develop
 
 # Define MST timezone (UTC-7)
 MST = ZoneInfo("Etc/GMT+7")
+
+# Global dictionary to store performer data (ID -> name mapping)
+performer_data = {}
+
+def load_performer_data(csv_path='performers.csv'):
+    """Load performer data from CSV file into a dictionary"""
+    global performer_data
+    
+    try:
+        # Check if file exists
+        if not os.path.exists(csv_path):
+            app.logger.warning(f"Performer CSV file not found at {csv_path}")
+            return
+            
+        # Use pandas to read the CSV file
+        df = pd.read_csv(csv_path)
+        
+        # Check if required columns exist
+        if 'performer_id' not in df.columns or 'name_alias' not in df.columns:
+            app.logger.warning(f"CSV file missing required columns: {csv_path}")
+            return
+            
+        # Convert performer_id to string to match filenames
+        df['performer_id'] = df['performer_id'].astype(str)
+        
+        # Create a dictionary mapping performer_id to name_alias
+        performer_data = dict(zip(df['performer_id'], df['name_alias']))
+        
+        app.logger.info(f"Loaded {len(performer_data)} performers from {csv_path}")
+    except Exception as e:
+        app.logger.error(f"Error loading performer data from {csv_path}: {e}")
+
+# Load performer data on startup
+load_performer_data()
 
 # Custom Jinja filter for MST datetime formatting
 def format_datetime_mst(dt_utc):
@@ -52,8 +88,29 @@ def format_datetime_mst(dt_utc):
     # Format as requested
     return dt_mst.strftime('%m/%d/%y %I:%M %p')
 
-# Register the custom filter
+# Custom filter to extract performer name from filename
+def get_performer_name(filename):
+    """Extract performer ID from filename and look up corresponding name"""
+    try:
+        # Check if filename matches the expected format
+        base_name = filename.split('/')[-1]  # Get just the filename part without path
+        parts = base_name.split('.')
+        
+        # If filename follows the format performer_id.venue_id.webp
+        if len(parts) >= 2:
+            perf_id = parts[0]
+            
+            # Look up the performer name from global dictionary
+            return performer_data.get(perf_id, f"Unknown ({perf_id})")
+        
+        return "Unknown"
+    except Exception as e:
+        app.logger.error(f"Error getting performer name for {filename}: {e}")
+        return "Error"
+
+# Register the custom filters
 app.jinja_env.filters['datetime_mst'] = format_datetime_mst
+app.jinja_env.filters['get_performer_name'] = get_performer_name
 
 # SIMPLIFIED SESSION CONFIGURATION
 app.config.update(
@@ -76,7 +133,6 @@ S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
 S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
-BROWSE_PASSWORD = os.getenv("BROWSE_PASSWORD")
 
 # Thread local storage for S3 clients
 thread_local = threading.local()
@@ -123,10 +179,9 @@ def login_required(f):
 def login():
     if request.method == 'POST':
         password = request.form.get('password')
-        browse_password = os.getenv('BROWSE_PASSWORD')
         admin_password = os.getenv('ADMIN_PASSWORD')
         
-        if password == browse_password or password == admin_password:
+        if password == admin_password:
             # Simple session setup
             session['logged_in'] = True
             session.permanent = True  # Make the session permanent
@@ -840,6 +895,7 @@ def browse_bucket(bucket_name):
         sort_order = request.args.get('sort', 'desc')
         date_from = request.args.get('date_from', '')
         date_to = request.args.get('date_to', '')
+        performer_filter = request.args.get('performer', '').lower().strip()
         per_page = 200
         max_items_to_scan = 500000 # Limit initial scan
 
@@ -1007,7 +1063,22 @@ def browse_bucket(bucket_name):
                 ]
             app.logger.info(f"Applied search filter ('{search_query}'): {pre_filter_count} -> {len(all_scanned_files)} items")
 
-        # 3. Uploader Filter (requires metadata fetch for *remaining* items)
+        # 3. Performer Filter
+        if performer_filter:
+            pre_filter_count = len(all_scanned_files)
+            temp_files = []
+            for f in all_scanned_files:
+                filename = f['key'].split('/')[-1]
+                parts = filename.split('.')
+                if len(parts) >= 2:
+                    perf_id = parts[0]
+                    perf_name = performer_data.get(perf_id, "").lower()
+                    if performer_filter in perf_name or performer_filter in perf_id:
+                        temp_files.append(f)
+            all_scanned_files = temp_files
+            app.logger.info(f"Applied performer filter ('{performer_filter}'): {pre_filter_count} -> {len(all_scanned_files)} items")
+
+        # 4. Uploader Filter (requires metadata fetch for *remaining* items)
         if uploader_filter:
             pre_filter_count = len(all_scanned_files)
             keys_to_fetch_metadata = [f['key'] for f in all_scanned_files]
@@ -1160,6 +1231,7 @@ def browse_bucket(bucket_name):
                              per_page=per_page, # Pass per_page for template logic
                              search_query=request.args.get('search', ''), # Pass original search query
                              uploader_filter=uploader_filter_display, # Pass original case uploader filter
+                             performer_filter=request.args.get('performer', ''), # Pass performer filter
                              sort_order=sort_order,
                              date_from=date_from,
                              date_to=date_to,
@@ -1855,6 +1927,63 @@ def add_perf_action_route(action, image_key):
             flash(f"Error processing action: {str(e)}", "danger")
     
     return redirect(url_for('add_perf_review_route'))
+
+# Register command to reload performer data
+@app.cli.command('reload-performers')
+def reload_performers_command():
+    """Reload performer data from CSV file"""
+    app.logger.info("Reloading performer data...")
+    load_performer_data()
+    app.logger.info(f"Reloaded {len(performer_data)} performer records")
+
+# Add route to reload performer data
+@app.route('/reload-performers', methods=['POST'])
+@login_required
+def reload_performers_route():
+    """Reload performer data from CSV file"""
+    csv_path = request.form.get('csv_path', 'performers.csv')
+    try:
+        load_performer_data(csv_path)
+        flash(f"Successfully loaded {len(performer_data)} performer records", "success")
+    except Exception as e:
+        flash(f"Error loading performer data: {str(e)}", "danger")
+    return redirect(url_for('browse_buckets'))
+
+# Add template route to upload performer CSV
+@app.route('/upload-performers', methods=['GET', 'POST'])
+@login_required
+def upload_performers_route():
+    if request.method == 'POST':
+        # Check if a file was uploaded
+        if 'performers_csv' not in request.files:
+            flash('No file part', 'warning')
+            return redirect(request.url)
+            
+        file = request.files['performers_csv']
+        if file.filename == '':
+            flash('No selected file', 'warning')
+            return redirect(request.url)
+            
+        # Check if it's a CSV file
+        if not file.filename.lower().endswith('.csv'):
+            flash('File must be a CSV', 'warning')
+            return redirect(request.url)
+            
+        # Save the file temporarily
+        temp_path = 'performers_uploaded.csv'
+        file.save(temp_path)
+        
+        # Try to load the data
+        try:
+            load_performer_data(temp_path)
+            flash(f"Successfully loaded {len(performer_data)} performer records", "success")
+        except Exception as e:
+            flash(f"Error loading performer data: {str(e)}", "danger")
+            
+        return redirect(url_for('browse_buckets'))
+        
+    # GET request - show upload form
+    return render_template('upload_performers.html')
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
