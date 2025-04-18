@@ -63,9 +63,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="container mt-4">
-    <h1 class="text-center mb-4">Performer at Venue Review</h1>
-    
+<div class="container mt-3">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
@@ -78,85 +76,66 @@
     {% endwith %}
 
     {% if image_url %}
-    <div class="card mb-4">
-        <div class="card-header">
-            <h5>Image Details</h5>
-        </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-6">
-                    <p><strong>Uploader:</strong> {{ uploader_initials }}</p>
-                    <p><strong>Review Status:</strong> {{ review_status }}</p>
-                    <p><strong>Perfect Image Status:</strong> {{ perfimg_status }}</p>
-                    <p><strong>Performer:</strong> <span class="text-primary fw-bold">{{ performer_name }}</span></p>
+        <div class="review-container">
+            <div class="image-review-area">
+                <div class="image-container">
+                    <img src="{{ image_url }}" alt="Review Image" class="img-fluid rounded shadow">
                 </div>
-                <div class="col-md-6">
-                    <p><strong>Key:</strong> {{ image_key }}</p>
-                    <p><strong>Source Bucket:</strong> {{ source_bucket }}</p>
+                
+                <div class="btn-group-centered">
+                    <form action="{{ url_for('move_image_route', action='good', image_key=image_key) }}" method="post">
+                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                        <button type="submit" class="btn btn-success btn-lg">GOOD</button>
+                    </form>
+                    <form action="{{ url_for('move_image_route', action='incredible', image_key=image_key) }}" method="post">
+                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                        <button type="submit" class="btn btn-warning btn-lg">INCREDIBLE</button>
+                    </form>
+                    <div class="bad-form-container">
+                        <form action="{{ url_for('move_image_route', action='bad', image_key=image_key) }}" method="post">
+                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                            <select name="bad_reason" class="bad-reason-select" required id="badReasonSelect">
+                                <option value="" disabled selected>Select reason</option>
+                                <option value="text">Text</option>
+                                <option value="warping">Warping</option>
+                                <option value="bad positioning">Bad Positioning</option>
+                                <option value="stylization">Stylization</option>
+                                <option value="facial expression">Facial Expression</option>
+                                <option value="other">Other</option>
+                            </select>
+                            <div id="otherReasonContainer" style="display: none; width: 100%; margin-bottom: 8px;">
+                                <input type="text" name="other_reason" id="otherReasonInput" class="form-control" 
+                                    placeholder="Please specify reason..." style="margin-bottom: 8px;">
+                            </div>
+                            <button type="submit" class="btn btn-danger btn-lg">BAD</button>
+                        </form>
+                    </div>
                 </div>
-            </div>
-        </div>
-    </div>
-    <div class="review-container">
-        <div class="image-review-area">
-            <div class="image-container">
-                <img src="{{ image_url }}" alt="Review Image" class="img-fluid rounded shadow">
             </div>
             
-            <div class="btn-group-centered">
-                <form action="{{ url_for('move_image_route', action='good', image_key=image_key) }}" method="post">
-                    <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                    <button type="submit" class="btn btn-success btn-lg">GOOD</button>
-                </form>
-                <form action="{{ url_for('move_image_route', action='incredible', image_key=image_key) }}" method="post">
-                    <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                    <button type="submit" class="btn btn-warning btn-lg">INCREDIBLE</button>
-                </form>
-                <div class="bad-form-container">
-                    <form action="{{ url_for('move_image_route', action='bad', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <select name="bad_reason" class="bad-reason-select" required id="badReasonSelect">
-                            <option value="" disabled selected>Select reason</option>
-                            <option value="text">Text</option>
-                            <option value="warping">Warping</option>
-                            <option value="bad positioning">Bad Positioning</option>
-                            <option value="stylization">Stylization</option>
-                            <option value="facial expression">Facial Expression</option>
-                            <option value="other">Other</option>
-                        </select>
-                        <div id="otherReasonContainer" style="display: none; width: 100%; margin-bottom: 8px;">
-                            <input type="text" name="other_reason" id="otherReasonInput" class="form-control" 
-                                placeholder="Please specify reason..." style="margin-bottom: 8px;">
-                        </div>
-                        <button type="submit" class="btn btn-danger btn-lg">BAD</button>
-                    </form>
+            <div class="metadata-area">
+                <div class="metadata-box">
+                    <h5 class="mb-3">Image Information</h5>
+                    <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
+                    <p class="mb-2"><strong>Review Status:</strong> 
+                        {% if review_status == 'TRUE' %}
+                            <span class="badge bg-success">Reviewed</span>
+                        {% else %}
+                            <span class="badge bg-danger">Not Reviewed</span>
+                        {% endif %}
+                    </p>
+                    <p class="mb-2"><strong>Perf Img Status:</strong> 
+                        {% if perfimg_status == 'TRUE' %}
+                            <span class="badge bg-success">TRUE</span>
+                        {% else %}
+                            <span class="badge bg-danger">FALSE</span>
+                        {% endif %}
+                    </p>
+                    <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
+                    <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
                 </div>
             </div>
         </div>
-        
-        <div class="metadata-area">
-            <div class="metadata-box">
-                <h5 class="mb-3">Image Information</h5>
-                <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
-                <p class="mb-2"><strong>Review Status:</strong> 
-                    {% if review_status == 'TRUE' %}
-                        <span class="badge bg-success">Reviewed</span>
-                    {% else %}
-                        <span class="badge bg-danger">Not Reviewed</span>
-                    {% endif %}
-                </p>
-                <p class="mb-2"><strong>Perf Img Status:</strong> 
-                    {% if perfimg_status == 'TRUE' %}
-                        <span class="badge bg-success">TRUE</span>
-                    {% else %}
-                        <span class="badge bg-danger">FALSE</span>
-                    {% endif %}
-                </p>
-                <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
-                <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
-            </div>
-        </div>
-    </div>
     {% else %}
         <div class="alert alert-info mt-4" role="alert">
             No images found in either the upload or temp buckets to review, or there was an error accessing the buckets.
