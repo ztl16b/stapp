@@ -1,7 +1,7 @@
 import os
-import boto3
+import boto3 #type: ignore
 import argparse
-from dotenv import load_dotenv
+from dotenv import load_dotenv #type: ignore
 import logging
 
 # Run with: python restatus.py --local-folder "/path/to/local/folder" --status "new_status" --bucket GOOD

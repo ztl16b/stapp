@@ -13,7 +13,7 @@ git add . && git commit -m "insert_text" && git push stapp master
 git add . && git commit -m "dupe_check" && git push stapp master && sleep 10 && heroku restart
 
 heroku logs --tail
-
+python3 restatus.py --local-folder "/Users/zacklung/local_files/resized_images" --status "TRUE" --bucket GOOD --dry-run
 
 
 TROUBLESHOOTING WORKERS
