@@ -183,7 +183,6 @@
                             </th>
                             <th>File Name</th>
                             <th>Performer</th>
-                            <th>Size</th>
                             <th>
                                 <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, uploader=uploader_filter, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to) }}" class="text-dark text-decoration-none">
                                     Last Modified
@@ -220,7 +219,6 @@
                                     <span class="badge bg-secondary">Unknown</span>
                                 {% endif %}
                             </td>
-                            <td>{{ (file.size / 1024)|round(1) }} KB</td>
                             <td>{{ file.last_modified | datetime_mst }}</td>
                             <td>
                                 {% if file.metadata.get('upload_time') %}
