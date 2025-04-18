@@ -37,8 +37,6 @@ heroku logs --app stapp --ps perf_worker -t
 
 
 
-
-
 heroku ps:restart dupe_worker --app stapp
 heroku ps:scale dupe_worker=1 --app stapp
 heroku ps:scale dupe_worker=0 --app stapp
