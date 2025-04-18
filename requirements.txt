@@ -9,3 +9,4 @@ schedule==1.2.0
 redis
 psutil
 botocore
+pandas
