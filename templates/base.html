@@ -95,11 +95,6 @@
                         <li class="nav-item">
                             <a class="nav-link {% if request.endpoint == 'browse_buckets' %}active{% endif %}" href="{{ url_for('browse_buckets') }}">Browse</a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link {% if request.endpoint == 'upload_performers_route' %}active{% endif %}" href="{{ url_for('upload_performers_route') }}">
-                                <i class="fas fa-upload"></i> Performers CSV
-                            </a>
-                        </li>
                     {% endif %}
                 </ul>
                 <ul class="navbar-nav ms-auto">

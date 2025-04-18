@@ -8,7 +8,6 @@
         <h1>{{ bucket.name }}</h1>
         <div>
             <a href="{{ url_for('browse_buckets') }}" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Back</a>
-            <a href="{{ url_for('upload_performers_route') }}" class="btn btn-primary"><i class="fas fa-upload"></i> Upload Performers CSV</a>
         </div>
     </div>
 
@@ -35,7 +34,7 @@
             <div class="card-body">
                 <form class="search-form" method="get">
                     <div class="row g-2">
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <div class="input-group input-group-sm">
                                 <span class="input-group-text"><i class="fas fa-search"></i></span>
                                 <input type="text" name="search" class="form-control" placeholder="Search files..." value="{{ search_query }}">
@@ -47,13 +46,7 @@
                                 <input type="text" name="uploader" class="form-control" placeholder="Uploader initials..." value="{{ uploader_filter }}">
                             </div>
                         </div>
-                        <div class="col-md-3">
-                            <div class="input-group input-group-sm">
-                                <span class="input-group-text"><i class="fas fa-user"></i></span>
-                                <input type="text" name="performer" class="form-control" placeholder="Performer name..." value="{{ performer_filter }}">
-                            </div>
-                        </div>
-                        <div class="col-md-3">
+                        <div class="col-md-5">
                             <div class="d-flex">
                                 <div class="input-group input-group-sm me-2">
                                     <span class="input-group-text"><i class="fas fa-calendar"></i></span>
@@ -83,7 +76,7 @@
                                 <button type="submit" class="btn btn-sm btn-primary me-2">
                                     <i class="fas fa-filter"></i> Apply Filters
                                 </button>
-                                {% if search_query or date_from or date_to or uploader_filter or performer_filter %}
+                                {% if search_query or date_from or date_to or uploader_filter %}
                                     <a href="{{ url_for('browse_bucket', bucket_name=bucket_name) }}" class="btn btn-sm btn-secondary">
                                         <i class="fas fa-times"></i> Clear All
                                     </a>
@@ -124,9 +117,6 @@
             {% if uploader_filter %}
                  Uploader: "{{ uploader_filter }}"
             {% endif %}
-            {% if performer_filter %}
-                 Performer: "{{ performer_filter }}"
-            {% endif %}
             {% if date_from or date_to %}
                 Date:{% if date_from %} From {{ date_from }}{% endif %}{% if date_to %} To {{ date_to }}{% endif %}
             {% endif %}
@@ -140,7 +130,7 @@
                 {# Previous Page Link #}
                 {% if current_page > 1 %}
                 <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, uploader=uploader_filter, performer=performer_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page-1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
                         <i class="fas fa-chevron-left"></i> Prev
                     </a>
                 </li>
@@ -166,7 +156,7 @@
                 {# Enable Next if not on the last known page OR if the total is an estimate #}
                 {% if current_page < total_pages or total_files_estimate %}
                 <li class="page-item">
-                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, uploader=uploader_filter, performer=performer_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
+                    <a class="page-link" href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page+1, search=search_query, uploader=uploader_filter, sort=sort_order, date_from=date_from, date_to=date_to) }}">
                         Next <i class="fas fa-chevron-right"></i>
                     </a>
                 </li>
@@ -192,10 +182,9 @@
                                 </div>
                             </th>
                             <th>File Name</th>
-                            <th>Performer</th>
                             <th>Size</th>
                             <th>
-                                <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, uploader=uploader_filter, performer=performer_filter, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to) }}" class="text-dark text-decoration-none">
+                                <a href="{{ url_for('browse_bucket', bucket_name=bucket_name, page=current_page, search=search_query, uploader=uploader_filter, sort='asc' if sort_order == 'desc' else 'desc', date_from=date_from, date_to=date_to) }}" class="text-dark text-decoration-none">
                                     Last Modified
                                     {% if sort_order == 'desc' %}
                                         <i class="fas fa-sort-down"></i>
@@ -223,7 +212,6 @@
                                 </div>
                             </td>
                             <td>{{ file.key }}</td>
-                            <td>{{ file.key | get_performer_name }}</td>
                             <td>{{ (file.size / 1024)|round(1) }} KB</td>
                             <td>{{ file.last_modified | datetime_mst }}</td>
                             <td>
