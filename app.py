@@ -22,6 +22,7 @@ import mimetypes
 import psutil #type:ignore
 import concurrent.futures
 from zoneinfo import ZoneInfo
+import csv
 
 load_dotenv()
 
@@ -74,10 +75,14 @@ S3_INCREDIBLE_BUCKET = os.getenv("S3_INCREDIBLE_BUCKET")
 S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
 S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
+S3_RESOURCES_BUCKET = "etickets-content-test-bucket"
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 thread_local = threading.local()
+
+# Global variable to store performer data
+performer_data = {}
 
 def get_s3_client():
     """Get thread-local S3 client to improve connection reuse"""
@@ -90,7 +95,32 @@ def get_s3_client():
         )
     return thread_local.s3_client
 
-# Initialize main S3 client and configuration
+# Function to load performer data from CSV
+def load_performer_data():
+    """Load performer data from CSV file in S3 bucket"""
+    global performer_data
+    s3 = get_s3_client()
+    
+    try:
+        # Get the CSV file from S3
+        csv_obj = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key="temp/performer-infos (1).csv")
+        csv_content = csv_obj['Body'].read().decode('utf-8')
+        
+        # Parse CSV content
+        csv_reader = csv.DictReader(csv_content.splitlines())
+        
+        # Build dictionary with performer_id as key and name_alias as value
+        performer_data = {row['performer_id']: row['name_alias'] for row in csv_reader if 'performer_id' in row and 'name_alias' in row}
+        
+        app.logger.info(f"Loaded {len(performer_data)} performers from CSV")
+    except Exception as e:
+        app.logger.error(f"Error loading performer data: {e}")
+        # Initialize empty dict if error occurs
+        performer_data = {}
+        
+    return performer_data
+
+# Initialize s3 client and load performer data at startup
 try:
     # Use the same client creation function for consistency
     s3_client = get_s3_client()
@@ -102,10 +132,36 @@ try:
         multipart_chunksize=8 * 1024 * 1024,  # 8MB
         use_threads=True
     )
+    
+    # Load performer data
+    load_performer_data()
 except NoCredentialsError:
     raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
+
+# Helper function to extract performer_id from filename
+def extract_performer_id(filename):
+    """Extract performer_id from filename with format performer_id.venue_id.webp"""
+    try:
+        # Split the filename by dots
+        parts = filename.split('.')
+        if len(parts) >= 2:
+            return parts[0]  # First part should be performer_id
+    except Exception as e:
+        app.logger.error(f"Error extracting performer_id from {filename}: {e}")
+    return None
+
+# Helper function to get performer name from performer_id
+def get_performer_name(performer_id):
+    """Get performer name (name_alias) from performer_id"""
+    global performer_data
+    
+    # If performer data is empty, try loading it again
+    if not performer_data:
+        load_performer_data()
+    
+    return performer_data.get(performer_id, "Unknown Performer")
 
 def login_required(f):
     @wraps(f)
@@ -541,6 +597,7 @@ def perf_ven_review_image_route():
     uploader_initials = "Unknown"
     review_status = "FALSE"
     perfimg_status = "FALSE"
+    performer_name = "Unknown Performer"
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
@@ -557,6 +614,15 @@ def perf_ven_review_image_route():
             review_status = metadata.get('review_status', 'FALSE')
             perfimg_status = metadata.get('perfimg_status', 'FALSE')
             app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
+            
+            # Extract performer_id from filename
+            filename = image_key.split('/')[-1]
+            performer_id = extract_performer_id(filename)
+            
+            if performer_id:
+                # Look up performer name
+                performer_name = get_performer_name(performer_id)
+                app.logger.info(f"Found performer name for ID {performer_id}: {performer_name}")
         except Exception as e:
             app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
@@ -566,7 +632,8 @@ def perf_ven_review_image_route():
                           source_bucket=source_bucket,
                           uploader_initials=uploader_initials,
                           review_status=review_status,
-                          perfimg_status=perfimg_status)
+                          perfimg_status=perfimg_status,
+                          performer_name=performer_name)
 
 @app.route('/move/<action>/<path:image_key>', methods=['POST'])
 @login_required
