@@ -1185,6 +1185,21 @@ def browse_bucket(bucket_name):
                     if f['key'] in fetched_metadata:
                         f['metadata'] = fetched_metadata[f['key']]
         
+        # --- Add Performer Names for each file ---
+        # Ensure performer data is loaded
+        if not performer_data:
+            load_performer_data()
+        
+        # Add performer name to each file based on filename
+        for f in current_page_files:
+            filename = f['key'].split('/')[-1]
+            performer_id = extract_performer_id(filename)
+            if performer_id:
+                performer_name = get_performer_name(performer_id)
+                f['performer_name'] = performer_name
+            else:
+                f['performer_name'] = "Unknown Performer"
+        
         # Count unreviewed images for all filtered files
         # We need to fetch metadata for all files to get accurate count
         keys_for_unreviewed_count = [f['key'] for f in filtered_files if not f.get('metadata')]

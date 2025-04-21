@@ -194,6 +194,7 @@
                             </th>
                             <th>Upload Time</th>
                             <th>Uploader Initials</th>
+                            <th>Performer</th>
                             <th>Reviewed</th>
                             <th>Perf Img</th>
                             {% if bucket_name == 'bad' %}
@@ -220,6 +221,9 @@
                                 {% endif %}
                             </td>
                             <td>{{ file.metadata.get('uploader-initials', 'Unknown') }}</td>
+                            <td>
+                                <span class="text-primary">{{ file.performer_name }}</span>
+                            </td>
                             <td>
                                 {% if file.metadata.get('review_status', 'FALSE') == 'TRUE' %}
                                     <span class="badge bg-success">TRUE</span>
