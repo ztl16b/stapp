@@ -24,6 +24,8 @@ import concurrent.futures
 from zoneinfo import ZoneInfo
 import csv
 import os.path
+import io
+from pathlib import Path
 
 load_dotenv()
 
@@ -108,6 +110,42 @@ except NoCredentialsError:
     raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
+
+# --- Performer lookup utility -------------------------
+PERFORMER_MAP = None          # populated on first use
+_PERFORMER_LOCK = threading.Lock()
+
+def _parse_csv(filelike):
+    """Return {performer_id: name_alias} dict from an open file-like object."""
+    reader = csv.DictReader(filelike)
+    return {row['performer_id']: row['name_alias'] for row in reader}
+
+def load_performer_map():
+    """Lazy-load the performer dictionary exactly once per dyno."""
+    global PERFORMER_MAP
+    if PERFORMER_MAP is None:            # first caller does the work
+        with _PERFORMER_LOCK:
+            if PERFORMER_MAP is None:    # double-checked locking
+                local_csv = Path(__file__).with_name('performer-infos.csv')
+                try:
+                    if local_csv.exists():                 # dev machine
+                        PERFORMER_MAP = _parse_csv(local_csv.open(encoding='utf-8'))
+                    else:                                   # dyno → S3
+                        s3 = get_s3_client()
+                        obj = s3.get_object(
+                            Bucket=os.environ.get('PERFINFO_BUCKET', S3_UPLOAD_BUCKET),
+                            Key=os.environ.get('PERFINFO_KEY', 'performer-infos.csv')
+                        )
+                        with io.TextIOWrapper(obj['Body'], encoding='utf-8') as f:
+                            PERFORMER_MAP = _parse_csv(f)
+                except Exception as e:
+                    app.logger.error(f'Unable to load performer map: {e}')
+                    PERFORMER_MAP = {}      # fall back to "Unknown"
+    return PERFORMER_MAP
+
+def performer_name(performer_id, default="Unknown Performer"):
+    """Get performer name from ID with a default fallback value."""
+    return load_performer_map().get(str(performer_id), default)
 
 def login_required(f):
     @wraps(f)
@@ -543,7 +581,7 @@ def perf_ven_review_image_route():
     uploader_initials = "Unknown"
     review_status = "FALSE"
     perfimg_status = "FALSE"
-    performer_name = "Unknown Performer"  # Default value
+    performer_name_value = "Unknown Performer"  # Default value
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
@@ -574,19 +612,9 @@ def perf_ven_review_image_route():
                     # Try to convert to integer to verify it's a numeric ID
                     try:
                         performer_id = int(performer_id)
-                        
-                        # Look up the performer name in the CSV file
-                        csv_path = os.path.join(os.path.dirname(__file__), 'performer-infos.csv')
-                        if os.path.exists(csv_path):
-                            with open(csv_path, 'r', encoding='utf-8') as csvfile:
-                                reader = csv.DictReader(csvfile)
-                                for row in reader:
-                                    if row['performer_id'] == str(performer_id):
-                                        performer_name = row['name_alias']
-                                        app.logger.info(f"Found performer name: {performer_name}")
-                                        break
-                        else:
-                            app.logger.warning(f"CSV file not found: {csv_path}")
+                        # Use our new performer lookup function
+                        performer_name_value = performer_name(performer_id)
+                        app.logger.info(f"Found performer name: {performer_name_value}")
                     except ValueError:
                         app.logger.warning(f"Invalid performer_id format: {performer_id}")
         except Exception as e:
@@ -599,7 +627,7 @@ def perf_ven_review_image_route():
                           uploader_initials=uploader_initials,
                           review_status=review_status,
                           perfimg_status=perfimg_status,
-                          performer_name=performer_name)  # Pass performer name to template
+                          performer_name=performer_name_value)  # Pass performer name to template
 
 @app.route('/move/<action>/<path:image_key>', methods=['POST'])
 @login_required
@@ -875,20 +903,9 @@ def browse_bucket(bucket_name):
 
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
         
-        # Load performer names from CSV file
-        performer_names = {}
-        csv_path = os.path.join(os.path.dirname(__file__), 'performer-infos.csv')
-        if os.path.exists(csv_path):
-            try:
-                with open(csv_path, 'r', encoding='utf-8') as csvfile:
-                    reader = csv.DictReader(csvfile)
-                    for row in reader:
-                        performer_names[row['performer_id']] = row['name_alias']
-                app.logger.info(f"Loaded {len(performer_names)} performer names from CSV")
-            except Exception as e:
-                app.logger.error(f"Error loading performer names from CSV: {e}")
-        else:
-            app.logger.warning(f"CSV file not found: {csv_path}")
+        # Load performer map (just logs a message on first use)
+        load_performer_map()
+        app.logger.info(f"Performer lookup map is ready")
 
         # --- Fetch and Filter Data ---
         all_scanned_files = []
@@ -1206,8 +1223,8 @@ def browse_bucket(bucket_name):
                         performer_id = parts[0]
                         # Try to verify it's numeric
                         int(performer_id)
-                        # Add performer name if available
-                        file['performer_name'] = performer_names.get(performer_id, "Unknown")
+                        # Add performer name using our lookup function
+                        file['performer_name'] = performer_name(performer_id, "Unknown")
                     except (ValueError, TypeError):
                         file['performer_name'] = "Unknown"
             else:

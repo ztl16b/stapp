@@ -1,7 +1,6 @@
-*.csv
-
-# Environment variables
 .env
 .env.*
 *.env
 *.env.*
+
+*.csv
