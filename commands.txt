@@ -16,7 +16,6 @@ heroku logs --tail
 python3 restatus.py --local-folder "/Users/zacklung/local_files/test_images" --status "TRUE" --bucket GOOD --dry-run
 
 
-
 TROUBLESHOOTING WORKERS
 heroku ps --app stapp
 
