@@ -32,7 +32,7 @@ template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'template
 app = Flask(__name__, template_folder=template_dir)
 
 # Set a fixed secret key for session management
-app.secret_key = os.environ.get('SECRET_KEY', 'your-fixed-secret-key-for-development')
+app.secret_key = os.environ.get('SECRET_KEY')
 
 # Define MST timezone (UTC-7)
 MST = ZoneInfo("Etc/GMT+7")
