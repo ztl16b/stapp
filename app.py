@@ -142,12 +142,17 @@ except Exception as e:
 
 # Helper function to extract performer_id from filename
 def extract_performer_id(filename):
-    """Extract performer_id from filename with format performer_id.venue_id.webp"""
+    """
+    Extract performer_id from filename with format:
+    - performer_id.venue_id.webp (for performer-at-venue images)
+    - performer_id.webp (for performer images in performer bucket)
+    """
     try:
         # Split the filename by dots
         parts = filename.split('.')
-        if len(parts) >= 2:
-            return parts[0]  # First part should be performer_id
+        # First part is always performer_id regardless of format
+        if len(parts) >= 1:
+            return parts[0]  # First part is performer_id
     except Exception as e:
         app.logger.error(f"Error extracting performer_id from {filename}: {e}")
     return None
@@ -1635,6 +1640,7 @@ def perf_review_image_route():
     uploader_initials = "Unknown"
     review_status = "FALSE"
     perfimg_status = "FALSE"
+    performer_name = "Unknown Performer"
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
@@ -1651,6 +1657,15 @@ def perf_review_image_route():
             review_status = metadata.get('review_status', 'FALSE')
             perfimg_status = metadata.get('perfimg_status', 'FALSE')
             app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
+            
+            # Extract performer_id from filename (simpler format: performer_id.webp)
+            filename = image_key.split('/')[-1]
+            performer_id = extract_performer_id(filename)
+            
+            if performer_id:
+                # Look up performer name
+                performer_name = get_performer_name(performer_id)
+                app.logger.info(f"Found performer name for ID {performer_id}: {performer_name}")
         except Exception as e:
             app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
@@ -1660,7 +1675,8 @@ def perf_review_image_route():
                           source_bucket=source_bucket,
                           uploader_initials=uploader_initials,
                           review_status=review_status,
-                          perfimg_status=perfimg_status)
+                          perfimg_status=perfimg_status,
+                          performer_name=performer_name)
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
 @login_required

@@ -44,6 +44,15 @@
     .btn-group-centered form {
         margin: 0 5px;
     }
+    
+    .performer-name {
+        font-weight: bold;
+        color: #0d6efd;
+        margin-bottom: 15px;
+        font-size: 1.2em;
+        border-bottom: 1px solid #dee2e6;
+        padding-bottom: 8px;
+    }
 </style>
 {% endblock %}
 
@@ -86,6 +95,9 @@
             <div class="metadata-area">
                 <div class="metadata-box">
                     <h5 class="mb-3">Performer Image Information</h5>
+                    <div class="performer-name">
+                        <i class="fas fa-user-music"></i> {{ performer_name }}
+                    </div>
                     <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
                     <p class="mb-2"><strong>Review Status:</strong> 
                         {% if review_status == 'TRUE' %}
