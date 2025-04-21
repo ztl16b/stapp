@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 import csv
 import os.path
 from pathlib import Path
+import urllib.parse
 
 load_dotenv()
 
@@ -101,8 +102,37 @@ _PERFORMER_LOCK = threading.Lock()
 
 def _parse_csv(filelike):
     """Return {performer_id: name_alias} dict from an open file-like object."""
-    reader = csv.DictReader(filelike)
-    return {row['performer_id']: row['name_alias'] for row in reader}
+    try:
+        reader = csv.DictReader(filelike)
+        # Log the first few rows and column names to debug
+        columns = reader.fieldnames
+        app.logger.info(f"CSV columns found: {columns}")
+        
+        result = {}
+        # Limit rows for debug output
+        row_count = 0
+        for row in reader:
+            # The actual CSV has "performer_id" and "name_alias" columns
+            if 'performer_id' not in row or 'name_alias' not in row:
+                app.logger.error(f"CSV missing required columns. Row data: {row}")
+                if row_count < 5:  # Only log a few rows to avoid flooding logs
+                    app.logger.info(f"Sample row: {row}")
+                break
+                
+            # Add to our mapping - key is performer_id, value is name_alias
+            performer_id = row['performer_id'].strip()
+            name = row['name_alias'].strip()
+            result[performer_id] = name
+            
+            if row_count < 5:  # Log first few rows
+                app.logger.info(f"Parsed row: {performer_id} -> {name}")
+            row_count += 1
+        
+        app.logger.info(f"Parsed {len(result)} performer entries")
+        return result
+    except Exception as e:
+        app.logger.error(f"Error parsing CSV: {e}", exc_info=True)
+        return {}
 
 def load_performer_map():
     """Lazy-load the performer dictionary exactly once per dyno."""
@@ -116,24 +146,80 @@ def load_performer_map():
                         app.logger.info(f"Loading performer info from local file: {local_csv}")
                         with local_csv.open(encoding='utf-8') as f:
                             PERFORMER_MAP = _parse_csv(f)
-                    else:                                  # dyno → S3
-                        app.logger.info(f"Loading performer info from S3: {PERFINFO_BUCKET}/{PERFINFO_KEY}")
-                        s3 = get_s3_client()
-                        obj = s3.get_object(
-                            Bucket=PERFINFO_BUCKET,
-                            Key=PERFINFO_KEY
-                        )
-                        with TextIOWrapper(obj['Body'], encoding='utf-8') as f:
-                            PERFORMER_MAP = _parse_csv(f)
-                    app.logger.info(f"Loaded {len(PERFORMER_MAP)} performer entries")
+                    else:                                  # production -> S3
+                        # First try the S3 path without spaces or parentheses
+                        s3_key = "temp/performer-infos.csv"
+                        app.logger.info(f"Trying to load performer info from S3: {PERFINFO_BUCKET}/{s3_key}")
+                        
+                        try:
+                            s3 = get_s3_client()
+                            obj = s3.get_object(
+                                Bucket=PERFINFO_BUCKET,
+                                Key=s3_key
+                            )
+                            with TextIOWrapper(obj['Body'], encoding='utf-8') as f:
+                                PERFORMER_MAP = _parse_csv(f)
+                                
+                        except Exception as e1:
+                            app.logger.warning(f"Failed to load from {s3_key}: {e1}")
+                            
+                            # Try with exact filename from environment variable
+                            app.logger.info(f"Trying with environment variable path: {PERFINFO_KEY}")
+                            try:
+                                s3 = get_s3_client()
+                                obj = s3.get_object(
+                                    Bucket=PERFINFO_BUCKET,
+                                    Key=PERFINFO_KEY
+                                )
+                                with TextIOWrapper(obj['Body'], encoding='utf-8') as f:
+                                    PERFORMER_MAP = _parse_csv(f)
+                                    
+                            except Exception as e2:
+                                app.logger.warning(f"Failed with environment variable path: {e2}")
+                                
+                                # Last attempt with URL-encoded filename
+                                encoded_key = urllib.parse.quote(PERFINFO_KEY)
+                                app.logger.info(f"Trying with URL-encoded path: {encoded_key}")
+                                s3 = get_s3_client()
+                                obj = s3.get_object(
+                                    Bucket=PERFINFO_BUCKET,
+                                    Key=encoded_key
+                                )
+                                with TextIOWrapper(obj['Body'], encoding='utf-8') as f:
+                                    PERFORMER_MAP = _parse_csv(f)
+                    
+                    # Log success information
+                    if PERFORMER_MAP:
+                        app.logger.info(f"Successfully loaded {len(PERFORMER_MAP)} performer entries")
+                        # Log some sample entries for debugging
+                        sample_keys = list(PERFORMER_MAP.keys())[:5] if PERFORMER_MAP else []
+                        app.logger.info(f"Sample performer entries: {[{k: PERFORMER_MAP[k]} for k in sample_keys]}")
+                    else:
+                        app.logger.warning("Loaded performer map is empty!")
+                        
                 except Exception as e:
-                    app.logger.error(f'Unable to load performer map: {e}')
+                    app.logger.error(f'Unable to load performer map: {e}', exc_info=True)
                     PERFORMER_MAP = {}      # fall back to "Unknown"
     return PERFORMER_MAP
 
 def performer_name(performer_id, default="Unknown Performer"):
     """Return the performer name for the given ID, or default if not found."""
-    return load_performer_map().get(str(performer_id), default)
+    if not performer_id:
+        app.logger.warning("Empty performer_id passed to performer_name()")
+        return default
+        
+    # Convert to string to ensure lookup works
+    performer_id = str(performer_id).strip()
+    
+    # Get the map and look up the name
+    performer_map = load_performer_map()
+    result = performer_map.get(performer_id, default)
+    
+    # Log information about cache hits/misses for debugging
+    if performer_id not in performer_map and performer_map:
+        app.logger.warning(f"No performer found for ID: {performer_id}")
+    
+    return result
 
 # Initialize main S3 client and configuration
 try:
@@ -612,16 +698,16 @@ def perf_ven_review_image_route():
             if '.' in filename:
                 parts = filename.split('.')
                 if len(parts) >= 2:
-                    performer_id = parts[0]
+                    perf_id = parts[0]
                     
                     # Try to convert to integer to verify it's a numeric ID
                     try:
-                        performer_id = int(performer_id)
                         # Use our new performer lookup function
-                        perf_name = performer_name(performer_id)
-                        app.logger.info(f"Found performer name: {perf_name}")
-                    except ValueError:
-                        app.logger.warning(f"Invalid performer_id format: {performer_id}")
+                        from_lookup = performer_name(perf_id)
+                        app.logger.info(f"Found performer name: {from_lookup}")
+                        perf_name = from_lookup
+                    except ValueError as e:
+                        app.logger.warning(f"Invalid performer_id format: {perf_id}. Error: {e}")
         except Exception as e:
             app.logger.error(f"Error getting metadata or performer name for {image_key}: {e}")
 
@@ -1216,19 +1302,23 @@ def browse_bucket(bucket_name):
         # --- Extract performer names for all filtered files ---
         for file in filtered_files:
             filename = file['key'].split('/')[-1]
-            performer_id = None
             
             # Extract performer_id from filename (format: performer_id.venue_id.webp)
             if '.' in filename:
                 parts = filename.split('.')
                 if len(parts) >= 2:
                     try:
-                        performer_id = parts[0]
+                        # Get just the first part (performer_id)
+                        perf_id = parts[0].strip()
                         # Try to verify it's numeric
-                        int(performer_id)
+                        int(perf_id)
                         # Use the performer_name lookup function
-                        file['performer_name'] = performer_name(performer_id)
-                    except (ValueError, TypeError):
+                        file['performer_name'] = performer_name(perf_id)
+                        # If for some reason lookup returned empty, use default
+                        if not file['performer_name']:
+                            file['performer_name'] = "Unknown Performer"
+                    except (ValueError, TypeError) as e:
+                        app.logger.warning(f"Cannot parse performer_id from {filename}: {e}")
                         file['performer_name'] = "Unknown"
             else:
                 file['performer_name'] = "Unknown"
