@@ -121,7 +121,39 @@ def _parse_csv(filelike):
             dialect = csv.excel
             filelike.seek(0)
         
-        # Read all lines to log structure
+        # Based on our analysis, the CSV has columns "performer_id" and "name_alias"
+        # Let's try to process it directly with DictReader
+        try:
+            filelike.seek(0)
+            reader = csv.DictReader(filelike)
+            
+            # Process the first row to examine column names
+            sample_row = next(reader, None)
+            if sample_row:
+                app.logger.info(f"CSV column names: {list(sample_row.keys())}")
+                
+                # Reset to read all rows
+                filelike.seek(0)
+                reader = csv.DictReader(filelike)
+                
+                result = {}
+                for row in reader:
+                    if 'performer_id' in row and 'name_alias' in row:
+                        perf_id = row['performer_id'].strip()
+                        name = row['name_alias'].strip()
+                        if perf_id and name:
+                            result[perf_id] = name
+                
+                if result:
+                    app.logger.info(f"Successfully loaded {len(result)} performer entries using DictReader")
+                    sample_entries = list(result.items())[:3]
+                    app.logger.info(f"Sample entries: {sample_entries}")
+                    return result
+        except Exception as e:
+            app.logger.error(f"Error using DictReader: {e}", exc_info=True)
+        
+        # Fall back to manual parsing
+        filelike.seek(0)
         reader = csv.reader(filelike, dialect)
         rows = list(reader)
         
@@ -131,7 +163,7 @@ def _parse_csv(filelike):
             
         # Log the header row to debug column names
         header = rows[0]
-        app.logger.info(f"CSV headers: {header}")
+        app.logger.info(f"CSV headers (using reader): {header}")
         
         # Find column indexes for performer_id and name_alias
         try:
@@ -143,8 +175,10 @@ def _parse_csv(filelike):
                 col_lower = col_name.lower().strip()
                 if col_lower == "performer_id":
                     id_col = idx
+                    app.logger.info(f"Found performer_id at column {idx}")
                 elif col_lower == "name_alias":
                     name_col = idx
+                    app.logger.info(f"Found name_alias at column {idx}")
             
             # If not found, try similar names
             if id_col == -1:
@@ -152,87 +186,46 @@ def _parse_csv(filelike):
                     col_lower = col_name.lower().strip()
                     if "id" in col_lower and "performer" in col_lower:
                         id_col = idx
-                        app.logger.info(f"Using column '{col_name}' for performer ID")
+                        app.logger.info(f"Using column '{col_name}' for performer ID at index {idx}")
                         break
             
             if name_col == -1:
                 for idx, col_name in enumerate(header):
                     col_lower = col_name.lower().strip()
-                    if "name" in col_lower or "alias" in col_lower or "performer" in col_lower:
+                    if "name" in col_lower or "alias" in col_lower:
                         name_col = idx
-                        app.logger.info(f"Using column '{col_name}' for performer name")
+                        app.logger.info(f"Using column '{col_name}' for performer name at index {idx}")
                         break
             
             if id_col == -1 or name_col == -1:
                 raise ValueError(f"Could not identify performer_id/name_alias columns in {header}")
                 
-            app.logger.info(f"Found performer_id at column {id_col}, name_alias at column {name_col}")
+            app.logger.info(f"Using performer_id at column {id_col}, name_alias at column {name_col}")
+            
+            # Build the lookup dictionary
+            result = {}
+            for row in rows[1:]:  # Skip header
+                if len(row) > max(id_col, name_col):
+                    performer_id = row[id_col].strip()
+                    name = row[name_col].strip()
+                    if performer_id and name:  # Only add if both values exist
+                        # Remove quotes if present
+                        if performer_id.startswith('"') and performer_id.endswith('"'):
+                            performer_id = performer_id[1:-1]
+                        if name.startswith('"') and name.endswith('"'):
+                            name = name[1:-1]
+                        
+                        result[performer_id] = name
+            
+            app.logger.info(f"Successfully loaded {len(result)} performer entries")
+            # Log a few sample entries for verification
+            sample_entries = list(result.items())[:3]
+            app.logger.info(f"Sample entries: {sample_entries}")
+            
+            return result
         except ValueError as e:
             app.logger.error(f"Required columns not found in CSV: {e}")
-            # Try with DictReader instead (reset file position)
-            filelike.seek(0)
-            reader = csv.DictReader(filelike)
-            sample_row = next(reader, None)
-            if sample_row:
-                app.logger.info(f"Sample row keys: {list(sample_row.keys())}")
-                # Try to identify the right columns
-                id_field = None
-                name_field = None
-                
-                for field in sample_row.keys():
-                    field_lower = field.lower().strip()
-                    if field_lower == "performer_id":
-                        id_field = field
-                    elif field_lower == "name_alias":
-                        name_field = field
-                
-                # If not found, make best effort guesses
-                if not id_field:
-                    for field in sample_row.keys():
-                        field_lower = field.lower().strip()
-                        if "id" in field_lower and "performer" in field_lower:
-                            id_field = field
-                            app.logger.info(f"Using column '{field}' for performer ID")
-                            break
-                
-                if not name_field:
-                    for field in sample_row.keys():
-                        field_lower = field.lower().strip()
-                        if "name" in field_lower or "alias" in field_lower or "performer" in field_lower:
-                            name_field = field
-                            app.logger.info(f"Using column '{field}' for performer name")
-                            break
-                
-                if id_field and name_field:
-                    app.logger.info(f"Will use fields: {id_field} for ID, {name_field} for name")
-                    # Read from beginning again
-                    filelike.seek(0)
-                    reader = csv.DictReader(filelike)
-                    result = {}
-                    for row in reader:
-                        performer_id = row.get(id_field, "").strip()
-                        name = row.get(name_field, "").strip()
-                        if performer_id and name:
-                            result[performer_id] = name
-                    return result
-            
             return {}
-        
-        # Build the lookup dictionary
-        result = {}
-        for row in rows[1:]:  # Skip header
-            if len(row) > max(id_col, name_col):
-                performer_id = row[id_col].strip()
-                name = row[name_col].strip()
-                if performer_id and name:  # Only add if both values exist
-                    result[performer_id] = name
-        
-        app.logger.info(f"Successfully loaded {len(result)} performer entries")
-        # Log a few sample entries for verification
-        sample_entries = list(result.items())[:3]
-        app.logger.info(f"Sample entries: {sample_entries}")
-        
-        return result
     except Exception as e:
         app.logger.error(f"Error parsing CSV: {e}", exc_info=True)
         return {}
@@ -265,64 +258,110 @@ def load_performer_map():
                         bucket = 'etickets-content-test-bucket'
                         key = 'temp/performer-infos (1).csv'
                         
+                        # Try alternate keys if specified one fails
+                        alternate_keys = [
+                            'temp/performer-infos%20(1).csv',  # URL encoded space
+                            'temp/performer-infos(1).csv',     # No space
+                            'temp/performer-infos.csv',        # Simple name
+                            'performer-infos.csv',             # No folder
+                            'performer-infos (1).csv'          # No folder with space
+                        ]
+                        
                         # Override with environment variables if set
                         bucket = os.environ.get('PERFINFO_BUCKET', bucket)
                         key = os.environ.get('PERFINFO_KEY', key)
                         
                         app.logger.info(f"Loading performer info from S3: {bucket}/{key}")
                         
-                        try:
-                            # Test if the object exists first
-                            s3.head_object(Bucket=bucket, Key=key)
-                            
-                            # Get the object
-                            obj = s3.get_object(Bucket=bucket, Key=key)
-                            content_type = obj.get('ContentType', '')
-                            app.logger.info(f"S3 object content type: {content_type}")
-                            
-                            # Log some information about the object
-                            size = obj.get('ContentLength', 0)
-                            app.logger.info(f"S3 object size: {size} bytes")
-                            
-                            # Process the CSV content
-                            with io.TextIOWrapper(obj['Body'], encoding='utf-8') as f:
-                                PERFORMER_MAP = _parse_csv(f)
-                                app.logger.info(f"Successfully loaded {len(PERFORMER_MAP)} performer names from S3")
+                        success = False
+                        for try_key in [key] + alternate_keys:
+                            if success:
+                                break
                                 
-                                # If we got no entries, try alternative approaches
-                                if not PERFORMER_MAP:
-                                    app.logger.warning("No entries loaded, trying alternative CSV parsing approaches")
-                                    # Reset the body stream
-                                    obj = s3.get_object(Bucket=bucket, Key=key)
-                                    # Try reading the whole file as text
-                                    content = obj['Body'].read().decode('utf-8')
-                                    app.logger.info(f"Raw content size: {len(content)} bytes")
-                                    # Log a sample
-                                    app.logger.info(f"Content sample: {content[:200]}...")
+                            try:
+                                app.logger.info(f"Trying to load CSV from: {bucket}/{try_key}")
+                                # Test if the object exists first
+                                try:
+                                    s3.head_object(Bucket=bucket, Key=try_key)
+                                    app.logger.info(f"Found S3 object at {bucket}/{try_key}")
+                                except ClientError as e:
+                                    if e.response['Error']['Code'] == '404':
+                                        app.logger.warning(f"S3 object not found: {bucket}/{try_key}")
+                                        continue
+                                    else:
+                                        raise
+                                
+                                # Get the object
+                                obj = s3.get_object(Bucket=bucket, Key=try_key)
+                                content_type = obj.get('ContentType', '')
+                                app.logger.info(f"S3 object content type: {content_type}")
+                                
+                                # Log some information about the object
+                                size = obj.get('ContentLength', 0)
+                                app.logger.info(f"S3 object size: {size} bytes")
+                                
+                                # Process the CSV content
+                                with io.TextIOWrapper(obj['Body'], encoding='utf-8') as f:
+                                    PERFORMER_MAP = _parse_csv(f)
+                                    app.logger.info(f"Successfully loaded {len(PERFORMER_MAP)} performer names from S3")
                                     
-                                    # Try parsing CSV from memory
-                                    try:
-                                        csv_file = io.StringIO(content)
-                                        reader = csv.DictReader(csv_file)
-                                        PERFORMER_MAP = {row['performer_id']: row['name_alias'] 
-                                                        for row in reader 
-                                                        if 'performer_id' in row and 'name_alias' in row}
-                                        app.logger.info(f"Successfully loaded {len(PERFORMER_MAP)} entries using alternative method")
-                                    except Exception as e:
-                                        app.logger.error(f"Alternative parsing failed: {e}", exc_info=True)
-                                        PERFORMER_MAP = {}
-                        except ClientError as e:
-                            app.logger.error(f"S3 error accessing {bucket}/{key}: {e}", exc_info=True)
-                            if e.response['Error']['Code'] == 'NoSuchKey':
-                                app.logger.error(f"The key {key} does not exist in bucket {bucket}")
-                            elif e.response['Error']['Code'] == 'NoSuchBucket':
-                                app.logger.error(f"The bucket {bucket} does not exist")
-                            else:
-                                app.logger.error(f"S3 error code: {e.response['Error']['Code']}")
-                            PERFORMER_MAP = {}
-                        except Exception as e:
-                            app.logger.error(f"Error loading from S3: {e}", exc_info=True)
-                            PERFORMER_MAP = {}
+                                    if PERFORMER_MAP:
+                                        success = True
+                                        app.logger.info(f"Successfully loaded performer data from {bucket}/{try_key}")
+                                    
+                                    # If we got no entries, try alternative approaches
+                                    if not PERFORMER_MAP:
+                                        app.logger.warning("No entries loaded, trying alternative CSV parsing approaches")
+                                        # Reset the body stream
+                                        obj = s3.get_object(Bucket=bucket, Key=try_key)
+                                        # Try reading the whole file as text
+                                        content = obj['Body'].read().decode('utf-8')
+                                        app.logger.info(f"Raw content size: {len(content)} bytes")
+                                        # Log a sample
+                                        app.logger.info(f"Content sample: {content[:200]}...")
+                                        
+                                        # Try parsing CSV from memory
+                                        try:
+                                            csv_file = io.StringIO(content)
+                                            reader = csv.DictReader(csv_file)
+                                            temp_map = {}
+                                            for row in reader:
+                                                # Debug what columns are in the CSV
+                                                if len(temp_map) == 0:
+                                                    app.logger.info(f"CSV columns detected: {list(row.keys())}")
+                                                
+                                                # Try different column names
+                                                perf_id = None
+                                                name = None
+                                                
+                                                # Try known column patterns
+                                                for key in row:
+                                                    key_lower = key.lower().strip()
+                                                    if key_lower == 'performer_id' or key_lower == 'id':
+                                                        perf_id = row[key]
+                                                    elif key_lower == 'name_alias' or key_lower == 'name' or key_lower == 'alias':
+                                                        name = row[key]
+                                                
+                                                if perf_id and name:
+                                                    temp_map[str(perf_id).strip()] = name.strip()
+                                            
+                                            if temp_map:
+                                                PERFORMER_MAP = temp_map
+                                                app.logger.info(f"Successfully loaded {len(PERFORMER_MAP)} entries using alternative method")
+                                                success = True
+                                        except Exception as e:
+                                            app.logger.error(f"Alternative parsing failed: {e}", exc_info=True)
+                            except ClientError as e:
+                                app.logger.error(f"S3 error accessing {bucket}/{try_key}: {e}", exc_info=True)
+                                if e.response['Error']['Code'] == 'NoSuchKey':
+                                    app.logger.error(f"The key {try_key} does not exist in bucket {bucket}")
+                                elif e.response['Error']['Code'] == 'NoSuchBucket':
+                                    app.logger.error(f"The bucket {bucket} does not exist")
+                                else:
+                                    app.logger.error(f"S3 error code: {e.response['Error']['Code']}")
+                            except Exception as e:
+                                app.logger.error(f"Error loading from S3: {e}", exc_info=True)
+                                
                 except Exception as e:
                     app.logger.error(f'Unable to load performer map: {e}', exc_info=True)
                     PERFORMER_MAP = {}      # fall back to empty dictionary
@@ -861,15 +900,37 @@ def perf_ven_review_image_route():
             # Check if the filename has the expected format
             if '.' in filename:
                 parts = filename.split('.')
+                app.logger.info(f"Filename parts: {parts}")
+                
                 if len(parts) >= 2:
+                    # First part should be performer_id
                     performer_id = parts[0]
+                    app.logger.info(f"Extracted performer_id: {performer_id}")
                     
                     # Try to convert to integer to verify it's a numeric ID
                     try:
-                        performer_id = int(performer_id)
-                        # Use the new performer lookup function
-                        performer_name_value = performer_name(performer_id)
-                        app.logger.info(f"Found performer name: {performer_name_value}")
+                        # Clean the performer_id - remove any non-numeric characters
+                        # This helps with filenames that might have prefixes or formatting
+                        performer_id = re.sub(r'\D', '', performer_id)
+                        if performer_id:
+                            performer_id = int(performer_id)
+                            app.logger.info(f"Cleaned performer_id: {performer_id}")
+                            
+                            # Check if we have this ID in our map before lookup
+                            perf_map = load_performer_map()
+                            if str(performer_id) in perf_map:
+                                app.logger.info(f"Performer ID {performer_id} found in map")
+                            else:
+                                app.logger.warning(f"Performer ID {performer_id} NOT found in map")
+                                # Log some existing keys for debugging
+                                some_keys = list(perf_map.keys())[:5] if perf_map else []
+                                app.logger.info(f"Sample performer IDs in map: {some_keys}")
+                            
+                            # Use the new performer lookup function
+                            performer_name_value = performer_name(performer_id)
+                            app.logger.info(f"Found performer name: {performer_name_value}")
+                        else:
+                            app.logger.warning(f"No numeric characters found in performer_id part: {parts[0]}")
                     except ValueError:
                         app.logger.warning(f"Invalid performer_id format: {performer_id}")
         except Exception as e:
@@ -1474,11 +1535,25 @@ def browse_bucket(bucket_name):
                 parts = filename.split('.')
                 if len(parts) >= 2:
                     try:
-                        performer_id = parts[0]
-                        # Try to verify it's numeric
-                        int(performer_id)
-                        # Add performer name using our new lookup function
-                        file['performer_name'] = performer_name(performer_id)
+                        # First part should be performer_id
+                        raw_performer_id = parts[0]
+                        
+                        # Clean the performer_id - remove any non-numeric characters
+                        # This helps with filenames that might have prefixes or formatting
+                        performer_id = re.sub(r'\D', '', raw_performer_id)
+                        
+                        if performer_id:
+                            # Try to verify it's numeric
+                            int(performer_id)
+                            # Add performer name using our lookup function
+                            performer_name_result = performer_name(performer_id)
+                            file['performer_name'] = performer_name_result
+                            
+                            # For debugging, if name is "Unknown", log it
+                            if performer_name_result == "Unknown Performer":
+                                app.logger.debug(f"Unknown performer for ID {performer_id} from filename {filename}")
+                        else:
+                            file['performer_name'] = "Unknown"
                     except (ValueError, TypeError):
                         file['performer_name'] = "Unknown"
             else:
