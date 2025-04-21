@@ -24,8 +24,6 @@ import concurrent.futures
 from zoneinfo import ZoneInfo
 import csv
 import os.path
-import io
-from pathlib import Path
 
 load_dotenv()
 
@@ -94,24 +92,10 @@ def get_s3_client():
         )
     return thread_local.s3_client
 
-# Initialize main S3 client and configuration
-try:
-    # Use the same client creation function for consistency
-    s3_client = get_s3_client()
-    
-    # Create a reusable S3 upload configuration 
-    s3_upload_config = boto3.s3.transfer.TransferConfig(
-        multipart_threshold=8 * 1024 * 1024,  # 8MB
-        max_concurrency=10,
-        multipart_chunksize=8 * 1024 * 1024,  # 8MB
-        use_threads=True
-    )
-except NoCredentialsError:
-    raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
-except Exception as e:
-    raise ValueError(f"Error initializing S3 client: {e}")
+# --- Performer lookup functionality -------------------------
+import csv, io, threading
+from pathlib import Path
 
-# --- Performer lookup utility -------------------------
 PERFORMER_MAP = None          # populated on first use
 _PERFORMER_LOCK = threading.Lock()
 
@@ -129,23 +113,44 @@ def load_performer_map():
                 local_csv = Path(__file__).with_name('performer-infos.csv')
                 try:
                     if local_csv.exists():                 # dev machine
-                        PERFORMER_MAP = _parse_csv(local_csv.open(encoding='utf-8'))
+                        with open(local_csv, 'r', encoding='utf-8') as f:
+                            PERFORMER_MAP = _parse_csv(f)
+                            app.logger.info(f"Loaded {len(PERFORMER_MAP)} performer names from local CSV file")
                     else:                                   # dyno → S3
                         s3 = get_s3_client()
-                        obj = s3.get_object(
-                            Bucket=os.environ.get('PERFINFO_BUCKET', S3_UPLOAD_BUCKET),
-                            Key=os.environ.get('PERFINFO_KEY', 'performer-infos.csv')
-                        )
+                        # Use environment variables if set, otherwise use hardcoded values
+                        bucket = os.environ.get('PERFINFO_BUCKET', 'etickets-content-test-bucket')
+                        key = os.environ.get('PERFINFO_KEY', 'temp/performer-infos (1).csv')
+                        app.logger.info(f"Loading performer info from S3: {bucket}/{key}")
+                        obj = s3.get_object(Bucket=bucket, Key=key)
                         with io.TextIOWrapper(obj['Body'], encoding='utf-8') as f:
                             PERFORMER_MAP = _parse_csv(f)
+                            app.logger.info(f"Loaded {len(PERFORMER_MAP)} performer names from S3")
                 except Exception as e:
                     app.logger.error(f'Unable to load performer map: {e}')
-                    PERFORMER_MAP = {}      # fall back to "Unknown"
+                    PERFORMER_MAP = {}      # fall back to empty dictionary
     return PERFORMER_MAP
 
 def performer_name(performer_id, default="Unknown Performer"):
-    """Get performer name from ID with a default fallback value."""
+    """Get a performer name by ID with fallback to a default value."""
     return load_performer_map().get(str(performer_id), default)
+
+# Initialize main S3 client and configuration
+try:
+    # Use the same client creation function for consistency
+    s3_client = get_s3_client()
+    
+    # Create a reusable S3 upload configuration 
+    s3_upload_config = boto3.s3.transfer.TransferConfig(
+        multipart_threshold=8 * 1024 * 1024,  # 8MB
+        max_concurrency=10,
+        multipart_chunksize=8 * 1024 * 1024,  # 8MB
+        use_threads=True
+    )
+except NoCredentialsError:
+    raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
+except Exception as e:
+    raise ValueError(f"Error initializing S3 client: {e}")
 
 def login_required(f):
     @wraps(f)
@@ -612,7 +617,7 @@ def perf_ven_review_image_route():
                     # Try to convert to integer to verify it's a numeric ID
                     try:
                         performer_id = int(performer_id)
-                        # Use our new performer lookup function
+                        # Use the new performer lookup function
                         performer_name_value = performer_name(performer_id)
                         app.logger.info(f"Found performer name: {performer_name_value}")
                     except ValueError:
@@ -903,10 +908,9 @@ def browse_bucket(bucket_name):
 
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
         
-        # Load performer map (just logs a message on first use)
-        load_performer_map()
-        app.logger.info(f"Performer lookup map is ready")
-
+        # No need to load performer names from CSV file directly anymore
+        # That's handled by the performer_name function
+        
         # --- Fetch and Filter Data ---
         all_scanned_files = []
         s3 = get_s3_client() # Use thread-local client
@@ -1223,8 +1227,8 @@ def browse_bucket(bucket_name):
                         performer_id = parts[0]
                         # Try to verify it's numeric
                         int(performer_id)
-                        # Add performer name using our lookup function
-                        file['performer_name'] = performer_name(performer_id, "Unknown")
+                        # Add performer name using our new lookup function
+                        file['performer_name'] = performer_name(performer_id)
                     except (ValueError, TypeError):
                         file['performer_name'] = "Unknown"
             else:
