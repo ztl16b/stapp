@@ -1796,6 +1796,7 @@ def add_perf_review_route():
     uploader_initials = "Unknown"
     review_status = "FALSE"
     perfimg_status = "FALSE"
+    performer_name = "Unknown Performer"
     
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
@@ -1812,6 +1813,15 @@ def add_perf_review_route():
             review_status = metadata.get('review_status', 'FALSE')
             perfimg_status = metadata.get('perfimg_status', 'FALSE')
             app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
+            
+            # Extract performer_id from filename
+            filename = image_key.split('/')[-1]
+            performer_id = extract_performer_id(filename)
+            
+            if performer_id:
+                # Look up performer name
+                performer_name = get_performer_name(performer_id)
+                app.logger.info(f"Found performer name for ID {performer_id}: {performer_name}")
         except Exception as e:
             app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
@@ -1821,7 +1831,8 @@ def add_perf_review_route():
                           source_bucket=source_bucket,
                           uploader_initials=uploader_initials,
                           review_status=review_status,
-                          perfimg_status=perfimg_status)
+                          perfimg_status=perfimg_status,
+                          performer_name=performer_name)
 
 @app.route('/add_perf_action/<action>/<path:image_key>', methods=['POST'])
 @login_required
