@@ -1734,11 +1734,6 @@ def perf_review_image_route():
 
 # ─── Google Custom Search  (multi-image + GPT pick) ──────────────────────────
 def get_reference_image_url(subject: str, num_candidates: int = 6) -> str | None:
-    """
-    1. Pull up to `num_candidates` large images from Google CSE for the subject.
-    2. Let GPT-4o-mini decide which is best.
-    3. Return the chosen URL (or the first result as a fallback).
-    """
     key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
     if not (key and cx):
         app.logger.warning("GOOGLE_CSE_KEY / GOOGLE_CSE_CX not set → no reference image.")
@@ -1756,7 +1751,7 @@ def get_reference_image_url(subject: str, num_candidates: int = 6) -> str | None
             "cx": cx,
             "q": query,
             "searchType": "image",
-            "num": min(max(num_candidates, 1), 10),
+            "num": 5,
             "imgSize": "LARGE",
             "safe": "high"
         }
