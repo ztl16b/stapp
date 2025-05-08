@@ -1711,8 +1711,7 @@ def get_reference_image_url(subject: str) -> str | None:
         return None
     
     query = (
-        f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" '
-        f'OR "press photo" OR "official photo" OR "concert photo") '
+        f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" OR "press photo" OR "official photo" OR "concert photo") '
     )
 
     try:
@@ -1721,8 +1720,7 @@ def get_reference_image_url(subject: str) -> str | None:
             "cx": cx,
             "q": query,
             "searchType": "image",
-            "num": 1,
-            "imgSize": "LARGE",
+            "num": 1
         }
         r = requests.get("https://customsearch.googleapis.com/customsearch/v1", params=params, timeout=6)
         r.raise_for_status()
