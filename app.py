@@ -1709,12 +1709,18 @@ def get_reference_image_url(subject: str) -> str | None:
     if not (key and cx):
         app.logger.warning("GOOGLE_CSE_KEY / GOOGLE_CSE_CX not set → no reference image.")
         return None
+    
+    query = (
+        f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" '
+        f'OR "press photo" OR "official photo" OR "concert photo") '
+        f'-site:pinterest.com -site:facebook.com -site:alamy.com -site:imdb.com'
+    )
 
     try:
         params = {
             "key": key,
             "cx": cx,
-            "q": f"{subject} live",          # live-performance bias
+            "q": f"{subject}",
             "searchType": "image",
             "num": 1,
             "imgSize": "LARGE",
