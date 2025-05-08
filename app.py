@@ -123,6 +123,7 @@ try:
     )
     
     load_performer_data()
+
 except NoCredentialsError:
     raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
 except Exception as e:
@@ -1726,47 +1727,31 @@ def perf_review_image_route():
 
 
 # ─── Google Custom Search  (multi-image + GPT pick) ──────────────────────────
-def get_reference_image_url(subject: str, num_candidates: int = 6) -> str | None:
+def get_reference_image_url(subject: str) -> str | None:
     key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
     if not (key and cx):
         app.logger.warning("GOOGLE_CSE_KEY / GOOGLE_CSE_CX not set → no reference image.")
         return None
-
-    # Broaden the query slightly (can tweak as needed)
-    query = (f'{subject} photo')
+    
+    query = (
+        f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" OR "press photo" OR "official photo" OR "concert photo") '
+    )
 
     try:
         params = {
             "key": key, "cx": cx, "q": query,
             "searchType": "image",
-            "num": 5,
-            "imgSize": "LARGE"
+            "num": 8
         }
-        r = requests.get(
-            "https://customsearch.googleapis.com/customsearch/v1",
-            params=params,
-            timeout=6
-        )
+        r = requests.get("https://customsearch.googleapis.com/customsearch/v1", params=params, timeout=6)
         r.raise_for_status()
-
         items = r.json().get("items", [])
-        candidate_urls = [item["link"] for item in items if "link" in item]
-
-        if not candidate_urls:
-            return None
-
-        # Ask GPT-4o-mini to choose the best one
-        best_url = _choose_best_reference(subject, candidate_urls)
-        if best_url:
-            return best_url
-
-        # Fallback – just return the first Google result
-        return candidate_urls[0]
-
+        if items:
+            return items[0]["link"]
     except Exception as e:
         app.logger.error(f"Google CSE fetch failed for '{subject}': {e}")
-
     return None
+
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
 @login_required
