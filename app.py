@@ -135,25 +135,20 @@ except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
 
 def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | None:
-    """
-    Given a list of image URLs, ask GPT-4o-mini (multimodal) to return the
-    single best reference image for `subject`. Returns None on failure.
-    """
     if not (OPENAI_API_KEY and candidate_urls):
         return None
 
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
 
-        # Build multimodal user content: first a text instruction, then images.
         user_content = [
             {
                 "type": "text",
                 "text": (
-                    f"You are curating a photo reference for **{subject}**.\n"
-                    f"Pick the ONE image that most clearly and accurately shows "
-                    f"{subject} (press-quality, recognisable face, good lighting, "
-                    f"no watermarks or heavy filters). Return ONLY its direct URL."
+                    f"Is this a photographic image of {performer}. "
+                    "You are choosing reference images to be fed into a AI Image Generation model. "
+                    "This should help the Image Generation understand {performer}'s' likeness. Do not be too picky."
+                    "(no illustration, no album cover, minimal or no text)? Return ONLY its direct URL."
                 )
             }
         ] + [
@@ -186,13 +181,7 @@ def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | Non
     return None
 
 
-# Helper function to extract performer_id from filename
 def extract_performer_id(filename):
-    """
-    Extract performer_id from filename with format:
-    - performer_id.venue_id.webp (for performer-at-venue images)
-    - performer_id.webp (for performer images in performer bucket)
-    """
     try:
         # Split the filename by dots
         parts = filename.split('.')
