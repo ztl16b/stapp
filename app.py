@@ -81,6 +81,9 @@ S3_RESOURCES_BUCKET = "etickets-content-test-bucket"
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = "gpt-4o-mini"
+
 thread_local = threading.local()
 
 # Global variable to store performer data
