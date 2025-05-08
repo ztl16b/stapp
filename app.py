@@ -37,7 +37,6 @@ MST = ZoneInfo("Etc/GMT+7")
 # Custom Jinja filter for MST datetime formatting
 def format_datetime_mst(dt_utc):
     if not isinstance(dt_utc, datetime):
-        # Try to convert string format to datetime
         try:
             dt_utc = datetime.fromisoformat(dt_utc)
         except (ValueError, TypeError):
@@ -1060,7 +1059,7 @@ def browse_bucket(bucket_name):
                         'key': item['Key'],
                         'size': item['Size'],
                         'last_modified': item['LastModified'],
-                        'metadata': {} # Initialize empty
+                        'metadata': {}
                     })
 
                     if items_scanned >= max_items_to_scan:
