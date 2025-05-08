@@ -2,10 +2,7 @@ Reset Local Enviroment
 chrome://net-internals/#sockets
 
 
-git add .
-git commit -m "insert_text"
-git push stapp main
-git push stapp main --force
+heroku config:set ADMIN_PASSWORD="Verysecure" --app stapp
 
 git add . && git commit -m "performer" && git push stapp main
 
