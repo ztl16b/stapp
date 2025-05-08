@@ -140,9 +140,9 @@ def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | Non
             {
                 "type": "text",
                 "text": (
-                    f"Is this a photographic image of {subject}. "
-                    f"You are choosing reference images to be used in a manual image audit."
-                    f"This should help the auditor understand {subject}'s likeness. Choose the best image of the bunch."
+                    f"These are photographic images of {subject}. "
+                    f"You are choosing reference images to be used in a manual image audit. "
+                    f"This should help the auditor understand {subject}'s likeness. Choose the best image of the bunch. "
                     f"(no illustration, no album cover, minimal or no text)"
                 )
             }
