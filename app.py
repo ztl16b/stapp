@@ -1713,7 +1713,6 @@ def get_reference_image_url(subject: str) -> str | None:
     query = (
         f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" '
         f'OR "press photo" OR "official photo" OR "concert photo") '
-        f'-site:pinterest.com -site:facebook.com -site:alamy.com -site:imdb.com'
     )
 
     try:
