@@ -12,7 +12,7 @@ from requests.exceptions import RequestException #type:ignore
 import uuid
 import time
 from io import BytesIO
-from openai import OpenAI
+from openai import OpenAI #type:ignore
 import json
 import base64
 import logging
@@ -80,9 +80,8 @@ S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 S3_RESOURCES_BUCKET = "etickets-content-test-bucket"
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
-
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 thread_local = threading.local()
 
@@ -173,7 +172,7 @@ def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | Non
         )
 
         best_url = resp.choices[0].message.content.strip()
-        # Validate that the assistant’s answer is one of the candidates
+        # Validate that the assistant's answer is one of the candidates
         for url in candidate_urls:
             if best_url == url or best_url in url:
                 return url
