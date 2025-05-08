@@ -12,6 +12,7 @@ from requests.exceptions import RequestException #type:ignore
 import uuid
 import time
 from io import BytesIO
+from openai import OpenAI
 import json
 import base64
 import logging
@@ -96,50 +97,92 @@ def get_s3_client():
         )
     return thread_local.s3_client
 
-# Function to load performer data from CSV
 def load_performer_data():
-    """Load performer data from CSV file in S3 bucket"""
     global performer_data
     s3 = get_s3_client()
     
     try:
-        # Get the CSV file from S3
         csv_obj = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key="temp/performer-infos (1).csv")
         csv_content = csv_obj['Body'].read().decode('utf-8')
         
-        # Parse CSV content
         csv_reader = csv.DictReader(csv_content.splitlines())
         
-        # Build dictionary with performer_id as key and name_alias as value
         performer_data = {row['performer_id']: row['name_alias'] for row in csv_reader if 'performer_id' in row and 'name_alias' in row}
         
         app.logger.info(f"Loaded {len(performer_data)} performers from CSV")
     except Exception as e:
         app.logger.error(f"Error loading performer data: {e}")
-        # Initialize empty dict if error occurs
         performer_data = {}
         
     return performer_data
 
-# Initialize s3 client and load performer data at startup
 try:
-    # Use the same client creation function for consistency
     s3_client = get_s3_client()
     
-    # Create a reusable S3 upload configuration 
     s3_upload_config = boto3.s3.transfer.TransferConfig(
-        multipart_threshold=8 * 1024 * 1024,  # 8MB
+        multipart_threshold=8 * 1024 * 1024,
         max_concurrency=10,
-        multipart_chunksize=8 * 1024 * 1024,  # 8MB
+        multipart_chunksize=8 * 1024 * 1024,
         use_threads=True
     )
     
-    # Load performer data
     load_performer_data()
 except NoCredentialsError:
     raise ValueError("AWS credentials not found. Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set.")
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
+
+def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | None:
+    """
+    Given a list of image URLs, ask GPT-4o-mini (multimodal) to return the
+    single best reference image for `subject`. Returns None on failure.
+    """
+    if not (OPENAI_API_KEY and candidate_urls):
+        return None
+
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+
+        # Build multimodal user content: first a text instruction, then images.
+        user_content = [
+            {
+                "type": "text",
+                "text": (
+                    f"You are curating a photo reference for **{subject}**.\n"
+                    f"Pick the ONE image that most clearly and accurately shows "
+                    f"{subject} (press-quality, recognisable face, good lighting, "
+                    f"no watermarks or heavy filters). Return ONLY its direct URL."
+                )
+            }
+        ] + [
+            {"type": "image_url", "image_url": {"url": url}}
+            for url in candidate_urls
+        ]
+
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            temperature=0.0,
+            max_tokens=40,
+            messages=[
+                {"role": "system", "content": "You are an expert photo editor."},
+                {"role": "user",   "content": user_content}
+            ],
+        )
+
+        best_url = resp.choices[0].message.content.strip()
+        # Validate that the assistant’s answer is one of the candidates
+        for url in candidate_urls:
+            if best_url == url or best_url in url:
+                return url
+        # Fallback – sometimes the model returns plain text around the URL
+        for url in candidate_urls:
+            if url in best_url:
+                return url
+    except Exception as e:
+        app.logger.error(f"GPT-4o-mini selection failed: {e}")
+
+    return None
+
 
 # Helper function to extract performer_id from filename
 def extract_performer_id(filename):
@@ -1700,15 +1743,22 @@ def perf_review_image_route():
     )
 
 
-# ─── Google Custom Search  (one reference image) ──────────────────────────────
-def get_reference_image_url(subject: str) -> str | None:
+# ─── Google Custom Search  (multi-image + GPT pick) ──────────────────────────
+def get_reference_image_url(subject: str, num_candidates: int = 6) -> str | None:
+    """
+    1. Pull up to `num_candidates` large images from Google CSE for the subject.
+    2. Let GPT-4o-mini decide which is best.
+    3. Return the chosen URL (or the first result as a fallback).
+    """
     key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
     if not (key and cx):
         app.logger.warning("GOOGLE_CSE_KEY / GOOGLE_CSE_CX not set → no reference image.")
         return None
-    
+
+    # Broaden the query slightly (can tweak as needed)
     query = (
-        f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" OR "press photo" OR "official photo" OR "concert photo") '
+        f'{subject} ("band photo" OR "press photo" OR "official portrait" '
+        f'OR "headshot" OR "concert photo" OR "live performance")'
     )
 
     try:
@@ -1717,15 +1767,34 @@ def get_reference_image_url(subject: str) -> str | None:
             "cx": cx,
             "q": query,
             "searchType": "image",
-            "num": 1
+            "num": min(max(num_candidates, 1), 10),
+            "imgSize": "LARGE",
+            "safe": "high"
         }
-        r = requests.get("https://customsearch.googleapis.com/customsearch/v1", params=params, timeout=6)
+        r = requests.get(
+            "https://customsearch.googleapis.com/customsearch/v1",
+            params=params,
+            timeout=6
+        )
         r.raise_for_status()
+
         items = r.json().get("items", [])
-        if items:
-            return items[0]["link"]
+        candidate_urls = [item["link"] for item in items if "link" in item]
+
+        if not candidate_urls:
+            return None
+
+        # Ask GPT-4o-mini to choose the best one
+        best_url = _choose_best_reference(subject, candidate_urls)
+        if best_url:
+            return best_url
+
+        # Fallback – just return the first Google result
+        return candidate_urls[0]
+
     except Exception as e:
         app.logger.error(f"Google CSE fetch failed for '{subject}': {e}")
+
     return None
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
