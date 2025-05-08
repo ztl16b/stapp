@@ -10,3 +10,4 @@ redis
 psutil
 botocore
 pandas
+openai

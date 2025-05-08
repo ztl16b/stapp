@@ -17,6 +17,9 @@ import base64
 import logging
 import threading
 import re
+import base64, io
+from typing import List, Optional
+from openai import OpenAI
 import hashlib
 import mimetypes
 import psutil #type:ignore
@@ -94,6 +97,113 @@ def get_s3_client():
             region_name=AWS_REGION
         )
     return thread_local.s3_client
+
+# initialise once
+_openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def _b64_uri(img_bytes: bytes) -> str:
+    """Return a data-URI that GPT can ingest."""
+    return "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode()
+
+def _download_image(url: str, max_bytes: int = 2_000_000) -> Optional[bytes]:
+    """Lightweight downloader (≤ ~2 MB) with short timeout."""
+    try:
+        r = requests.get(url, timeout=6, stream=True)
+        r.raise_for_status()
+        buf = io.BytesIO()
+        for chunk in r.iter_content(1024):
+            buf.write(chunk)
+            if buf.tell() > max_bytes:          # stop after 2 MB
+                break
+        return buf.getvalue()
+    except Exception as e:
+        app.logger.debug(f"Image fetch failed ({url}): {e}")
+        return None
+
+def _gpt_accepts(img_bytes: bytes, subject: str) -> bool:
+    """Ask GPT-4o-mini if this is a good likeness. 1-token answer → fast & cheap."""
+    prompt = (
+        f"Is this a photographic image of {subject}? "
+        "It will be used as a reference for an AI image-generation model. "
+        "No illustrations, no album covers, minimal or no text. "
+        "Reply 'yes' or 'no'."
+    )
+    try:
+        resp = _openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=1,
+            timeout=10,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": _b64_uri(img_bytes), "detail": "low"}
+                        },
+                    ],
+                }
+            ],
+        )
+        answer = resp.choices[0].message.content.strip().lower()
+        return answer.startswith("y")  # accept on “yes”
+    except Exception as e:
+        app.logger.warning(f"GPT filter error: {e}")
+        return False
+
+def _google_hits(query: str, num: int) -> List[str]:
+    """Return up to `num` image URLs from Google CSE for `query`."""
+    key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
+    if not (key and cx):
+        return []
+    try:
+        r = requests.get(
+            "https://customsearch.googleapis.com/customsearch/v1",
+            timeout=6,
+            params={
+                "key": key,
+                "cx": cx,
+                "q": query,
+                "searchType": "image",
+                "num": num,
+                "safe": "high",
+            },
+        )
+        r.raise_for_status()
+        return [itm["link"] for itm in r.json().get("items", [])]
+    except Exception as e:
+        app.logger.warning(f"CSE error ({query}): {e}")
+        return []
+
+def get_reference_image_url(subject: str) -> Optional[str]:
+    """
+    1. Fetch 3 images for <subject> and 3 for "<subject> live".
+    2. Run each through GPT-4o-mini; return the first image GPT accepts.
+       If none pass, return the first Google result as a fall-back.
+    """
+    # gather six image URLs in parallel
+    queries = [subject, f"{subject} live"]
+    with cf.ThreadPoolExecutor(max_workers=2) as ex:
+        futs = [ex.submit(_google_hits, q, 3) for q in queries]
+        urls = sum((f.result() for f in futs), start=[])  # flatten
+
+    if not urls:
+        app.logger.warning(f"No Google image hits for {subject}")
+        return None
+
+    # test each URL with GPT (stop at first 'yes')
+    for url in urls:
+        img_bytes = _download_image(url)
+        if not img_bytes:
+            continue
+        if _gpt_accepts(img_bytes, subject):
+            app.logger.info(f"GPT accepted reference image for {subject}: {url}")
+            return url
+
+    # fall-back → first URL (even if GPT rejected / quota exhausted)
+    app.logger.info(f"Using fallback reference image for {subject}: {urls[0]}")
+    return urls[0]
 
 # Function to load performer data from CSV
 def load_performer_data():
@@ -1697,39 +1807,6 @@ def perf_review_image_route():
         perfimg_status=perfimg_status,
         performer_name=performer_name
     )
-
-
-# ─── Google Custom Search  (one reference image) ──────────────────────────────
-def get_reference_image_url(subject: str) -> str | None:
-    """
-    Return the first “large” image URL from Google CSE for the given subject.
-    Falls back to None if the API credentials are missing or the call fails.
-    """
-    key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
-    if not (key and cx):
-        app.logger.warning("GOOGLE_CSE_KEY / GOOGLE_CSE_CX not set → no reference image.")
-        return None
-    
-    query = (
-        f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" OR "press photo" OR "official photo" OR "concert photo") '
-    )
-
-    try:
-        params = {
-            "key": key,
-            "cx": cx,
-            "q": query,
-            "searchType": "image",
-            "num": 1
-        }
-        r = requests.get("https://customsearch.googleapis.com/customsearch/v1", params=params, timeout=6)
-        r.raise_for_status()
-        items = r.json().get("items", [])
-        if items:
-            return items[0]["link"]
-    except Exception as e:
-        app.logger.error(f"Google CSE fetch failed for '{subject}': {e}")
-    return None
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
 @login_required
