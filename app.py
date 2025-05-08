@@ -27,15 +27,11 @@ import csv
 
 load_dotenv()
 
-
-# Get the absolute path to the templates directory
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
 app = Flask(__name__, template_folder=template_dir)
 
-# Set a fixed secret key for session management
 app.secret_key = os.environ.get('SECRET_KEY')
 
-# Define MST timezone (UTC-7)
 MST = ZoneInfo("Etc/GMT+7")
 
 # Custom Jinja filter for MST datetime formatting
@@ -60,10 +56,10 @@ app.jinja_env.filters['datetime_mst'] = format_datetime_mst
 
 # SIMPLIFIED SESSION CONFIGURATION
 app.config.update(
-    SESSION_COOKIE_SECURE=False,  # Set to False to allow HTTP in development
+    SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    PERMANENT_SESSION_LIFETIME=timedelta(days=30),  # 30 days
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
 )
 
 # AWS Configuration
@@ -85,7 +81,6 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 thread_local = threading.local()
 
-# Global variable to store performer data
 performer_data = {}
 
 def get_s3_client():
@@ -146,9 +141,9 @@ def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | Non
                 "type": "text",
                 "text": (
                     f"Is this a photographic image of {subject}. "
-                    f"You are choosing reference images to be fed into a AI Image Generation model. "
-                    f"This should help the Image Generation understand {subject}'s' likeness. Do not be too picky."
-                    f"(no illustration, no album cover, minimal or no text)? Return ONLY its direct URL."
+                    f"You are choosing reference images to be used in a manual image audit."
+                    f"This should help the auditor understand {subject}'s likeness. Choose the best image of the bunch."
+                    f"(no illustration, no album cover, minimal or no text)"
                 )
             }
         ] + [
@@ -1486,7 +1481,6 @@ def delete_selected_route(bucket_name):
 @app.route('/image-preview/<bucket_name>/<path:object_key>')
 @login_required
 def get_image_preview(bucket_name, object_key):
-    # Get query params
     is_thumbnail = request.args.get('thumbnail', 'false').lower() == 'true'
     
     buckets = {
@@ -1740,10 +1734,7 @@ def get_reference_image_url(subject: str, num_candidates: int = 6) -> str | None
         return None
 
     # Broaden the query slightly (can tweak as needed)
-    query = (
-        f'{subject} ("band photo" OR "press photo" OR "official portrait" '
-        f'OR "headshot" OR "concert photo" OR "live performance")'
-    )
+    query = (f'{subject} photo')
 
     try:
         params = {
