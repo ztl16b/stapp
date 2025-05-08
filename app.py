@@ -73,6 +73,8 @@ S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
 S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
 S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 S3_RESOURCES_BUCKET = "etickets-content-test-bucket"
+S3_REF_BUCKET = os.getenv("S3_REF_BUCKET") # New reference bucket
+S3_REF_BUCKET_PREFIX = os.getenv("S3_REF_BUCKET_PREFIX") # New reference bucket prefix
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -893,7 +895,8 @@ def browse_buckets():
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
-        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'}
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'},
+        'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX} # New reference bucket
     }
     app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
@@ -916,7 +919,8 @@ def browse_bucket(bucket_name):
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
-        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'}
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'},
+        'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX} # New reference bucket
     }
 
     if bucket_name not in buckets:
@@ -1317,7 +1321,8 @@ def delete_object_route(bucket_name, object_key):
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
         'issue': S3_ISSUE_BUCKET,
-        'performers': S3_PERFORMER_BUCKET
+        'performers': S3_PERFORMER_BUCKET,
+        'reference': S3_REF_BUCKET # New reference bucket
     }
     
     if bucket_name not in buckets:
@@ -1352,7 +1357,8 @@ def delete_all_objects_route(bucket_name):
         'upload': {'name': 'Upload Images', 'bucket': S3_UPLOAD_BUCKET, 'prefix': 'temp_performer_at_venue_images/'},
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
-        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'}
+        'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'},
+        'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX} # New reference bucket
     }
     
     if bucket_name not in buckets:
@@ -1424,7 +1430,8 @@ def delete_selected_route(bucket_name):
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
         'issue': S3_ISSUE_BUCKET,
-        'performers': S3_PERFORMER_BUCKET
+        'performers': S3_PERFORMER_BUCKET,
+        'reference': S3_REF_BUCKET # New reference bucket
     }
     
     if bucket_name not in buckets:
@@ -1490,7 +1497,8 @@ def get_image_preview(bucket_name, object_key):
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
         'issue': S3_ISSUE_BUCKET,
-        'performers': S3_PERFORMER_BUCKET
+        'performers': S3_PERFORMER_BUCKET,
+        'reference': S3_REF_BUCKET # New reference bucket
     }
     
     if bucket_name not in buckets:
@@ -1549,7 +1557,8 @@ def toggle_perfimg_status_route(bucket_name, object_key):
         'upload': S3_UPLOAD_BUCKET,
         'temp': S3_TEMP_BUCKET,
         'issue': S3_ISSUE_BUCKET,
-        'performers': S3_PERFORMER_BUCKET
+        'performers': S3_PERFORMER_BUCKET,
+        'reference': S3_REF_BUCKET # New reference bucket
     }
     
     if bucket_name not in buckets:
