@@ -158,10 +158,8 @@ def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | Non
 
         resp = client.chat.completions.create(
             model=OPENAI_MODEL,
-            temperature=0.0,
-            max_tokens=40,
             messages=[
-                {"role": "system", "content": "You are an expert photo editor."},
+                {"role": "system", "content": "You are an expert photographer."},
                 {"role": "user",   "content": user_content}
             ],
         )
