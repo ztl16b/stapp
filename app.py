@@ -1644,54 +1644,90 @@ def get_performer_image_key(filter_by_review=None):
 @app.route('/perf_review')
 @login_required
 def perf_review_image_route():
-    # Log session information for debugging
+    """
+    Show one *unreviewed* performer-detail image **plus** a Google-pulled
+    reference photo so the reviewer can compare likeness.
+    """
     app.logger.info(f"Perf Review page accessed by user {session.get('user_id', 'unknown')}")
-    
-    # Use the dedicated function to get performer images
-    image_key = get_performer_image_key(filter_by_review='unreviewed')
-    source_bucket = S3_PERFORMER_BUCKET
-    
-    image_url = None
-    uploader_initials = "Unknown"
-    review_status = "FALSE"
+
+    # 1. pick an unreviewed performer image
+    image_key      = get_performer_image_key(filter_by_review='unreviewed')
+    source_bucket  = S3_PERFORMER_BUCKET
+    image_url      = None
+    reference_url  = None          # ← NEW: Google reference image
+    uploader       = "Unknown"
+    review_status  = "FALSE"
     perfimg_status = "FALSE"
     performer_name = "Unknown Performer"
-    
+
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
         app.logger.info(f"Loading unreviewed performer image: {image_key} from {source_bucket}")
-        
-        # Get metadata for the image to extract uploader initials and review status
-        try:
-            head_response = s3_client.head_object(
-                Bucket=source_bucket,
-                Key=image_key
-            )
-            metadata = head_response.get('Metadata', {})
-            uploader_initials = metadata.get('uploader-initials', 'Unknown')
-            review_status = metadata.get('review_status', 'FALSE')
-            perfimg_status = metadata.get('perfimg_status', 'FALSE')
-            app.logger.info(f"Found metadata - uploader: {uploader_initials}, review status: {review_status}, perfimg status: {perfimg_status}")
-            
-            # Extract performer_id from filename (simpler format: performer_id.webp)
-            filename = image_key.split('/')[-1]
-            performer_id = extract_performer_id(filename)
-            
-            if performer_id:
-                # Look up performer name
-                performer_name = get_performer_name(performer_id)
-                app.logger.info(f"Found performer name for ID {performer_id}: {performer_name}")
-        except Exception as e:
-            app.logger.error(f"Error getting metadata for {image_key}: {e}")
 
-    return render_template('perf_review.html', 
-                          image_url=image_url, 
-                          image_key=image_key, 
-                          source_bucket=source_bucket,
-                          uploader_initials=uploader_initials,
-                          review_status=review_status,
-                          perfimg_status=perfimg_status,
-                          performer_name=performer_name)
+        # 2. pull metadata → uploader + status
+        try:
+            head = s3_client.head_object(Bucket=source_bucket, Key=image_key)
+            meta = head.get('Metadata', {})
+            uploader       = meta.get('uploader-initials', 'Unknown')
+            review_status  = meta.get('review_status', 'FALSE')
+            perfimg_status = meta.get('perfimg_status', 'FALSE')
+
+            # 3. map file-name → performer_id → performer_name
+            filename      = image_key.split('/')[-1]
+            performer_id  = extract_performer_id(filename)
+            if performer_id:
+                performer_name = get_performer_name(performer_id)
+                app.logger.info(f"Performer ID {performer_id} → '{performer_name}'")
+        except Exception as e:
+            app.logger.error(f"Error reading metadata for {image_key}: {e}")
+
+        # 4. fetch a Google reference **after** we know the name
+        if performer_name != "Unknown Performer":
+            reference_url = get_reference_image_url(performer_name)
+
+    # 5. render the review template
+    return render_template(
+        'perf_review.html',
+        image_url=image_url,
+        reference_image_url=reference_url,   # <-- pass into Jinja
+        image_key=image_key,
+        source_bucket=source_bucket,
+        uploader_initials=uploader,
+        review_status=review_status,
+        perfimg_status=perfimg_status,
+        performer_name=performer_name
+    )
+
+
+# ─── Google Custom Search  (one reference image) ──────────────────────────────
+def get_reference_image_url(subject: str) -> str | None:
+    """
+    Return the first “large” image URL from Google CSE for the given subject.
+    Falls back to None if the API credentials are missing or the call fails.
+    """
+    key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
+    if not (key and cx):
+        app.logger.warning("GOOGLE_CSE_KEY / GOOGLE_CSE_CX not set → no reference image.")
+        return None
+
+    try:
+        params = {
+            "key": key,
+            "cx": cx,
+            "q": f"{subject} live",          # live-performance bias
+            "searchType": "image",
+            "num": 1,
+            "imgSize": "LARGE",
+            "safe": "high"
+        }
+        r = requests.get("https://customsearch.googleapis.com/customsearch/v1", params=params, timeout=6)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        if items:
+            return items[0]["link"]
+    except Exception as e:
+        app.logger.error(f"Google CSE fetch failed for '{subject}': {e}")
+    return None
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
 @login_required

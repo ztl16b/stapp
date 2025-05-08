@@ -23,15 +23,39 @@
         }
         
         .image-review-area {
-            flex: 3;
+            flex: 3; /* Adjusted to allow space for metadata */
             padding-right: 20px;
+            display: flex; /* For side-by-side images */
+            gap: 20px; /* Space between images */
+        }
+
+        .image-column {
+            flex: 1; /* Each image column takes equal space */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
         
         .metadata-area {
             flex: 1;
             position: sticky;
-            top: 20px;
+            top: 20px; /* Adjust based on navbar height if necessary */
+            max-height: calc(100vh - 70px); /* Adjust 70px based on actual navbar height */
+            overflow-y: auto;
         }
+    }
+
+    .image-container { /* General styling for both image containers */
+        width: 100%;
+        margin-bottom: 15px; /* Space below image before buttons/text */
+    }
+
+    .image-container img {
+        max-width: 100%;
+        max-height: 60vh; /* Max height for review images */
+        object-fit: contain;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
     
     .btn-group-centered {
@@ -53,6 +77,15 @@
         border-bottom: 1px solid #dee2e6;
         padding-bottom: 8px;
     }
+
+    .reference-image-title {
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 10px;
+        font-size: 1.1em;
+        color: #333;
+    }
+
 </style>
 {% endblock %}
 
@@ -76,20 +109,32 @@
     {% if image_url %}
         <div class="review-container">
             <div class="image-review-area">
-                <div class="image-container">
-                    <img src="{{ image_url }}" alt="Performer Image" class="img-fluid rounded shadow">
+                <!-- S3 Image Column -->
+                <div class="image-column">
+                    <div class="image-container">
+                        <img src="{{ image_url }}" alt="Performer Image from S3" class="img-fluid">
+                    </div>
+                    <div class="btn-group-centered">
+                        <form action="{{ url_for('performer_action_route', action='good', image_key=image_key) }}" method="post">
+                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                            <button type="submit" class="btn btn-success btn-lg">GOOD</button>
+                        </form>
+                        <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
+                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                            <button type="submit" class="btn btn-danger btn-lg">BAD</button>
+                        </form>
+                    </div>
                 </div>
-                
-                <div class="btn-group-centered">
-                    <form action="{{ url_for('performer_action_route', action='good', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-success btn-lg">GOOD</button>
-                    </form>
-                    <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
-                        <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                        <button type="submit" class="btn btn-danger btn-lg">BAD</button>
-                    </form>
+
+                <!-- Reference Image Column -->
+                {% if reference_image_url %}
+                <div class="image-column">
+                    <div class="reference-image-title">Reference Image (Google)</div>
+                    <div class="image-container">
+                        <img src="{{ reference_image_url }}" alt="Reference image for {{ performer_name }}" class="img-fluid">
+                    </div>
                 </div>
+                {% endif %}
             </div>
             
             <div class="metadata-area">
