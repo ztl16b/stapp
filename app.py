@@ -78,14 +78,102 @@ S3_PERFORMER_BUCKET = os.getenv("S3_PERFORMER_BUCKET")
 S3_RESOURCES_BUCKET = "etickets-content-test-bucket"
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
-
 thread_local = threading.local()
+
+_openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def _b64_uri(img_bytes: bytes) -> str:
+    return "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode()
+
+def _download_image(url: str, max_bytes: int = 2_000_000) -> Optional[bytes]:
+    try:
+        r = requests.get(url, timeout=6, stream=True)
+        r.raise_for_status()
+        buf = io.BytesIO()
+        for chunk in r.iter_content(1024):
+            buf.write(chunk)
+            if buf.tell() > max_bytes:
+                break
+        return buf.getvalue()
+    except Exception as e:
+        app.logger.debug(f"Image fetch failed ({url}): {e}")
+        return None
+
+def _gpt_accepts(img_bytes: bytes, subject: str) -> bool:
+    prompt = (
+        f"Is this a photographic image of {subject}? "
+        "It will be used as a reference for an AI image-generation model. "
+        "No illustrations, no album covers, minimal or no text. "
+        "Reply 'yes' or 'no'."
+    )
+    try:
+        resp = _openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=1,
+            timeout=10,
+            messages=[
+                {
+                    "role":"user",
+                    "content":[
+                        {"type":"text","text": prompt},
+                        {"type":"image_url",
+                         "image_url":{"url": _b64_uri(img_bytes), "detail":"low"}}
+                    ]
+                }
+            ]
+        )
+        ans = resp.choices[0].message.content.strip().lower()
+        return ans.startswith("y")
+    except Exception as e:
+        app.logger.warning(f"GPT filter error: {e}")
+        return False
+
+def _google_hits(query: str, num: int) -> List[str]:
+    key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
+    if not (key and cx):
+        return []
+    try:
+        r = requests.get(
+            "https://customsearch.googleapis.com/customsearch/v1",
+            timeout=6,
+            params={
+                "key": key, "cx": cx, "q": query,
+                "searchType": "image", "num": num, "safe": "high"
+            },
+        )
+        r.raise_for_status()
+        return [it["link"] for it in r.json().get("items", [])]
+    except Exception as e:
+        app.logger.warning(f"CSE error ({query}): {e}")
+        return []
+
+def get_reference_image_url(subject: str) -> Optional[str]:
+    """
+    1. fetch 3 images for <subject> and 3 for "<subject> live>"
+    2. ask GPT-4o-mini to accept / reject – return first accepted
+    3. fallback: first Google URL
+    """
+    queries = [subject, f"{subject} live"]
+    with cf.ThreadPoolExecutor(max_workers=2) as ex:
+        urls = sum((f.result() for f in
+                    [ex.submit(_google_hits, q, 3) for q in queries]), start=[])
+    if not urls:
+        app.logger.warning(f"No Google hits for {subject}")
+        return None
+    for url in urls:
+        img = _download_image(url)
+        if img and _gpt_accepts(img, subject):
+            app.logger.info(f"Reference image accepted for {subject}: {url}")
+            return url
+    app.logger.info(f"Using fallback reference for {subject}: {urls[0]}")
+    return urls[0]
+
+
 
 # Global variable to store performer data
 performer_data = {}
 
 def get_s3_client():
-    """Get thread-local S3 client to improve connection reuse"""
     if not hasattr(thread_local, 's3_client'):
         thread_local.s3_client = boto3.client(
             's3',
@@ -97,12 +185,10 @@ def get_s3_client():
 
 # Function to load performer data from CSV
 def load_performer_data():
-    """Load performer data from CSV file in S3 bucket"""
     global performer_data
     s3 = get_s3_client()
     
     try:
-        # Get the CSV file from S3
         csv_obj = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key="temp/performer-infos (1).csv")
         csv_content = csv_obj['Body'].read().decode('utf-8')
         
@@ -1644,60 +1730,41 @@ def get_performer_image_key(filter_by_review=None):
 @app.route('/perf_review')
 @login_required
 def perf_review_image_route():
-    """
-    Show one *unreviewed* performer-detail image **plus** a Google-pulled
-    reference photo so the reviewer can compare likeness.
-    """
-    app.logger.info(f"Perf Review page accessed by user {session.get('user_id', 'unknown')}")
-
-    # 1. pick an unreviewed performer image
-    image_key      = get_performer_image_key(filter_by_review='unreviewed')
-    source_bucket  = S3_PERFORMER_BUCKET
-    image_url      = None
-    reference_url  = None          # ← NEW: Google reference image
-    uploader       = "Unknown"
-    review_status  = "FALSE"
-    perfimg_status = "FALSE"
+    app.logger.info(f"Perf Review accessed by {session.get('user_id','?')}")
+    image_key = get_performer_image_key(filter_by_review='unreviewed')
+    source_bucket = S3_PERFORMER_BUCKET
+    image_url = reference_url = None
+    uploader = "Unknown"; review_status = perfimg_status = "FALSE"
     performer_name = "Unknown Performer"
 
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
-        app.logger.info(f"Loading unreviewed performer image: {image_key} from {source_bucket}")
-
-        # 2. pull metadata → uploader + status
         try:
-            head = s3_client.head_object(Bucket=source_bucket, Key=image_key)
-            meta = head.get('Metadata', {})
+            meta = s3_client.head_object(Bucket=source_bucket,
+                                         Key=image_key).get('Metadata',{})
             uploader       = meta.get('uploader-initials', 'Unknown')
             review_status  = meta.get('review_status', 'FALSE')
             perfimg_status = meta.get('perfimg_status', 'FALSE')
-
-            # 3. map file-name → performer_id → performer_name
-            filename      = image_key.split('/')[-1]
-            performer_id  = extract_performer_id(filename)
+            performer_id   = extract_performer_id(image_key.split('/')[-1])
             if performer_id:
                 performer_name = get_performer_name(performer_id)
-                app.logger.info(f"Performer ID {performer_id} → '{performer_name}'")
         except Exception as e:
-            app.logger.error(f"Error reading metadata for {image_key}: {e}")
+            app.logger.error(f"Metadata read error: {e}")
 
-        # 4. fetch a Google reference **after** we know the name
         if performer_name != "Unknown Performer":
             reference_url = get_reference_image_url(performer_name)
 
-    # 5. render the review template
     return render_template(
-        'perf_review.html',
+        "perf_review.html",
         image_url=image_url,
-        reference_image_url=reference_url,   # <-- pass into Jinja
+        reference_image_url=reference_url,
         image_key=image_key,
         source_bucket=source_bucket,
         uploader_initials=uploader,
         review_status=review_status,
         perfimg_status=perfimg_status,
-        performer_name=performer_name
+        performer_name=performer_name,
     )
-
 
 # ─── Google Custom Search  (one reference image) ──────────────────────────────
 def get_reference_image_url(subject: str) -> str | None:
