@@ -1724,7 +1724,6 @@ def get_reference_image_url(subject: str) -> str | None:
             "searchType": "image",
             "num": 1,
             "imgSize": "LARGE",
-            "safe": "high"
         }
         r = requests.get("https://customsearch.googleapis.com/customsearch/v1", params=params, timeout=6)
         r.raise_for_status()
