@@ -1720,7 +1720,7 @@ def get_reference_image_url(subject: str) -> str | None:
         params = {
             "key": key,
             "cx": cx,
-            "q": f"{subject}",
+            "q": query,
             "searchType": "image",
             "num": 1,
             "imgSize": "LARGE",
