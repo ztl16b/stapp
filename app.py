@@ -145,10 +145,10 @@ def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | Non
             {
                 "type": "text",
                 "text": (
-                    f"Is this a photographic image of {performer}. "
-                    "You are choosing reference images to be fed into a AI Image Generation model. "
-                    "This should help the Image Generation understand {performer}'s' likeness. Do not be too picky."
-                    "(no illustration, no album cover, minimal or no text)? Return ONLY its direct URL."
+                    f"Is this a photographic image of {subject}. "
+                    f"You are choosing reference images to be fed into a AI Image Generation model. "
+                    f"This should help the Image Generation understand {subject}'s' likeness. Do not be too picky."
+                    f"(no illustration, no album cover, minimal or no text)? Return ONLY its direct URL."
                 )
             }
         ] + [
@@ -1747,13 +1747,10 @@ def get_reference_image_url(subject: str, num_candidates: int = 6) -> str | None
 
     try:
         params = {
-            "key": key,
-            "cx": cx,
-            "q": query,
+            "key": key, "cx": cx, "q": query,
             "searchType": "image",
             "num": 5,
-            "imgSize": "LARGE",
-            "safe": "high"
+            "imgSize": "LARGE"
         }
         r = requests.get(
             "https://customsearch.googleapis.com/customsearch/v1",
