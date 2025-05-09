@@ -200,7 +200,6 @@
                             {% if bucket_name == 'bad' %}
                             <th>Bad Reason</th>
                             {% endif %}
-                            <th>Preview</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -247,16 +246,6 @@
                                 {% endif %}
                             </td>
                             {% endif %}
-                            <td>
-                                <a href="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key) }}" 
-                                   target="_blank" 
-                                   title="View full image">
-                                    <img src="{{ url_for('get_image_preview', bucket_name=bucket_name, object_key=file.key, thumbnail='true') }}" 
-                                         alt="Preview" 
-                                         class="img-thumbnail" 
-                                         style="max-height: 50px; max-width: 50px;">
-                                </a>
-                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>

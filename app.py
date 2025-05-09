@@ -1471,68 +1471,6 @@ def delete_selected_route(bucket_name):
     
     return redirect(url_for('browse_bucket', bucket_name=bucket_name))
 
-@app.route('/image-preview/<bucket_name>/<path:object_key>')
-@login_required
-def get_image_preview(bucket_name, object_key):
-    is_thumbnail = request.args.get('thumbnail', 'false').lower() == 'true'
-    
-    buckets = {
-        'good': S3_GOOD_BUCKET,
-        'bad': S3_BAD_BUCKET,
-        'incredible': S3_INCREDIBLE_BUCKET,
-        'upload': S3_UPLOAD_BUCKET,
-        'temp': S3_TEMP_BUCKET,
-        'issue': S3_ISSUE_BUCKET,
-        'performers': S3_PERFORMER_BUCKET,
-        'reference': S3_REF_BUCKET # New reference bucket
-    }
-    
-    if bucket_name not in buckets:
-        app.logger.error(f"Invalid bucket requested: {bucket_name}")
-        return "Invalid bucket", 400
-    
-    try:
-        # Generate a presigned URL with a short expiration
-        presigned_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={
-                'Bucket': buckets[bucket_name],
-                'Key': object_key
-            },
-            ExpiresIn=300  # 5 minutes
-        )
-        
-        # If it's a thumbnail request, redirect to the presigned URL
-        if is_thumbnail:
-            return redirect(presigned_url)
-        
-        # For full image view, display in a simple HTML page
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Image Preview</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body {{ margin: 0; padding: 20px; text-align: center; background-color: #333; }}
-                .image-container {{ max-width: 100%; height: 90vh; display: flex; justify-content: center; align-items: center; }}
-                img {{ max-width: 100%; max-height: 100%; object-fit: contain; }}
-                .filename {{ color: white; margin-bottom: 20px; font-family: Arial, sans-serif; }}
-            </style>
-        </head>
-        <body>
-            <div class="filename">{object_key}</div>
-            <div class="image-container">
-                <img src="{presigned_url}" alt="Full size image">
-            </div>
-        </body>
-        </html>
-        """
-        
-    except Exception as e:
-        app.logger.error(f"Error generating image preview: {e}")
-        return f"Error loading image: {str(e)}", 500
-
 @app.route('/toggle-perfimg-status/<bucket_name>/<path:object_key>', methods=['POST'])
 @login_required
 def toggle_perfimg_status_route(bucket_name, object_key):
