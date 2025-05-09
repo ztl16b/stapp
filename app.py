@@ -501,25 +501,30 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
     except ClientError as e:
         app.logger.error(f"Error getting metadata for {original_key}: {e}")
         # Initialize with default values
-        metadata = {
-            'review_status': 'FALSE',
-            'perfimg_status': 'FALSE'
-        }
+        metadata = {} # Start with empty, defaults will be applied below
         
-    # Ensure all metadata fields exist with appropriate defaults
+    # Ensure uploader-initials is preserved or defaulted
+    if 'uploader-initials' not in metadata:
+        metadata['uploader-initials'] = 'Unknown'
+        
+    # Initialize review_status and perfimg_status if not in metadata,
+    # these might be overwritten by destination logic below.
     if 'review_status' not in metadata:
         metadata['review_status'] = 'FALSE'
-        
     if 'perfimg_status' not in metadata:
         metadata['perfimg_status'] = 'FALSE'
-    
-    # Set review_status to TRUE for incredible bucket
-    if dest_bucket == S3_INCREDIBLE_BUCKET or destination == 'incredible':
+
+    # Set review_status and perfimg_status based on destination
+    if destination == 'good':
         metadata['review_status'] = 'TRUE'
-    
-    # If bad_reason provided, add it to metadata
-    if bad_reason and (dest_bucket == S3_BAD_BUCKET or destination == 'bad'):
-        metadata['bad_reason'] = bad_reason
+        metadata['perfimg_status'] = 'TRUE' 
+    elif destination == 'bad':
+        metadata['review_status'] = 'TRUE' # Mark as reviewed even if bad
+        if bad_reason:
+            metadata['bad_reason'] = bad_reason
+    elif destination == 'incredible':
+        metadata['review_status'] = 'TRUE'
+        metadata['perfimg_status'] = 'TRUE'
     
     return {
         'copy_source': {'Bucket': source_bucket, 'Key': original_key},
@@ -1636,51 +1641,68 @@ def get_performer_image_key(filter_by_review=None):
 @login_required
 def perf_review_image_route():
     """
-    Show one *unreviewed* performer-detail image **plus** a Google-pulled
-    reference photo so the reviewer can compare likeness.
+    Show one image for performer likeness review.
+    Sources from S3_UPLOAD_BUCKET (temp_performer_at_venue_images/) or S3_PERFORMER_BUCKET.
+    Displays reference photos for comparison.
     """
     app.logger.info(f"Perf Review page accessed by user {session.get('user_id', 'unknown')}")
 
-    # 1. pick an unreviewed performer image
-    image_key      = get_performer_image_key(filter_by_review='unreviewed')
-    source_bucket  = S3_PERFORMER_BUCKET
-    image_url      = None
-    uploader       = "Unknown"
-    review_status  = "FALSE"
-    perfimg_status = "FALSE"
+    # Fetch image from S3_UPLOAD_BUCKET (temp_performer_at_venue_images/)
+    # These images are typically PerformerID.VenueID.webp
+    image_key = get_random_image_key(S3_UPLOAD_BUCKET) 
+    source_bucket = S3_UPLOAD_BUCKET
+    
+    # If no image found in S3_UPLOAD_BUCKET, try S3_PERFORMER_BUCKET as a fallback (optional, based on desired flow)
+    # For now, sticking to the user request of S3_UPLOAD_BUCKET primary.
+    # If you want a fallback:
+    # if not image_key:
+    #     app.logger.info(f"No image found in {S3_UPLOAD_BUCKET}, trying {S3_PERFORMER_BUCKET}")
+    #     image_key = get_performer_image_key(filter_by_review='unreviewed')
+    #     source_bucket = S3_PERFORMER_BUCKET
+
+    image_url = None
+    uploader_initials = "Unknown" # Default, will be fetched from metadata if available
+    review_status = "FALSE"   # Default for new images from upload bucket
+    perfimg_status = "FALSE"  # Default for new images from upload bucket
     performer_name = "Unknown Performer"
+    performer_id = None
 
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
-        app.logger.info(f"Loading unreviewed performer image: {image_key} from {source_bucket}")
+        app.logger.info(f"Loading image for performer review: {image_key} from {source_bucket}")
 
-        # 2. pull metadata → uploader + status
         try:
-            head = s3_client.head_object(Bucket=source_bucket, Key=image_key)
-            meta = head.get('Metadata', {})
-            uploader       = meta.get('uploader-initials', 'Unknown')
-            review_status  = meta.get('review_status', 'FALSE')
-            perfimg_status = meta.get('perfimg_status', 'FALSE')
+            head_response = s3_client.head_object(Bucket=source_bucket, Key=image_key)
+            metadata = head_response.get('Metadata', {})
+            uploader_initials = metadata.get('uploader-initials', 'Unknown')
+            # For images from S3_UPLOAD_BUCKET, review_status and perfimg_status are typically not set yet.
+            # So we rely on their default 'FALSE' or whatever is in metadata.
+            review_status = metadata.get('review_status', 'FALSE')
+            perfimg_status = metadata.get('perfimg_status', 'FALSE')
 
-            # 3. map file-name → performer_id → performer_name
-            filename      = image_key.split('/')[-1]
-            performer_id  = extract_performer_id(filename)
+            filename = image_key.split('/')[-1]
+            performer_id = extract_performer_id(filename) # extract_performer_id works for PerformerID.VenueID.webp
             if performer_id:
                 performer_name = get_performer_name(performer_id)
-                app.logger.info(f"Performer ID {performer_id} → '{performer_name}'")
+                app.logger.info(f"Extracted Performer ID {performer_id} → Name '{performer_name}' from filename {filename}")
+            else:
+                app.logger.warning(f"Could not extract Performer ID from filename {filename}")
         except Exception as e:
             app.logger.error(f"Error reading metadata for {image_key}: {e}")
+    else:
+        app.logger.info(f"No suitable image found in {source_bucket} for performer review.")
 
-    # 5. render the review template
+
     return render_template(
         'perf_review.html',
         image_url=image_url,
         image_key=image_key,
         source_bucket=source_bucket,
-        uploader_initials=uploader,
+        uploader_initials=uploader_initials,
         review_status=review_status,
         perfimg_status=perfimg_status,
-        performer_name=performer_name
+        performer_name=performer_name,
+        performer_id=performer_id  # Pass performer_id for reference images
     )
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
@@ -1690,62 +1712,72 @@ def performer_action_route(action, image_key):
         flash("No image key provided for action.", "danger")
         return redirect(url_for('perf_review_image_route'))
 
-    source_bucket = request.form.get('source_bucket', S3_PERFORMER_BUCKET)
+    source_bucket = request.form.get('source_bucket')
+    if not source_bucket:
+        flash("Source bucket not provided in form.", "danger")
+        return redirect(url_for('perf_review_image_route'))
     
-    # Log the action
-    app.logger.info(f"Performer action: {action} for image with key: {image_key} from {source_bucket}")
-    
-    try:
-        # Get current metadata and content type
-        head_response = s3_client.head_object(
-            Bucket=source_bucket,
-            Key=image_key
-        )
-        current_metadata = head_response.get('Metadata', {})
-        content_type = head_response.get('ContentType', 'image/webp')
-        
-        # Good action - Mark as reviewed but keep in the same bucket
+    app.logger.info(f"Performer action: {action} for image: {image_key} from source bucket: {source_bucket}")
+
+    if source_bucket == S3_UPLOAD_BUCKET:
+        filename = image_key.split('/')[-1]
         if action == 'good':
-            # Update metadata
-            current_metadata['review_status'] = 'TRUE'
-            
-            # Ensure other fields are present
-            if 'uploader-initials' not in current_metadata:
-                current_metadata['uploader-initials'] = 'Unknown'
-                
-            if 'perfimg_status' not in current_metadata:
-                current_metadata['perfimg_status'] = 'FALSE'
-            
-            # Copy object to itself with updated metadata
-            s3_client.copy_object(
-                CopySource={'Bucket': source_bucket, 'Key': image_key},
-                Bucket=source_bucket,
-                Key=image_key,
-                ContentType=content_type,
-                Metadata=current_metadata,
-                MetadataDirective='REPLACE'
-            )
-            
-            app.logger.info(f"Marked {image_key} as reviewed in {source_bucket}")
-            flash(f"Image marked as GOOD and reviewed.", "success")
-            
-        # Bad action - Delete from the performers bucket
+            # Move to S3_GOOD_BUCKET. Metadata (review_status=TRUE, perfimg_status=TRUE) set by move_s3_object via _prepare_s3_operation.
+            if move_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good'):
+                flash(f"Image '{filename}' approved and moved to GOOD bucket.", "success")
+            else:
+                flash(f"Failed to move image '{filename}' to GOOD bucket.", "danger")
         elif action == 'bad':
-            # Delete the object
-            s3_client.delete_object(
+            # Move to S3_BAD_BUCKET. Metadata (review_status=TRUE) set by move_s3_object.
+            if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad'):
+                flash(f"Image '{filename}' marked BAD and moved to BAD bucket.", "success")
+            else:
+                flash(f"Failed to move image '{filename}' to BAD bucket.", "danger")
+        else:
+            flash(f"Invalid action: {action} for image from {S3_UPLOAD_BUCKET}.", "danger")
+    
+    elif source_bucket == S3_PERFORMER_BUCKET:
+        # Existing logic for images from S3_PERFORMER_BUCKET
+        try:
+            head_response = s3_client.head_object(
                 Bucket=source_bucket,
                 Key=image_key
             )
+            current_metadata = head_response.get('Metadata', {})
+            content_type = head_response.get('ContentType', 'image/webp')
             
-            app.logger.info(f"Deleted {image_key} from {source_bucket}")
-            flash(f"Image marked as BAD and deleted.", "success")
-        
-        else:
-            flash(f"Invalid action: {action}", "danger")
-            
-    except Exception as e:
-        app.logger.error(f"Error during performer action {action} for {image_key}: {e}")
-        flash(f"Error processing action: {str(e)}", "danger")
+            if 'uploader-initials' not in current_metadata:
+                current_metadata['uploader-initials'] = 'Unknown'
+            if 'perfimg_status' not in current_metadata:
+                current_metadata['perfimg_status'] = 'FALSE'
+
+            if action == 'good':
+                current_metadata['review_status'] = 'TRUE'
+                s3_client.copy_object(
+                    CopySource={'Bucket': source_bucket, 'Key': image_key},
+                    Bucket=source_bucket,
+                    Key=image_key,
+                    ContentType=content_type,
+                    Metadata=current_metadata,
+                    MetadataDirective='REPLACE'
+                )
+                app.logger.info(f"Marked {image_key} as reviewed in {source_bucket}")
+                flash(f"Image marked as GOOD and reviewed in {source_bucket}.", "success")
+            elif action == 'bad':
+                s3_client.delete_object(
+                    Bucket=source_bucket,
+                    Key=image_key
+                )
+                app.logger.info(f"Deleted {image_key} from {source_bucket} (marked as BAD).")
+                flash(f"Image marked as BAD and deleted from {source_bucket}.", "success")
+            else:
+                flash(f"Invalid action: {action} for image from {S3_PERFORMER_BUCKET}.", "danger")
+        except Exception as e:
+            app.logger.error(f"Error during performer action {action} for {image_key} from {source_bucket}: {e}")
+            flash(f"Error processing action: {str(e)}", "danger")
+    
+    else:
+        flash(f"Unsupported source bucket '{source_bucket}' for performer action.", "danger")
     
     return redirect(url_for('perf_review_image_route'))
 
