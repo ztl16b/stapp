@@ -463,7 +463,7 @@ def get_random_image_key(bucket_name, filter_by_review=None):
 
 def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Common preparation for S3 operations like copy and move."""
-    dest_key = object_key
+    # dest_key = object_key # Default dest_key to original_key before path manipulation # Removed this line as dest_key is now constructed more deliberately
     original_key = object_key
     
     # Extract the filename from the path, handling both old and new formats
@@ -476,23 +476,22 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
         if len(parts) >= 3:
             filename = parts[2]  # Get just the original filename part
     
-    if destination == 'bad' or (dest_bucket == S3_BAD_BUCKET and destination is None):
-        dest_key = f"bad_images/{filename}"
-    elif destination == 'good' or (dest_bucket == S3_GOOD_BUCKET and destination is None):
+    # Determine destination path based on dest_bucket and/or destination hint
+    # Default dest_key is just the filename, implying root of dest_bucket if not otherwise specified below
+    dest_key = filename
+
+    if dest_bucket == S3_PERFORMER_BUCKET:
+        dest_key = f"images/performers/detail/{filename}"
+    elif dest_bucket == S3_GOOD_BUCKET:
         dest_key = f"images/performer-at-venue/detail/{filename}"
-    elif destination == 'incredible' or (dest_bucket == S3_INCREDIBLE_BUCKET and destination is None):
+    elif dest_bucket == S3_BAD_BUCKET:
+        dest_key = f"bad_images/{filename}"
+    elif dest_bucket == S3_INCREDIBLE_BUCKET:
         dest_key = f"incredible_images/{filename}"
+    # If no specific bucket matches, dest_key remains `filename` (root of dest_bucket)
     
     # Determine content type based on file extension
-    content_type = 'image/jpeg'  # Default
-    if filename.lower().endswith('.png'):
-        content_type = 'image/png'
-    elif filename.lower().endswith('.gif'):
-        content_type = 'image/gif'
-    elif filename.lower().endswith('.webp'):
-        content_type = 'image/webp'
-    elif filename.lower().endswith(('.jpg', '.jpeg')):
-        content_type = 'image/jpeg'
+    content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
         
     # Get metadata from source object if it exists
     try:
@@ -1719,65 +1718,84 @@ def performer_action_route(action, image_key):
     
     app.logger.info(f"Performer action: {action} for image: {image_key} from source bucket: {source_bucket}")
 
+    # As per user request, this review page now only processes images from S3_UPLOAD_BUCKET.
     if source_bucket == S3_UPLOAD_BUCKET:
-        filename = image_key.split('/')[-1]
+        filename = image_key.split('/')[-1] # Get filename for messages and local saving
+
         if action == 'good':
-            # Move to S3_GOOD_BUCKET. Metadata (review_status=TRUE, perfimg_status=TRUE) set by move_s3_object via _prepare_s3_operation.
-            if move_s3_object(source_bucket, S3_GOOD_BUCKET, image_key, destination='good'):
-                flash(f"Image '{filename}' approved and moved to GOOD bucket.", "success")
+            # Move to S3_PERFORMER_BUCKET. 
+            # Metadata (review_status=TRUE, perfimg_status=TRUE) is set by move_s3_object via _prepare_s3_operation.
+            if move_s3_object(source_bucket, S3_PERFORMER_BUCKET, image_key, destination='good'):
+                flash(f"Image '{filename}' approved and moved to Performers bucket.", "success")
             else:
-                flash(f"Failed to move image '{filename}' to GOOD bucket.", "danger")
+                flash(f"Failed to move image '{filename}' to Performers bucket.", "danger")
+        
         elif action == 'bad':
-            # Move to S3_BAD_BUCKET. Metadata (review_status=TRUE) set by move_s3_object.
-            if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad'):
-                flash(f"Image '{filename}' marked BAD and moved to BAD bucket.", "success")
+            # Download to local folder, then delete from S3_UPLOAD_BUCKET
+            local_error_dir = os.path.expanduser("~/local_files/performer_images_error") # Expand ~ to user's home dir
+            try:
+                os.makedirs(local_error_dir, exist_ok=True)
+                local_file_path = os.path.join(local_error_dir, filename)
+                
+                # Use the globally/thread-locally defined s3_client
+                s3_client.download_file(source_bucket, image_key, local_file_path)
+                app.logger.info(f"Image '{filename}' downloaded to {local_file_path}")
+                
+                # Now delete from S3_UPLOAD_BUCKET
+                s3_client.delete_object(Bucket=source_bucket, Key=image_key)
+                app.logger.info(f"Image '{image_key}' deleted from {source_bucket}")
+                
+                flash(f"Image '{filename}' marked BAD, saved locally, and removed from upload bucket.", "success")
+            except Exception as e:
+                app.logger.error(f"Error processing BAD action for '{filename}': {e}")
+                flash(f"Error processing BAD action for '{filename}': {str(e)}", "danger")
+        
+        elif action == 'incredible':
+            # Copy to S3_PERFORMER_BUCKET, then copy to S3_INCREDIBLE_BUCKET, then delete from S3_UPLOAD_BUCKET
+            copied_to_performers = False
+            copied_to_incredible = False
+
+            # 1. Copy to Performers Bucket (destination='good' sets review_status=TRUE, perfimg_status=TRUE)
+            if copy_s3_object(source_bucket, S3_PERFORMER_BUCKET, image_key, destination='good'):
+                app.logger.info(f"Image '{filename}' copied to Performers bucket.")
+                copied_to_performers = True
             else:
-                flash(f"Failed to move image '{filename}' to BAD bucket.", "danger")
+                app.logger.error(f"Failed to copy image '{filename}' to Performers bucket.")
+                flash(f"Failed to copy image '{filename}' to Performers bucket. Aborting incredible action.", "danger")
+
+            # 2. Copy to Incredible Bucket (destination='incredible' also sets review_status=TRUE, perfimg_status=TRUE)
+            if copied_to_performers: # Only proceed if first copy was successful
+                if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
+                    app.logger.info(f"Image '{filename}' copied to Incredible bucket.")
+                    copied_to_incredible = True
+                else:
+                    app.logger.error(f"Failed to copy image '{filename}' to Incredible bucket.")
+                    # At this point, the image is in Performers but not Incredible. User might need to be aware.
+                    flash(f"Image '{filename}' copied to Performers, but FAILED to copy to Incredible bucket.", "warning")
+            
+            # 3. Delete from Upload Bucket if both copies were successful
+            if copied_to_performers and copied_to_incredible:
+                try:
+                    s3_client.delete_object(Bucket=source_bucket, Key=image_key)
+                    app.logger.info(f"Image '{image_key}' deleted from {source_bucket} after copies to Performers and Incredible.")
+                    flash(f"Image '{filename}' marked INCREDIBLE and moved to Performers & Incredible buckets.", "success")
+                except Exception as e:
+                    app.logger.error(f"Error deleting '{image_key}' from {source_bucket} after copies: {e}")
+                    flash(f"Image '{filename}' copied to Performers & Incredible, but FAILED to delete from Upload bucket. Please check manually.", "warning")
+            elif copied_to_performers and not copied_to_incredible:
+                # Message already flashed about failure to copy to incredible. 
+                # Original in S3_UPLOAD_BUCKET is kept for retry or manual intervention.
+                pass # Avoid double flashing, previous flash covers the state.
+            # If copied_to_performers is false, the first error message is sufficient.
+
         else:
             flash(f"Invalid action: {action} for image from {S3_UPLOAD_BUCKET}.", "danger")
     
-    elif source_bucket == S3_PERFORMER_BUCKET:
-        # Existing logic for images from S3_PERFORMER_BUCKET
-        try:
-            head_response = s3_client.head_object(
-                Bucket=source_bucket,
-                Key=image_key
-            )
-            current_metadata = head_response.get('Metadata', {})
-            content_type = head_response.get('ContentType', 'image/webp')
-            
-            if 'uploader-initials' not in current_metadata:
-                current_metadata['uploader-initials'] = 'Unknown'
-            if 'perfimg_status' not in current_metadata:
-                current_metadata['perfimg_status'] = 'FALSE'
-
-            if action == 'good':
-                current_metadata['review_status'] = 'TRUE'
-                s3_client.copy_object(
-                    CopySource={'Bucket': source_bucket, 'Key': image_key},
-                    Bucket=source_bucket,
-                    Key=image_key,
-                    ContentType=content_type,
-                    Metadata=current_metadata,
-                    MetadataDirective='REPLACE'
-                )
-                app.logger.info(f"Marked {image_key} as reviewed in {source_bucket}")
-                flash(f"Image marked as GOOD and reviewed in {source_bucket}.", "success")
-            elif action == 'bad':
-                s3_client.delete_object(
-                    Bucket=source_bucket,
-                    Key=image_key
-                )
-                app.logger.info(f"Deleted {image_key} from {source_bucket} (marked as BAD).")
-                flash(f"Image marked as BAD and deleted from {source_bucket}.", "success")
-            else:
-                flash(f"Invalid action: {action} for image from {S3_PERFORMER_BUCKET}.", "danger")
-        except Exception as e:
-            app.logger.error(f"Error during performer action {action} for {image_key} from {source_bucket}: {e}")
-            flash(f"Error processing action: {str(e)}", "danger")
+    # Logic for source_bucket == S3_PERFORMER_BUCKET has been removed as per user statement
+    # that this page now only pulls from S3_UPLOAD_BUCKET.
     
     else:
-        flash(f"Unsupported source bucket '{source_bucket}' for performer action.", "danger")
+        flash(f"Unsupported source bucket '{source_bucket}' for this performer action. Expected '{S3_UPLOAD_BUCKET}'.", "danger")
     
     return redirect(url_for('perf_review_image_route'))
 

@@ -144,6 +144,10 @@
                             <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
                             <button type="submit" class="btn btn-danger btn-lg">BAD</button>
                         </form>
+                        <form action="{{ url_for('performer_action_route', action='incredible', image_key=image_key) }}" method="post">
+                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                            <button type="submit" class="btn btn-primary btn-lg">INCREDIBLE</button>
+                        </form>
                     </div>
                 </div>
             </div>
