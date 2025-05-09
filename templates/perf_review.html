@@ -57,6 +57,14 @@
         border-radius: 8px;
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
+
+    .image-container img.scaled-reference-image {
+        max-width: 75%;
+        max-height: 45vh; /* 75% of 60vh */
+        display: block; /* Ensure block for centering with auto margins */
+        margin-left: auto;
+        margin-right: auto;
+    }
     
     .btn-group-centered {
         display: flex;
@@ -134,7 +142,7 @@
                             {% set ref_image_path = "ref_images/" ~ performer_id ~ "." ~ i ~ ".jpg" %}
                             {% set full_ref_image_url = "https://etickets-content-test-bucket.s3.amazonaws.com/" ~ ref_image_path %}
                             <div class="image-container">
-                                <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" class="img-fluid" onerror="this.style.display='none'; this.parentElement.style.display='none';">
+                                <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" class="img-fluid scaled-reference-image" onerror="this.style.display='none'; this.parentElement.style.display='none';">
                                 {# onerror hides the image and its container if it fails to load, as existence is not pre-checked #}
                             </div>
                         {% endfor %}
