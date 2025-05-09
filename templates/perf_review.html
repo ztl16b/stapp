@@ -130,10 +130,9 @@
                     <h4 class="reference-image-title">Reference Images</h4>
                     {% if performer_id %} {# Assumes performer_id is passed to the template #}
                         {% for i in range(1, 11) %} {# Loop 1 to 10 for up to 10 images #}
-                            {% set ref_image_folder_path = "images/performers/reference/" ~ performer_id ~ "/" %}
-                            {% set ref_image_filename = "ref_" ~ i ~ ".jpg" %}
-                            {# Construct the full image URL assuming AWS S3 structure and source_bucket is the bucket name #}
-                            {% set full_ref_image_url = "https://" ~ source_bucket ~ ".s3.amazonaws.com/" ~ ref_image_folder_path ~ ref_image_filename %}
+                            {# Updated reference image URL construction based on example: https://etickets-content-test-bucket.s3.amazonaws.com/ref_images/PERFORMERID_INDEX.webp #}
+                            {% set ref_image_path = "ref_images/" ~ performer_id ~ "_" ~ i ~ ".webp" %}
+                            {% set full_ref_image_url = "https://etickets-content-test-bucket.s3.amazonaws.com/" ~ ref_image_path %}
                             <div class="image-container">
                                 <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" class="img-fluid" onerror="this.style.display='none'; this.parentElement.style.display='none';">
                                 {# onerror hides the image and its container if it fails to load, as existence is not pre-checked #}
