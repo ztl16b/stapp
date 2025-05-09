@@ -11,7 +11,6 @@
         gap: 20px;
     }
 
-    /* stack metadata first on DESKTOP */
     @media (min-width: 992px) {
         .review-container {
             flex-direction: row;
@@ -20,19 +19,20 @@
 
     /* —— Metadata box —— */
     .metadata-area {
-        flex: 0 0 300px; /* fixed‑width side column */
+        flex: 0 0 340px;
         position: sticky;
-        top: 20px; /* adjust if navbar height differs */
+        top: 20px;
         max-height: calc(100vh - 40px);
         overflow-y: auto;
+        overflow-x: hidden;
     }
 
     .metadata-box {
         background-color: #f8f9fa;
         border-radius: 8px;
         padding: 15px;
-        margin-bottom: 20px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        overflow-wrap: anywhere;
     }
 
     /* —— Central review area —— */
@@ -44,7 +44,6 @@
         gap: 30px;
     }
 
-    /* Performer image */
     .performer-image-container {
         width: 100%;
         text-align: center;
@@ -58,7 +57,7 @@
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
 
-    /* Buttons under performer image */
+    /* Buttons */
     .btn-group-centered {
         display: flex;
         justify-content: center;
@@ -66,23 +65,25 @@
         gap: 10px;
     }
 
-    /* Reference image grid */
+    /* —— Reference grid —— */
     .reference-grid {
         width: 100%;
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(3, 1fr); /* 3 images per row */
         gap: 15px;
+        justify-items: center;
     }
 
     .reference-grid img {
-        width: 50%;
-        max-height: 45vh;
+        width: 100%;            /* take full cell width */
+        height: auto;
+        max-height: 30vh;
         object-fit: contain;
         border-radius: 8px;
         box-shadow: 0 2px 6px rgba(0,0,0,0.08);
     }
 
-    /* Titles & text tweaks */
+    /* —— Typography tweaks —— */
     .performer-name {
         font-weight: bold;
         color: #0d6efd;
