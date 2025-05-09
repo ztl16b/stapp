@@ -536,9 +536,9 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
 
 def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Moves an object from source_bucket to dest_bucket."""
+    op_data = _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination, bad_reason)
+    copy_successful = False
     try:
-        op_data = _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination, bad_reason)
-        
         s3_client.copy_object(
             CopySource=op_data['copy_source'],
             Bucket=dest_bucket,
@@ -548,18 +548,38 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
             MetadataDirective='REPLACE'
         )
         app.logger.info(f"Copied {op_data['original_key']} from {source_bucket} to {dest_bucket} as {op_data['dest_key']}")
-
-        if dest_bucket != S3_INCREDIBLE_BUCKET or source_bucket == S3_UPLOAD_BUCKET:
-            s3_client.delete_object(Bucket=source_bucket, Key=op_data['original_key'])
-            app.logger.info(f"Deleted {op_data['original_key']} from {source_bucket}")
-        return True
+        copy_successful = True
     except ClientError as e:
-        app.logger.error(f"Error moving object {object_key}: {e}")
-        flash(f"Error moving file: {e.response['Error']['Message']}", "danger")
+        app.logger.error(f"Error copying object {object_key} during move: {e}")
+        error_code = e.response.get('Error', {}).get('Code')
+        error_message = e.response.get('Error', {}).get('Message', str(e))
+        if error_code == 'AccessDenied':
+            flash(f"Access Denied: Cannot copy {op_data.get('filename', object_key)}. Check S3 permissions (GetObject for source, PutObject for destination).", "danger")
+        else:
+            flash(f"Error copying file '{op_data.get('filename', object_key)}' during move: {error_message}", "danger")
+        return False # Explicitly return False on copy error
     except Exception as e:
-        app.logger.error(f"Unexpected error moving object {object_key}: {e}")
-        flash("An unexpected error occurred while moving the file.", "danger")
-    return False
+        app.logger.error(f"Unexpected error copying object {object_key} during move: {e}")
+        flash(f"An unexpected error occurred while copying '{op_data.get('filename', object_key)}' during move.", "danger")
+        return False # Explicitly return False on copy error
+
+    if copy_successful:
+        try:
+            s3_client.delete_object(Bucket=source_bucket, Key=op_data['original_key'])
+            app.logger.info(f"Deleted {op_data['original_key']} from {source_bucket} after successful copy.")
+            return True # Move successful
+        except ClientError as e:
+            app.logger.error(f"Error deleting object {op_data['original_key']} after copy: {e}")
+            error_message = e.response.get('Error', {}).get('Message', str(e))
+            flash(f"File '{op_data.get('filename', op_data['original_key'])}' copied, but error deleting original: {error_message}", "warning")
+            return False # Move partially failed (delete failed)
+        except Exception as e:
+            app.logger.error(f"Unexpected error deleting object {op_data['original_key']} after copy: {e}")
+            flash(f"File '{op_data.get('filename', op_data['original_key'])}' copied, but an unexpected error occurred while deleting the original.", "warning")
+            return False # Move partially failed (delete failed)
+    else:
+        # Copy was not successful, error already flashed by copy exception block.
+        return False
 
 def get_presigned_url(bucket_name, object_key, expiration=3600):
     """Generate a presigned URL to share an S3 object."""
@@ -808,7 +828,6 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
     try:
         op_data = _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination, bad_reason)
-        
         s3_client.copy_object(
             CopySource=op_data['copy_source'],
             Bucket=dest_bucket,
@@ -821,10 +840,18 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
         return True
     except ClientError as e:
         app.logger.error(f"Error copying object {object_key}: {e}")
-        flash(f"Error copying file: {e.response['Error']['Message']}", "danger")
+        error_code = e.response.get('Error', {}).get('Code')
+        error_message = e.response.get('Error', {}).get('Message', str(e))
+        filename_display = op_data.get('filename', object_key) if 'op_data' in locals() else object_key
+
+        if error_code == 'AccessDenied':
+            flash(f"Access Denied: Cannot copy {filename_display}. Check S3 permissions (GetObject for source, PutObject for destination).", "danger")
+        else:
+            flash(f"Error copying file '{filename_display}': {error_message}", "danger")
     except Exception as e:
         app.logger.error(f"Unexpected error copying object {object_key}: {e}")
-        flash("An unexpected error occurred while copying the file.", "danger")
+        filename_display = op_data.get('filename', object_key) if 'op_data' in locals() else object_key
+        flash(f"An unexpected error occurred while copying '{filename_display}'.", "danger")
     return False
 
 @app.route('/browse')
@@ -901,7 +928,7 @@ def browse_bucket(bucket_name):
         date_from = request.args.get('date_from', '')
         date_to = request.args.get('date_to', '')
         per_page = 200
-        max_items_to_scan = 200 # Limit initial scan
+        max_items_to_scan = 5000 # Limit initial scan
 
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
         
@@ -1733,25 +1760,42 @@ def performer_action_route(action, image_key):
         elif action == 'bad':
             # Download to local folder, then delete from S3_UPLOAD_BUCKET
             local_error_dir = os.path.expanduser("~/local_files/performer_images_error") # Expand ~ to user's home dir
+            download_successful = False
+            local_file_path = ""
             try:
                 os.makedirs(local_error_dir, exist_ok=True)
-                local_file_path = os.path.join(local_error_dir, filename)
+                local_file_path = os.path.join(local_error_dir, filename) # filename is defined earlier in the function
                 
-                # Use the globally/thread-locally defined s3_client
                 s3_client.download_file(source_bucket, image_key, local_file_path)
                 app.logger.info(f"Image '{filename}' downloaded to {local_file_path}")
-                
-                # Now delete from S3_UPLOAD_BUCKET
-                s3_client.delete_object(Bucket=source_bucket, Key=image_key)
-                app.logger.info(f"Image '{image_key}' deleted from {source_bucket}")
-                
-                flash(f"Image '{filename}' marked BAD, saved locally, and removed from upload bucket.", "success")
-            except Exception as e:
-                app.logger.error(f"Error processing BAD action for '{filename}': {e}")
-                flash(f"Error processing BAD action for '{filename}': {str(e)}", "danger")
+                download_successful = True
+            except ClientError as e: # More specific S3 error handling
+                app.logger.error(f"S3 error downloading '{filename}' for BAD action: {e}")
+                error_code = e.response.get('Error', {}).get('Code')
+                error_message = e.response.get('Error', {}).get('Message', str(e))
+                if error_code == 'AccessDenied':
+                    flash(f"Access Denied: Cannot download '{filename}'. Check S3 GetObject permissions for the upload bucket.", "danger")
+                else:
+                    flash(f"S3 error downloading '{filename}': {error_message}", "danger")
+            except Exception as e: # Catches other errors like local permission issues for os.makedirs/saving file
+                app.logger.error(f"Local file error processing BAD action for '{filename}' (path: {local_file_path}): {e}")
+                flash(f"Error saving '{filename}' locally (check path & permissions): {str(e)}", "danger")
+
+            if download_successful:
+                try:
+                    s3_client.delete_object(Bucket=source_bucket, Key=image_key)
+                    app.logger.info(f"Image '{image_key}' deleted from {source_bucket} after local download.")
+                    flash(f"Image '{filename}' marked BAD, saved locally, and removed from upload bucket.", "success")
+                except ClientError as e:
+                    app.logger.error(f"S3 error deleting '{image_key}' after download for BAD action: {e}")
+                    error_message = e.response.get('Error', {}).get('Message', str(e))
+                    flash(f"Image '{filename}' saved locally, but FAILED to delete from S3: {error_message}", "warning")
+                except Exception as e:
+                    app.logger.error(f"Unexpected error deleting '{image_key}' after download for BAD action: {e}")
+                    flash(f"Image '{filename}' saved locally, but FAILED to delete from S3 due to an unexpected error.", "warning")
+            # If download was not successful, an error has already been flashed by the download exception block.
         
         elif action == 'incredible':
-            # Copy to S3_PERFORMER_BUCKET, then copy to S3_INCREDIBLE_BUCKET, then delete from S3_UPLOAD_BUCKET
             copied_to_performers = False
             copied_to_incredible = False
 
@@ -1764,13 +1808,12 @@ def performer_action_route(action, image_key):
                 flash(f"Failed to copy image '{filename}' to Performers bucket. Aborting incredible action.", "danger")
 
             # 2. Copy to Incredible Bucket (destination='incredible' also sets review_status=TRUE, perfimg_status=TRUE)
-            if copied_to_performers: # Only proceed if first copy was successful
+            if copied_to_performers:
                 if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
                     app.logger.info(f"Image '{filename}' copied to Incredible bucket.")
                     copied_to_incredible = True
                 else:
                     app.logger.error(f"Failed to copy image '{filename}' to Incredible bucket.")
-                    # At this point, the image is in Performers but not Incredible. User might need to be aware.
                     flash(f"Image '{filename}' copied to Performers, but FAILED to copy to Incredible bucket.", "warning")
             
             # 3. Delete from Upload Bucket if both copies were successful
@@ -1783,16 +1826,10 @@ def performer_action_route(action, image_key):
                     app.logger.error(f"Error deleting '{image_key}' from {source_bucket} after copies: {e}")
                     flash(f"Image '{filename}' copied to Performers & Incredible, but FAILED to delete from Upload bucket. Please check manually.", "warning")
             elif copied_to_performers and not copied_to_incredible:
-                # Message already flashed about failure to copy to incredible. 
-                # Original in S3_UPLOAD_BUCKET is kept for retry or manual intervention.
-                pass # Avoid double flashing, previous flash covers the state.
-            # If copied_to_performers is false, the first error message is sufficient.
+                pass
 
         else:
             flash(f"Invalid action: {action} for image from {S3_UPLOAD_BUCKET}.", "danger")
-    
-    # Logic for source_bucket == S3_PERFORMER_BUCKET has been removed as per user statement
-    # that this page now only pulls from S3_UPLOAD_BUCKET.
     
     else:
         flash(f"Unsupported source bucket '{source_bucket}' for this performer action. Expected '{S3_UPLOAD_BUCKET}'.", "danger")
