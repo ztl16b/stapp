@@ -8,22 +8,21 @@
     .review-container {
         display: flex;
         flex-direction: column;
-        gap: 20px;
+        gap: 30px;
     }
 
-    @media (min-width: 992px) {
-        .review-container {
-            flex-direction: row;
-        }
+    /* —— Image + metadata row —— */
+    .image-row {
+        display: flex;
+        justify-content: center;  /* center the whole group horizontally */
+        align-items: flex-start;
+        gap: 24px;
+        flex-wrap: wrap;          /* stack on narrow screens */
     }
 
     /* —— Metadata box —— */
     .metadata-area {
-        flex: 0 0 340px;
-        position: sticky;
-        top: 20px;
-        max-height: calc(100vh - 40px);
-        overflow-y: auto;
+        flex: 0 0 320px;          /* natural width, not sticky */
         overflow-x: hidden;
     }
 
@@ -35,17 +34,8 @@
         overflow-wrap: anywhere;
     }
 
-    /* —— Central review area —— */
-    .image-review-area {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 30px;
-    }
-
+    /* —— Performer image —— */
     .performer-image-container {
-        width: 100%;
         text-align: center;
     }
 
@@ -57,7 +47,7 @@
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
 
-    /* Buttons */
+    /* Buttons below performer image */
     .btn-group-centered {
         display: flex;
         justify-content: center;
@@ -69,13 +59,12 @@
     .reference-grid {
         width: 100%;
         display: grid;
-        grid-template-columns: repeat(3, 1fr); /* 3 images per row */
+        grid-template-columns: repeat(3, 1fr);
         gap: 15px;
-        justify-items: center;
     }
 
     .reference-grid img {
-        width: 100%;            /* take full cell width */
+        width: 100%;
         height: auto;
         max-height: 30vh;
         object-fit: contain;
@@ -118,34 +107,32 @@
 
     {% if image_url %}
         <div class="review-container">
-            <!-- ─── Metadata LEFT column ─── -->
-            <div class="metadata-area">
-                <div class="metadata-box">
-                    <h5 class="mb-3">Performer Review</h5>
-                    <div class="performer-name">{{ performer_name }}</div>
-                    <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
-                    <p class="mb-2"><strong>Review Status:</strong>
-                        {% if review_status == 'TRUE' %}
-                            <span class="badge bg-success">Reviewed</span>
-                        {% else %}
-                            <span class="badge bg-danger">Not Reviewed</span>
-                        {% endif %}
-                    </p>
-                    <p class="mb-2"><strong>Perf Img Status:</strong>
-                        {% if perfimg_status == 'TRUE' %}
-                            <span class="badge bg-success">TRUE</span>
-                        {% else %}
-                            <span class="badge bg-danger">FALSE</span>
-                        {% endif %}
-                    </p>
-                    <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
-                    <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
+            <!-- ─── Image & metadata side‑by‑side (centred) ─── -->
+            <div class="image-row">
+                <div class="metadata-area">
+                    <div class="metadata-box">
+                        <h5 class="mb-3">Performer</h5>
+                        <div class="performer-name">{{ performer_name }}</div>
+                        <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
+                        <p class="mb-2"><strong>Review Status:</strong>
+                            {% if review_status == 'TRUE' %}
+                                <span class="badge bg-success">Reviewed</span>
+                            {% else %}
+                                <span class="badge bg-danger">Not Reviewed</span>
+                            {% endif %}
+                        </p>
+                        <p class="mb-2"><strong>Perf Img Status:</strong>
+                            {% if perfimg_status == 'TRUE' %}
+                                <span class="badge bg-success">TRUE</span>
+                            {% else %}
+                                <span class="badge bg-danger">FALSE</span>
+                            {% endif %}
+                        </p>
+                        <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
+                        <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
+                    </div>
                 </div>
-            </div>
 
-            <!-- ─── Center review area ─── -->
-            <div class="image-review-area">
-                <!-- Performer image & buttons -->
                 <div class="performer-image-container">
                     <img src="{{ image_url }}" alt="Performer Image from S3" class="img-fluid">
                     <div class="btn-group-centered">
@@ -159,21 +146,21 @@
                         </form>
                     </div>
                 </div>
+            </div>
 
-                <!-- Reference image grid -->
-                <div class="w-100">
-                    <p class="reference-image-title">Reference Images</p>
-                    <div class="reference-grid">
-                    {% if performer_id %}
-                        {% for i in range(1, 11) %}
-                            {% set ref_image_path = "ref_images/" ~ performer_id ~ "." ~ i ~ ".jpg" %}
-                            {% set full_ref_image_url = "https://etickets-content-test-bucket.s3.amazonaws.com/" ~ ref_image_path %}
-                            <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" onerror="this.style.display='none';">
-                        {% endfor %}
-                    {% else %}
-                        <p class="text-muted small">Performer ID missing — reference images unavailable.</p>
-                    {% endif %}
-                    </div>
+            <!-- ─── Reference images ─── -->
+            <div class="w-100">
+                <p class="reference-image-title">Reference Images</p>
+                <div class="reference-grid">
+                {% if performer_id %}
+                    {% for i in range(1, 11) %}
+                        {% set ref_image_path = "ref_images/" ~ performer_id ~ "." ~ i ~ ".jpg" %}
+                        {% set full_ref_image_url = "https://etickets-content-test-bucket.s3.amazonaws.com/" ~ ref_image_path %}
+                        <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" onerror="this.style.display='none';">
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted small">Performer ID missing — reference images unavailable.</p>
+                {% endif %}
                 </div>
             </div>
         </div>
