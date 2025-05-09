@@ -4,3 +4,6 @@
 *.env.*
 
 *.csv
+
+*.txt
+commands.txt

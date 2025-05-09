@@ -4,8 +4,8 @@ chrome://net-internals/#sockets
 
 heroku config:set ADMIN_PASSWORD="Verysecure" --app stapp
 
-heroku config:set GOOGLE_CSE_KEY="AIzaSyAS3cOIC4iD-mj6i8_t6jY-rp75f5wSbFE" --app stapp
-heroku config:set GOOGLE_CSE_CX="664fa6be37ebc40c9" --app stapp
+heroku config:set GOOGLE_CSE_KEY="xxx" --app stapp
+heroku config:set GOOGLE_CSE_CX="xxx" --app stapp
 
 
 git add . && git commit -m "performer" && git push stapp main

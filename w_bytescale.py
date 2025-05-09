@@ -1,327 +1,228 @@
 #!/usr/bin/env python3
-import os
-import time
-import boto3 #type:ignore
-import logging
-import traceback
-import sys
-import requests #type:ignore
-from io import BytesIO
-from dotenv import load_dotenv #type:ignore
-import schedule #type:ignore
-from datetime import datetime
+"""
+bytescale_worker.py
+───────────────────
+• Watches the *Temp* bucket for new images.
+• Sends each image to Bytescale for conversion → WebP (464 × 510, smart-crop).
+• Saves the processed image in the **Upload** bucket (duplicate-checked).
+• If a duplicate name already exists in Upload, file is saved to the Issue bucket with “_dupeUpload” suffix.
+• Deletes the original image from Temp once the Upload (or Issue) write succeeds.
+"""
 
-# Load environment variables
+import os, sys, time, traceback, logging, requests      # type: ignore
+from io import BytesIO
+from datetime import datetime
+import boto3                                            # type: ignore
+from dotenv import load_dotenv                         # type: ignore
+import schedule                                         # type: ignore
+
+# ─── ENV ────────────────────────────────────────────────────────────────────
 load_dotenv()
 
-# Configure logging
+AWS_ACCESS_KEY_ID       = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY   = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION              = os.getenv("AWS_REGION")
+
+S3_TEMP_BUCKET          = os.getenv("S3_TEMP_BUCKET")
+S3_TEMP_BUCKET_PREFIX   = os.getenv("S3_TEMP_BUCKET_PREFIX", "")
+
+S3_UPLOAD_BUCKET        = os.getenv("S3_UPLOAD_BUCKET")          # ← final bucket
+S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
+
+S3_ISSUE_BUCKET         = os.getenv("S3_ISSUE_BUCKET")           # for dupes
+S3_ISSUE_BUCKET_PREFIX  = os.getenv("S3_ISSUE_BUCKET_PREFIX", "")
+
+BYTESCALE_API_KEY       = os.getenv("BYTESCALE_API_KEY")
+BYTESCALE_UPLOAD_URL    = os.getenv("BYTESCALE_UPLOAD_URL")
+
+# ─── LOGGING ───────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s — %(levelname)s — %(message)s",
+    handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger('bytescale_worker')
+logger = logging.getLogger("bytescale_worker")
 
-# Get environment variables
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = os.getenv("AWS_REGION")
-S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
-S3_TEMP_BUCKET_PREFIX = os.getenv("S3_TEMP_BUCKET_PREFIX", "")
-S3_GOOD_BUCKET = os.getenv("S3_GOOD_BUCKET")
-S3_GOOD_BUCKET_PREFIX = os.getenv("S3_GOOD_BUCKET_PREFIX", "")
-S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
-S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
-BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
-BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
+for name, val in (
+    ("Temp bucket"   , f"{S3_TEMP_BUCKET}/{S3_TEMP_BUCKET_PREFIX or '(root)'}"),
+    ("Upload bucket" , f"{S3_UPLOAD_BUCKET}/{S3_UPLOAD_BUCKET_PREFIX or '(root)'}"),
+    ("Issue bucket"  , f"{S3_ISSUE_BUCKET}/{S3_ISSUE_BUCKET_PREFIX or '(root)'}"),
+):
+    logger.info(f"Using {name}: {val}")
 
-logger.info(f"Using S3 bucket: {S3_TEMP_BUCKET}")
-if S3_TEMP_BUCKET_PREFIX:
-    logger.info(f"Using prefix: {S3_TEMP_BUCKET_PREFIX}")
-else:
-    logger.info("No prefix specified, will check entire bucket")
-
-logger.info(f"Using Good bucket: {S3_GOOD_BUCKET}")
-if S3_GOOD_BUCKET_PREFIX:
-    logger.info(f"Using Good bucket prefix: {S3_GOOD_BUCKET_PREFIX}")
-
-logger.info(f"Using Upload bucket: {S3_UPLOAD_BUCKET}")
-if S3_UPLOAD_BUCKET_PREFIX:
-    logger.info(f"Using Upload bucket prefix: {S3_UPLOAD_BUCKET_PREFIX}")
-
-# Validate required environment variables
-missing_vars = []
-if not AWS_ACCESS_KEY_ID: missing_vars.append("AWS_ACCESS_KEY_ID")
-if not AWS_SECRET_ACCESS_KEY: missing_vars.append("AWS_SECRET_ACCESS_KEY")
-if not AWS_REGION: missing_vars.append("AWS_REGION")
-if not S3_TEMP_BUCKET: missing_vars.append("S3_TEMP_BUCKET")
-if not S3_GOOD_BUCKET: missing_vars.append("S3_GOOD_BUCKET")
-if not S3_UPLOAD_BUCKET: missing_vars.append("S3_UPLOAD_BUCKET")
-if not BYTESCALE_API_KEY: missing_vars.append("BYTESCALE_API_KEY")
-if not BYTESCALE_UPLOAD_URL: missing_vars.append("BYTESCALE_UPLOAD_URL")
-
-if missing_vars:
-    error_msg = f"ERROR: Missing required environment variables: {', '.join(missing_vars)}"
-    logger.error(error_msg)
+# ─── ENV VALIDATION ────────────────────────────────────────────────────────
+missing = [
+    var for var, val in {
+        "AWS_ACCESS_KEY_ID"      : AWS_ACCESS_KEY_ID,
+        "AWS_SECRET_ACCESS_KEY"  : AWS_SECRET_ACCESS_KEY,
+        "AWS_REGION"             : AWS_REGION,
+        "S3_TEMP_BUCKET"         : S3_TEMP_BUCKET,
+        "S3_UPLOAD_BUCKET"       : S3_UPLOAD_BUCKET,
+        "S3_ISSUE_BUCKET"        : S3_ISSUE_BUCKET,
+        "BYTESCALE_API_KEY"      : BYTESCALE_API_KEY,
+        "BYTESCALE_UPLOAD_URL"   : BYTESCALE_UPLOAD_URL,
+    }.items() if not val
+]
+if missing:
+    logger.error("Missing required environment variables: %s", ", ".join(missing))
     sys.exit(1)
 
+# ─── AWS S3 CLIENT ────────────────────────────────────────────────────────
 try:
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id     = AWS_ACCESS_KEY_ID,
+        aws_secret_access_key = AWS_SECRET_ACCESS_KEY,
+        region_name           = AWS_REGION
     )
-    
-    # Test S3 connection
-    s3_client.list_buckets()
-    logger.info("S3 connection successful!")
-    
+    s3.list_buckets()
+    logger.info("✔︎ Connected to S3")
 except Exception as e:
-    logger.error(f"ERROR: Failed to initialize S3 client: {e}")
-    traceback.print_exc()
+    logger.error("Failed to initialise S3 client: %s", e)
     sys.exit(1)
 
-def process_image(s3_key):
+# ─── CORE LOGIC ────────────────────────────────────────────────────────────
+def process_image(key: str) -> bool:
+    """Download → Bytescale convert → upload to *Upload* bucket (or Issue if dupe)."""
     try:
-        filename = s3_key.split('/')[-1]
-        base_name, extension = os.path.splitext(filename)
-        logger.info(f"Processing image: {filename}")
-        
-        # Download image from S3
-        logger.info(f"Downloading {filename} from {S3_TEMP_BUCKET}")
-        response = s3_client.get_object(Bucket=S3_TEMP_BUCKET, Key=s3_key)
-        file_data = response['Body'].read()
-        content_type = response.get('ContentType', 'image/jpeg')
-        
-        # Extract metadata from the original image
-        metadata = response.get('Metadata', {})
-        uploader_initials = metadata.get('uploader-initials', '')
-        review_status = metadata.get('review_status', 'FALSE')
-        perfimg_status = metadata.get('perfimg_status', 'FALSE')
-        
-        if uploader_initials:
-            logger.info(f"Found uploader initials metadata: {uploader_initials}")
-        else:
-            logger.info("No uploader initials found in metadata")
-            
-        logger.info(f"Using review_status: {review_status}")
-        logger.info(f"Using perfimg_status: {perfimg_status}")
-        
-        if len(file_data) == 0:
-            logger.error(f"Downloaded file has zero bytes. Skipping.")
+        filename              = key.split("/")[-1]
+        base_name, _          = os.path.splitext(filename)
+        logger.info("Processing %s …", filename)
+
+        # 1. Download from Temp
+        obj       = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
+        file_data = obj["Body"].read()
+        if not file_data:
+            logger.error("Downloaded file is empty → skip")
             return False
-        
-        # Upload to Bytescale
-        headers = {
-            'Authorization': f'Bearer {BYTESCALE_API_KEY}'
-        }
-        files_data = {
-            'file': (filename, file_data, content_type)
-        }
-        
-        logger.info(f"Uploading {filename} to Bytescale for processing")
-        with requests.Session() as session:
-            # Upload to Bytescale
-            upload_response = session.post(
-                BYTESCALE_UPLOAD_URL, 
-                headers=headers, 
-                files=files_data, 
-                timeout=60
+
+        meta              = obj.get("Metadata", {})
+        uploader_initials = meta.get("uploader-initials", "")
+        review_status     = meta.get("review_status", "FALSE")
+        perfimg_status    = meta.get("perfimg_status", "FALSE")
+
+        # 2. Upload raw to Bytescale
+        with requests.Session() as sess:
+            up_resp = sess.post(
+                BYTESCALE_UPLOAD_URL,
+                headers={"Authorization": f"Bearer {BYTESCALE_API_KEY}"},
+                files={"file": (filename, file_data, obj.get("ContentType","image/jpeg"))},
+                timeout=60,
             )
-            
-            if upload_response.status_code != 200:
-                logger.error(f"Bytescale upload returned status code {upload_response.status_code}")
-                logger.error(f"Response content: {upload_response.text[:500]}")
-                return False
-            
-            upload_response.raise_for_status()
-            json_response = upload_response.json()
-            logger.info(f"Bytescale upload successful")
-            
-            # Extract file URL from response
-            file_url = None
-            for file_obj in json_response.get("files", []):
-                if file_obj.get("formDataFieldName") == "file":
-                    file_url = file_obj.get("fileUrl")
-                    break
-            
-            if not file_url:
-                logger.error("Could not find file URL in Bytescale response")
-                return False
-            
-            logger.info(f"Bytescale file URL: {file_url}")
-            
-            # Free up memory
-            del file_data
-            del files_data
-            
-            # Apply image transformations using Bytescale Image Processing API
-            # Converting to WebP format with 80% quality, width 800px, maintaining aspect ratio
-            processed_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=smart"
-            logger.info(f"Downloading processed image from: {processed_url}")
-            
-            # Download processed image
-            download_response = session.get(processed_url, stream=True, timeout=60)
-            if download_response.status_code != 200:
-                logger.error(f"Bytescale transformation returned status code {download_response.status_code}")
-                return False
-            
-            download_response.raise_for_status()
-            
-            # Upload processed image back to S3
-            # Replace hyphens with dots in the base filename
-            base_name_with_dots = base_name.replace('-', '.')
-            
-            # Create the new filename with webp extension
-            processed_filename = f"{base_name_with_dots}.webp"
-            
-            # Create the upload path for the Good bucket
-            good_bucket_path = f"{S3_GOOD_BUCKET_PREFIX}{processed_filename}" if S3_GOOD_BUCKET_PREFIX else processed_filename
-            
-            # Create the upload path for the Upload bucket
-            upload_bucket_path = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}" if S3_UPLOAD_BUCKET_PREFIX else processed_filename
-            
-            # Check if image already exists in Good bucket
-            image_exists = False
-            try:
-                s3_client.head_object(
-                    Bucket=S3_GOOD_BUCKET,
-                    Key=good_bucket_path
-                )
-                # If no exception is raised, the image exists
-                image_exists = True
-                logger.info(f"Duplicate detected: {good_bucket_path} already exists in {S3_GOOD_BUCKET}")
-            except Exception:
-                # If an exception is raised, the image doesn't exist
-                pass
-                
-            # Prepare metadata for upload
-            extra_args = {
-                'ContentType': 'image/webp',
-                'Metadata': {
-                    'review_status': review_status,
-                    'perfimg_status': perfimg_status,
-                    'upload_time': datetime.utcnow().isoformat()
-                }
+        if up_resp.status_code != 200:
+            logger.error("Bytescale upload failed: %s", up_resp.text[:400])
+            return False
+        file_url = next(
+            (f["fileUrl"] for f in up_resp.json().get("files", [])
+             if f.get("formDataFieldName") == "file"), None
+        )
+        if not file_url:
+            logger.error("Bytescale response missing fileUrl")
+            return False
+
+        # 3. Download processed (resized / smart-crop) image
+        proc_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=smart"
+        with requests.get(proc_url, stream=True, timeout=60) as resp:
+            resp.raise_for_status()
+            processed_data = resp.content
+
+        # 4. Build Upload-bucket paths + metadata
+        processed_filename   = f"{base_name.replace('-','.')}.webp"
+        upload_key           = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}"
+
+        extra_args = {
+            "ContentType": "image/webp",
+            "Metadata": {
+                "review_status" : review_status,
+                "perfimg_status": perfimg_status,
+                "upload_time"   : datetime.utcnow().isoformat()
             }
-            
-            # Add uploader initials to metadata if available
-            if uploader_initials:
-                extra_args['Metadata']['uploader-initials'] = uploader_initials
-            
-            if image_exists:
-                # If image already exists, upload to Issue bucket instead
-                base_name = os.path.splitext(processed_filename)[0]
-                extension = os.path.splitext(processed_filename)[1]  # Should be .webp
-                issue_filename = f"{base_name}_dupeUpload{extension}"
-                issue_bucket_path = f"{os.getenv('S3_ISSUE_BUCKET_PREFIX', '')}{issue_filename}"
-                issue_bucket = os.getenv('S3_ISSUE_BUCKET')
-                
-                logger.info(f"Uploading duplicate image to {issue_bucket}/{issue_bucket_path}")
-                s3_client.put_object(
-                    Bucket=issue_bucket,
-                    Key=issue_bucket_path,
-                    Body=download_response.content,
-                    **extra_args
-                )
-            else:
-                # Upload to Good bucket only if it doesn't already exist
-                logger.info(f"Uploading processed image to {S3_GOOD_BUCKET}/{good_bucket_path}")
-                s3_client.put_object(
-                    Bucket=S3_GOOD_BUCKET,
-                    Key=good_bucket_path,
-                    Body=download_response.content,
-                    **extra_args
-                )
-            
-            # Delete the original image from Temp bucket
-            logger.info(f"Deleting original image from {S3_TEMP_BUCKET}/{s3_key}")
-            s3_client.delete_object(
-                Bucket=S3_TEMP_BUCKET,
-                Key=s3_key
-            )
-            
-            logger.info(f"Successfully processed {filename} and uploaded to Good and Upload buckets")
-            return True
-    
+        }
+        if uploader_initials:
+            extra_args["Metadata"]["uploader-initials"] = uploader_initials
+
+        # 5. Duplicate check on Upload bucket
+        is_dupe = False
+        try:
+            s3.head_object(Bucket=S3_UPLOAD_BUCKET, Key=upload_key)
+            is_dupe = True
+            logger.info("Duplicate detected in Upload bucket → will route to Issue bucket")
+        except Exception:
+            pass
+
+        # 6. Write to Upload or Issue bucket
+        target_bucket = S3_ISSUE_BUCKET if is_dupe else S3_UPLOAD_BUCKET
+        target_key    = (
+            f"{S3_ISSUE_BUCKET_PREFIX}{base_name}_dupeUpload.webp"
+            if is_dupe else
+            upload_key
+        )
+        s3.put_object(
+            Bucket = target_bucket,
+            Key    = target_key,
+            Body   = processed_data,
+            **extra_args
+        )
+        logger.info("Uploaded to %s/%s", target_bucket, target_key)
+
+        # 7. Delete original from Temp
+        s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
+        logger.info("Deleted original %s from Temp bucket", key)
+        return True
+
     except Exception as e:
-        logger.error(f"Error processing image {s3_key}: {str(e)}")
+        logger.error("Error processing %s: %s", key, e)
         traceback.print_exc()
         return False
 
 def check_temp_bucket():
-    """Check the Temp bucket for images and process them if found"""
+    """Scan Temp bucket for images and process them."""
+    logger.info("Checking Temp bucket …")
     try:
-        if S3_TEMP_BUCKET_PREFIX:
-            logger.info(f"Checking for images in {S3_TEMP_BUCKET}/{S3_TEMP_BUCKET_PREFIX}")
-        else:
-            logger.info(f"Checking for images in {S3_TEMP_BUCKET}")
-        
-        list_params = {
-            'Bucket': S3_TEMP_BUCKET
-        }
-        
-        if S3_TEMP_BUCKET_PREFIX:
-            list_params['Prefix'] = S3_TEMP_BUCKET_PREFIX
-            
-        response = s3_client.list_objects_v2(**list_params)
-        
-        # Check if there are any objects
-        if 'Contents' in response:
-            # Filter for image files
-            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
-            
-            # All images in the Temp bucket need processing
-            images = [
-                obj for obj in response['Contents']
-                if any(obj['Key'].lower().endswith(ext) for ext in image_extensions)
-            ]
-            
-            # Process found images
-            if images:
-                logger.info(f"image found - {len(images)} images in the Temp bucket")
-                
-                # Process each image
-                for img in images:
-                    img_key = img['Key']
-                    logger.info(f"Found image: {img_key} ({img['Size']} bytes)")
-                    result = process_image(img_key)
-                    if result:
-                        logger.info(f"Successfully processed: {img_key}")
-                    else:
-                        logger.error(f"Failed to process: {img_key}")
+        resp = s3.list_objects_v2(
+            Bucket = S3_TEMP_BUCKET,
+            Prefix = S3_TEMP_BUCKET_PREFIX or ""
+        )
+        if "Contents" not in resp:
+            logger.info("No objects found.")
+            return
+
+        image_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+        imgs = [o for o in resp["Contents"] if o["Key"].lower().endswith(image_exts)]
+        if not imgs:
+            logger.info("No images to process.")
+            return
+
+        logger.info("Found %d image(s)", len(imgs))
+        for obj in imgs:
+            ok = process_image(obj["Key"])
+            if ok:
+                logger.info("✓ %s processed", obj["Key"])
             else:
-                logger.info("No images found in the Temp bucket")
-                
-        else:
-            logger.info("No objects found in the Temp bucket")
-            
+                logger.error("✗ %s failed", obj["Key"])
+
     except Exception as e:
-        logger.error(f"Error checking Temp bucket: {e}")
+        logger.error("Temp-bucket scan failed: %s", e)
         traceback.print_exc()
 
 def run_scheduler():
-    """Run the scheduler to check for images periodically"""
-    logger.info("Starting bytescale worker service")
-    
+    logger.info("Bytescale worker started (checks every 30 s)")
+    check_temp_bucket()                              # immediate first run
     schedule.every(30).seconds.do(check_temp_bucket)
-    check_temp_bucket()
-    
     while True:
         try:
             schedule.run_pending()
             time.sleep(1)
         except Exception as e:
-            logger.error(f"Error in scheduler loop: {e}")
+            logger.error("Scheduler loop error: %s", e)
             traceback.print_exc()
             time.sleep(60)
 
 if __name__ == "__main__":
     try:
         run_scheduler()
-    except Exception as e:
-        logger.error(f"Fatal error in main: {e}")
-        traceback.print_exc() 
+    except KeyboardInterrupt:
+        logger.info("Exiting (Ctrl-C)")
+    except Exception as exc:
+        logger.error("Fatal error: %s", exc)
+        traceback.print_exc()
