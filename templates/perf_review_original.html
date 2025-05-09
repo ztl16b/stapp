@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block title %}Perf Review | Image Interface{% endblock %}
+
+{% block extra_css %}
+<style>
+    .metadata-box {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .review-container {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    @media (min-width: 992px) {
+        .review-container {
+            flex-direction: row;
+        }
+        
+        .image-review-area {
+            flex: 3; /* Adjusted to allow space for metadata */
+            padding-right: 20px;
+            display: flex; /* For side-by-side images */
+            gap: 20px; /* Space between images */
+        }
+
+        .image-column {
+            flex: 1; /* Each image column takes equal space */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .metadata-area {
+            flex: 1;
+            position: sticky;
+            top: 20px; /* Adjust based on navbar height if necessary */
+            max-height: calc(100vh - 70px); /* Adjust 70px based on actual navbar height */
+            overflow-y: auto;
+        }
+    }
+
+    .image-container { /* General styling for both image containers */
+        width: 100%;
+        margin-bottom: 15px; /* Space below image before buttons/text */
+    }
+
+    .image-container img {
+        max-width: 100%;
+        max-height: 60vh; /* Max height for review images */
+        object-fit: contain;
+        border-radius: 8px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+
+    .image-container img.scaled-reference-image {
+        max-width: 75%;
+        max-height: 45vh; /* 75% of 60vh */
+        display: block; /* Ensure block for centering with auto margins */
+        margin-left: auto;
+        margin-right: auto;
+    }
+    
+    .btn-group-centered {
+        display: flex;
+        justify-content: center;
+        margin: 20px 0;
+        gap: 10px;
+    }
+    
+    .btn-group-centered form {
+        margin: 0 5px;
+    }
+    
+    .performer-name {
+        font-weight: bold;
+        color: #0d6efd;
+        margin-bottom: 15px;
+        font-size: 1.2em;
+        border-bottom: 1px solid #dee2e6;
+        padding-bottom: 8px;
+    }
+
+    .reference-image-title {
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 10px;
+        font-size: 1.1em;
+        color: #333;
+    }
+
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1>Performer Image Review</h1>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% if image_url %}
+        <div class="review-container">
+            <div class="image-review-area">
+                <!-- S3 Image Column -->
+                <div class="image-column">
+                    <div class="image-container">
+                        <img src="{{ image_url }}" alt="Performer Image from S3" class="img-fluid">
+                    </div>
+                    <div class="btn-group-centered">
+                        <form action="{{ url_for('performer_action_route', action='good', image_key=image_key) }}" method="post">
+                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                            <button type="submit" class="btn btn-success btn-lg">GOOD</button>
+                        </form>
+                        <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
+                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                            <button type="submit" class="btn btn-danger btn-lg">BAD</button>
+                        </form>
+                    </div>
+                </div>
+                <!-- Reference Images Column -->
+                <div class="image-column">
+                    <h4 class="reference-image-title">Reference Images</h4>
+                    {% if performer_id %} {# Assumes performer_id is passed to the template #}
+                        {% for i in range(1, 11) %} {# Loop 1 to 10 for up to 10 images #}
+                            {# Updated reference image URL construction based on example: https://etickets-content-test-bucket.s3.amazonaws.com/ref_images/PERFORMERID_INDEX.webp #}
+                            {% set ref_image_path = "ref_images/" ~ performer_id ~ "." ~ i ~ ".jpg" %}
+                            {% set full_ref_image_url = "https://etickets-content-test-bucket.s3.amazonaws.com/" ~ ref_image_path %}
+                            <div class="image-container">
+                                <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" class="img-fluid scaled-reference-image" onerror="this.style.display='none'; this.parentElement.style.display='none';">
+                                {# onerror hides the image and its container if it fails to load, as existence is not pre-checked #}
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <p class="text-muted text-center small">Reference images cannot be displayed: Performer ID is not available.</p>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="metadata-area">
+                <div class="metadata-box">
+                    <h5 class="mb-3">Performer</h5>
+                    <div class="performer-name">
+                        <i class="fas fa-user-music"></i> {{ performer_name }}
+                    </div>
+                    <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
+                    <p class="mb-2"><strong>Review Status:</strong> 
+                        {% if review_status == 'TRUE' %}
+                            <span class="badge bg-success">Reviewed</span>
+                        {% else %}
+                            <span class="badge bg-danger">Not Reviewed</span>
+                        {% endif %}
+                    </p>
+                    <p class="mb-2"><strong>Perf Img Status:</strong> 
+                        {% if perfimg_status == 'TRUE' %}
+                            <span class="badge bg-success">TRUE</span>
+                        {% else %}
+                            <span class="badge bg-danger">FALSE</span>
+                        {% endif %}
+                    </p>
+                    <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
+                    <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <div class="alert alert-info mt-4" role="alert">
+            <h4 class="alert-heading">No Performer Images Found</h4>
+            <p>No unreviewed performer images were found in the <code>images/performers/detail/</code> folder of the performers bucket.</p>
+            <hr>
+            <p class="mb-0">You can browse all images in the <a href="{{ url_for('browse_bucket', bucket_name='performers') }}" class="alert-link">performers bucket</a> or <a href="{{ url_for('upload') }}" class="alert-link">upload new images</a>.</p>
+        </div>
+    {% endif %}
+
+    <hr class="my-4">
+    <p><a href="{{ url_for('browse_bucket', bucket_name='performers') }}" class="btn btn-secondary">&laquo; Browse Performer Images</a></p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Print session information to console for debugging
+    document.addEventListener('DOMContentLoaded', function() {
+        const imageKey = "{{ image_key }}";
+        console.log("Current image key:", imageKey);
+        
+        // Add a timestamp to help with debugging
+        console.log("Page loaded at:", new Date().toISOString());
+    });
+</script>
+{% endblock %} 

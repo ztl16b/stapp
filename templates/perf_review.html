@@ -4,6 +4,29 @@
 
 {% block extra_css %}
 <style>
+    /* —— Layout containers —— */
+    .review-container {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    /* stack metadata first on DESKTOP */
+    @media (min-width: 992px) {
+        .review-container {
+            flex-direction: row;
+        }
+    }
+
+    /* —— Metadata box —— */
+    .metadata-area {
+        flex: 0 0 280px; /* fixed‑width side column */
+        position: sticky;
+        top: 20px; /* adjust if navbar height differs */
+        max-height: calc(100vh - 40px);
+        overflow-y: auto;
+    }
+
     .metadata-box {
         background-color: #f8f9fa;
         border-radius: 8px;
@@ -11,72 +34,55 @@
         margin-bottom: 20px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    
-    .review-container {
+
+    /* —— Central review area —— */
+    .image-review-area {
+        flex: 1;
         display: flex;
         flex-direction: column;
-    }
-    
-    @media (min-width: 992px) {
-        .review-container {
-            flex-direction: row;
-        }
-        
-        .image-review-area {
-            flex: 3; /* Adjusted to allow space for metadata */
-            padding-right: 20px;
-            display: flex; /* For side-by-side images */
-            gap: 20px; /* Space between images */
-        }
-
-        .image-column {
-            flex: 1; /* Each image column takes equal space */
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        
-        .metadata-area {
-            flex: 1;
-            position: sticky;
-            top: 20px; /* Adjust based on navbar height if necessary */
-            max-height: calc(100vh - 70px); /* Adjust 70px based on actual navbar height */
-            overflow-y: auto;
-        }
+        align-items: center;
+        gap: 30px;
     }
 
-    .image-container { /* General styling for both image containers */
+    /* Performer image */
+    .performer-image-container {
         width: 100%;
-        margin-bottom: 15px; /* Space below image before buttons/text */
+        text-align: center;
     }
 
-    .image-container img {
+    .performer-image-container img {
         max-width: 100%;
-        max-height: 60vh; /* Max height for review images */
+        max-height: 60vh;
         object-fit: contain;
         border-radius: 8px;
         box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
 
-    .image-container img.scaled-reference-image {
-        max-width: 75%;
-        max-height: 45vh; /* 75% of 60vh */
-        display: block; /* Ensure block for centering with auto margins */
-        margin-left: auto;
-        margin-right: auto;
-    }
-    
+    /* Buttons under performer image */
     .btn-group-centered {
         display: flex;
         justify-content: center;
         margin: 20px 0;
         gap: 10px;
     }
-    
-    .btn-group-centered form {
-        margin: 0 5px;
+
+    /* Reference image grid */
+    .reference-grid {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
     }
-    
+
+    .reference-grid img {
+        width: 100%;
+        max-height: 45vh;
+        object-fit: contain;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+
+    /* Titles & text tweaks */
     .performer-name {
         font-weight: bold;
         color: #0d6efd;
@@ -87,13 +93,12 @@
     }
 
     .reference-image-title {
-        text-align: center;
-        font-weight: bold;
-        margin-bottom: 10px;
+        font-weight: 600;
         font-size: 1.1em;
+        margin-bottom: 5px;
         color: #333;
+        text-align: center;
     }
-
 </style>
 {% endblock %}
 
@@ -116,12 +121,36 @@
 
     {% if image_url %}
         <div class="review-container">
+            <!-- ─── Metadata LEFT column ─── -->
+            <div class="metadata-area">
+                <div class="metadata-box">
+                    <h5 class="mb-3">Performer</h5>
+                    <div class="performer-name">{{ performer_name }}</div>
+                    <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
+                    <p class="mb-2"><strong>Review Status:</strong>
+                        {% if review_status == 'TRUE' %}
+                            <span class="badge bg-success">Reviewed</span>
+                        {% else %}
+                            <span class="badge bg-danger">Not Reviewed</span>
+                        {% endif %}
+                    </p>
+                    <p class="mb-2"><strong>Perf Img Status:</strong>
+                        {% if perfimg_status == 'TRUE' %}
+                            <span class="badge bg-success">TRUE</span>
+                        {% else %}
+                            <span class="badge bg-danger">FALSE</span>
+                        {% endif %}
+                    </p>
+                    <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
+                    <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
+                </div>
+            </div>
+
+            <!-- ─── Center review area ─── -->
             <div class="image-review-area">
-                <!-- S3 Image Column -->
-                <div class="image-column">
-                    <div class="image-container">
-                        <img src="{{ image_url }}" alt="Performer Image from S3" class="img-fluid">
-                    </div>
+                <!-- Performer image & buttons -->
+                <div class="performer-image-container">
+                    <img src="{{ image_url }}" alt="Performer Image from S3" class="img-fluid">
                     <div class="btn-group-centered">
                         <form action="{{ url_for('performer_action_route', action='good', image_key=image_key) }}" method="post">
                             <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
@@ -133,48 +162,21 @@
                         </form>
                     </div>
                 </div>
-                <!-- Reference Images Column -->
-                <div class="image-column">
-                    <h4 class="reference-image-title">Reference Images</h4>
-                    {% if performer_id %} {# Assumes performer_id is passed to the template #}
-                        {% for i in range(1, 11) %} {# Loop 1 to 10 for up to 10 images #}
-                            {# Updated reference image URL construction based on example: https://etickets-content-test-bucket.s3.amazonaws.com/ref_images/PERFORMERID_INDEX.webp #}
+
+                <!-- Reference image grid -->
+                <div class="w-100">
+                    <p class="reference-image-title">Reference Images</p>
+                    <div class="reference-grid">
+                    {% if performer_id %}
+                        {% for i in range(1, 11) %}
                             {% set ref_image_path = "ref_images/" ~ performer_id ~ "." ~ i ~ ".jpg" %}
                             {% set full_ref_image_url = "https://etickets-content-test-bucket.s3.amazonaws.com/" ~ ref_image_path %}
-                            <div class="image-container">
-                                <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" class="img-fluid scaled-reference-image" onerror="this.style.display='none'; this.parentElement.style.display='none';">
-                                {# onerror hides the image and its container if it fails to load, as existence is not pre-checked #}
-                            </div>
+                            <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" onerror="this.style.display='none';">
                         {% endfor %}
                     {% else %}
-                        <p class="text-muted text-center small">Reference images cannot be displayed: Performer ID is not available.</p>
+                        <p class="text-muted small">Performer ID missing — reference images unavailable.</p>
                     {% endif %}
-                </div>
-            </div>
-            
-            <div class="metadata-area">
-                <div class="metadata-box">
-                    <h5 class="mb-3">Performer</h5>
-                    <div class="performer-name">
-                        <i class="fas fa-user-music"></i> {{ performer_name }}
                     </div>
-                    <p class="mb-2"><strong>Uploader:</strong> <span class="badge bg-secondary">{{ uploader_initials }}</span></p>
-                    <p class="mb-2"><strong>Review Status:</strong> 
-                        {% if review_status == 'TRUE' %}
-                            <span class="badge bg-success">Reviewed</span>
-                        {% else %}
-                            <span class="badge bg-danger">Not Reviewed</span>
-                        {% endif %}
-                    </p>
-                    <p class="mb-2"><strong>Perf Img Status:</strong> 
-                        {% if perfimg_status == 'TRUE' %}
-                            <span class="badge bg-success">TRUE</span>
-                        {% else %}
-                            <span class="badge bg-danger">FALSE</span>
-                        {% endif %}
-                    </p>
-                    <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
-                    <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
                 </div>
             </div>
         </div>
@@ -194,13 +196,9 @@
 
 {% block extra_js %}
 <script>
-    // Print session information to console for debugging
     document.addEventListener('DOMContentLoaded', function() {
-        const imageKey = "{{ image_key }}";
-        console.log("Current image key:", imageKey);
-        
-        // Add a timestamp to help with debugging
-        console.log("Page loaded at:", new Date().toISOString());
+        console.log('Current image key:', "{{ image_key }}");
+        console.log('Page loaded at:', new Date().toISOString());
     });
 </script>
-{% endblock %} 
+{% endblock %}
