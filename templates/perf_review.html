@@ -131,7 +131,7 @@
                     {% if performer_id %} {# Assumes performer_id is passed to the template #}
                         {% for i in range(1, 11) %} {# Loop 1 to 10 for up to 10 images #}
                             {# Updated reference image URL construction based on example: https://etickets-content-test-bucket.s3.amazonaws.com/ref_images/PERFORMERID_INDEX.webp #}
-                            {% set ref_image_path = "ref_images/" ~ performer_id ~ "_" ~ i ~ ".webp" %}
+                            {% set ref_image_path = "ref_images/" ~ performer_id ~ "." ~ i ~ ".webp" %}
                             {% set full_ref_image_url = "https://etickets-content-test-bucket.s3.amazonaws.com/" ~ ref_image_path %}
                             <div class="image-container">
                                 <img src="{{ full_ref_image_url }}" alt="Reference Image {{ i }} for {{ performer_name }}" class="img-fluid" onerror="this.style.display='none'; this.parentElement.style.display='none';">

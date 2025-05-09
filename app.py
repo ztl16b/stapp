@@ -902,7 +902,7 @@ def browse_bucket(bucket_name):
         date_from = request.args.get('date_from', '')
         date_to = request.args.get('date_to', '')
         per_page = 200
-        max_items_to_scan = 500000 # Limit initial scan
+        max_items_to_scan = 200 # Limit initial scan
 
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
         
