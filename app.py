@@ -131,51 +131,6 @@ except NoCredentialsError:
 except Exception as e:
     raise ValueError(f"Error initializing S3 client: {e}")
 
-def _choose_best_reference(subject: str, candidate_urls: list[str]) -> str | None:
-    if not (OPENAI_API_KEY and candidate_urls):
-        return None
-
-    try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
-
-        user_content = [
-            {
-                "type": "text",
-                "text": (
-                    f"These are photographic images of {subject}. "
-                    f"You are choosing reference images to be used in a manual image audit. "
-                    f"This should help the auditor understand {subject}'s likeness. Choose the best image of the bunch. "
-                    f"(no illustration, no album cover, minimal or no text)"
-                )
-            }
-        ] + [
-            {"type": "image_url", "image_url": {"url": url}}
-            for url in candidate_urls
-        ]
-
-        resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": "You are an expert photographer."},
-                {"role": "user",   "content": user_content}
-            ],
-        )
-
-        best_url = resp.choices[0].message.content.strip()
-        # Validate that the assistant's answer is one of the candidates
-        for url in candidate_urls:
-            if best_url == url or best_url in url:
-                return url
-        # Fallback – sometimes the model returns plain text around the URL
-        for url in candidate_urls:
-            if url in best_url:
-                return url
-    except Exception as e:
-        app.logger.error(f"GPT-4o-mini selection failed: {e}")
-
-    return None
-
-
 def extract_performer_id(filename):
     try:
         # Split the filename by dots
@@ -1690,7 +1645,6 @@ def perf_review_image_route():
     image_key      = get_performer_image_key(filter_by_review='unreviewed')
     source_bucket  = S3_PERFORMER_BUCKET
     image_url      = None
-    reference_url  = None          # ← NEW: Google reference image
     uploader       = "Unknown"
     review_status  = "FALSE"
     perfimg_status = "FALSE"
@@ -1717,15 +1671,10 @@ def perf_review_image_route():
         except Exception as e:
             app.logger.error(f"Error reading metadata for {image_key}: {e}")
 
-        # 4. fetch a Google reference **after** we know the name
-        if performer_name != "Unknown Performer":
-            reference_url = get_reference_image_url(performer_name)
-
     # 5. render the review template
     return render_template(
         'perf_review.html',
         image_url=image_url,
-        reference_image_url=reference_url,   # <-- pass into Jinja
         image_key=image_key,
         source_bucket=source_bucket,
         uploader_initials=uploader,
@@ -1733,34 +1682,6 @@ def perf_review_image_route():
         perfimg_status=perfimg_status,
         performer_name=performer_name
     )
-
-
-# ─── Google Custom Search  (multi-image + GPT pick) ──────────────────────────
-def get_reference_image_url(subject: str) -> str | None:
-    key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
-    if not (key and cx):
-        app.logger.warning("GOOGLE_CSE_KEY / GOOGLE_CSE_CX not set → no reference image.")
-        return None
-    
-    query = (
-        f'{subject} ("band photo" OR "group photo" OR "headshot" OR "portrait" OR "press photo" OR "official photo" OR "concert photo") '
-    )
-
-    try:
-        params = {
-            "key": key, "cx": cx, "q": query,
-            "searchType": "image",
-            "num": 8
-        }
-        r = requests.get("https://customsearch.googleapis.com/customsearch/v1", params=params, timeout=6)
-        r.raise_for_status()
-        items = r.json().get("items", [])
-        if items:
-            return items[0]["link"]
-    except Exception as e:
-        app.logger.error(f"Google CSE fetch failed for '{subject}': {e}")
-    return None
-
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
 @login_required
