@@ -11,3 +11,5 @@ psutil
 botocore
 pandas
 openai
+Pillow
+google-generativeai
