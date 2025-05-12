@@ -15,9 +15,9 @@ import os, sys, time, traceback, logging, base64, requests           # type: ign
 from io import BytesIO
 from datetime import datetime
 import boto3                                                         # type: ignore
-from dotenv import load_dotenv                                      # type: ignore
+from dotenv import load_dotenv                                       # type: ignore
 import schedule                                                      # type: ignore
-from google import genai                                            # type: ignore
+import google.generativeai as genai                                  # type: ignore
 
 # ─── ENV ────────────────────────────────────────────────────────────────────
 load_dotenv()
