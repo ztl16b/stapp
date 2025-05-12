@@ -1,182 +1,25 @@
 #!/usr/bin/env python3
 """
-audit_and_reformat_worker.py
-────────────────────────────
-• Watches the *Temp* S3 bucket for new images.
-• **Step 1 – Audit (Gemini):**
-  ─ Runs TEXT & LIKENESS prompts on Gemini-Flash.  
-  ─ If either verdict is “Reject” (or unknown) → moves the original image to
-    *Issue* bucket with “_auditFail” suffix; responses stored in metadata.  
-  ─ If both verdicts are “Approve” → runs CLIP prompt on Gemini-Pro.  
-    ▸ Full CLIP response is written to the “clip_audit” metadata key
-      (truncated < 2 KB).
-• **Step 2 – Reformat (Bytescale):**
-  ─ Sends the (still-approved) image to Bytescale → 464 × 510 smart-crop WebP.  
-  ─ Duplicate-checks the *Upload* bucket.  
-    ▸ If duplicate → routes to *Issue* bucket with “_dupeUpload.webp”.  
-    ▸ Else → saves to *Upload* bucket.  
-  ─ Adds all audit metadata to the uploaded object.
-• Deletes the original from *Temp* once processing completes.
-• Runs every 30 s.
-
-Required ENV
-────────────
-AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
-S3_TEMP_BUCKET, S3_UPLOAD_BUCKET, S3_ISSUE_BUCKET
-BYTESCALE_API_KEY, BYTESCALE_UPLOAD_URL
-GEMINI_API_KEY
-
-Optional ENV
-────────────
-S3_*_BUCKET_PREFIX, PERFORMER_CSV
+bytescale_worker.py — UPDATED
+─────────────────────────────
+• Monitors the *Temp* bucket for new images.
+• Runs Gemini audits (text, likeness, clip) on the ORIGINAL file.
+    – If **text** or **likeness** fails → moves the original file (with metadata) to Issue bucket.
+    – Always records **clip_1** result in metadata.
+• If text + likeness pass → Converts the image to WebP (464×510 smart‑crop) via Bytescale.
+• Runs the **clip** audit again on the processed file (records **clip_2**).
+• Saves the WebP in Upload bucket (duplicate‑checked).  Duplicates or Gemini‑rejects route to Issue bucket.
 """
 
-from __future__ import annotations
-
-import io
-import logging
-import os
-import re
-import sys
-import time
-import traceback
+import os, sys, time, traceback, logging, base64, requests           # type: ignore
+from io import BytesIO
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, Tuple
+import boto3                                                         # type: ignore
+from dotenv import load_dotenv                                      # type: ignore
+import schedule                                                      # type: ignore
+from google import genai                                            # type: ignore
 
-import boto3                                # type: ignore
-import pandas as pd                         # type: ignore
-import requests                             # type: ignore
-import schedule                             # type: ignore
-from PIL import Image                       # type: ignore
-from dotenv import load_dotenv              # type: ignore
-import google.generativeai as genai         # type: ignore
-from google.generativeai.types import Tool, GenerateContentConfig, GoogleSearch # type: ignore
-
-# ─── HARD-CODED PROMPTS ────────────────────────────────────────────────────
-TEXT_PROMPT = """
-  You are an image-audit specialist. Your directive:
-
-  ▶ **Reject any image that contains overlayed or super-imposed text**
-     (≈ ≥ 3 % of image height, clearly legible at first glance).  
-     Size, not trademark status, is the deciding factor.
-
-  Image subject : "{name_alias}"
-  Event type    : {category_name}
-
-  Allowed (no rejection)
-  ▪ Faint, unreadable signage in the background
-  ▪ Tiny garment tags or micro-text not intended as an overlay
-  ▪ Text on Clothing (e.g. Logos or Symbols on T-shirts or Jackets)
-
-  Disallowed (automatic rejection)
-  ▪ Performer / tour name displayed as big graphic text
-  ▪ Venue names displayed as big graphic text
-  ▪ Sponsor, venue, product, watermark, slogans, sports-team logos
-  ▪ Any large overlay graphic, even if it merely says "Live" or similar
-
-  ────────────────────────────────────────────
-  Tasks
-  1. **Identify prominent text / logos only.**  
-     • List each large, readable string (or write "None").  
-     • Ignore micro-details too small or blurry to read.
-
-  2. Decide: Does the image contain any large overlayed text / logo?  
-     (If uncertain, answer **Yes**.)
-
-  3. If "Yes", reject and name the offending text/logo. If "No", approve.
-
-  ────────────────────────────────────────────
-  Format (keep exactly)
-  Prominent Text Detected: <text or "None">  
-  Large overlayed text present?: <Yes|No>  
-  Verdict: <Approve|Reject>  
-  Reason: <short sentence>
-""".strip()
-
-LIKENESS_PROMPT = """
-  You are an image-audit specialist.  
-  Your ONLY task is to decide whether the photo accurately depicts either …
-
-  A) the *specific performer* named in **{name_alias}**, **or**  
-  B) the *event type* given in **{category_name}** when no single performer matters  
-    (e.g., NASCAR race, rodeo, basketball game).
-
-  ━━━━━━━━━━━━━━━━━━━━━━
-  1. Choose evaluation target
-  ━━━━━━━━━━━━━━━━━━━━━━
-  • If **{name_alias}** clearly refers to a person / band → target = *Performer*.  
-  • Otherwise (empty, “N/A”, generic sport / event name) → target = *Event*.
-
-  ━━━━━━━━━━━━━━━━━━━━━━
-  2. Scoring rules (0 = totally wrong, 100 = perfect match)
-  ━━━━━━━━━━━━━━━━━━━━━━
-  ▶ **Performer mode** – compare face, hair, age, distinctive features with public photos.  
-  ▶ **Event mode** – confirm scene matches the event type (activity, gear, venue).
-
-  ━━━━━━━━━━━━━━━━━━━━━━
-  3. Verdict thresholds
-  ━━━━━━━━━━━━━━━━━━━━━━
-  • *Performer* → Reject if **Score < 75**  
-  • *Event*     → Reject if **Score < 80**
-
-  ━━━━━━━━━━━━━━━━━━━━━━
-  4. Output — format EXACTLY
-  ━━━━━━━━━━━━━━━━━━━━━━
-  Evaluation Target: <Performer|Event>  
-  Score: <0-100> – <one-sentence explanation>  
-  Verdict: <Approve|Reject>  
-  Reason: <≤ 12 words>  
-""".strip()
-
-CLIP_PROMPT = """
-  You are a forensic image examiner with **zero tolerance** for visual impossibilities.
-
-  Subject : "{name_alias}"
-  Event   : {category_name}
-
-  ━━━━━━━━━━━━━━━━━━━
-  A. CRITICAL “CLIPPING” CHECK  ⟶ auto-Reject
-  ━━━━━━━━━━━━━━━━━━━
-  ▶ Scan FIRST for **any limb or body part that clips through**:
-    • musical instruments (guitar, drum, mic stand, etc.)
-    • stage props, furniture, cables, straps, clothing, other people
-    • other objects that are solid and opaque
-  If you find even ONE clipping point →  
-   • Set **Realism Score = 3** (or lower)  
-   • Set **Verdict = Reject**  
-   • “Reason” must name the body part and object (e.g., “Left leg clips through guitar body.”)  
-   • Stop here – do **not** run the remaining tests.
-
-  ━━━━━━━━━━━━━━━━━━━
-  B. SECOND-LEVEL CHECKS (only if no clipping found)
-  ━━━━━━━━━━━━━━━━━━━
-  1. Anatomy & Body Integrity  
-    – Correct limb count and natural joint bends. No duplicated / missing parts.
-
-  2. Object Solidity & Contact  
-    – Hands grip objects believably; nothing floats or fuses unnaturally.
-
-  3. Texture Continuity  
-    – No melting, checkerboard, GAN grid, or random letters in any region.
-
-  ━━━━━━━━━━
-  SCORING
-  ━━━━━━━━━━
-  • Start at 10.  
-  • −7 for **any** clipping found (handled in section A).
-  • −1 per flaw in section B.
-  • An image must finish **≥ 8** and have **no critical anomaly** to be approved.
-
-  ━━━━━━━━━━
-  OUTPUT (format exactly)
-  ━━━━━━━━━━
-  Realism Score: <0-10> – <short description of worst defect or “No defects”>  
-  Verdict: <Approve|Reject>  
-  Reason: <≤12 words (e.g., “Leg merges through guitar.” or “Image fully photorealistic.”)>
-""".strip()
-
-# ─── ENV / INIT ────────────────────────────────────────────────────────────
+# ─── ENV ────────────────────────────────────────────────────────────────────
 load_dotenv()
 
 AWS_ACCESS_KEY_ID       = os.getenv("AWS_ACCESS_KEY_ID")
@@ -184,142 +27,61 @@ AWS_SECRET_ACCESS_KEY   = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION              = os.getenv("AWS_REGION")
 
 S3_TEMP_BUCKET          = os.getenv("S3_TEMP_BUCKET")
-S3_TEMP_PREFIX          = os.getenv("S3_TEMP_BUCKET_PREFIX", "")
+S3_TEMP_BUCKET_PREFIX   = os.getenv("S3_TEMP_BUCKET_PREFIX", "")
 
-S3_UPLOAD_BUCKET        = os.getenv("S3_UPLOAD_BUCKET")
-S3_UPLOAD_PREFIX        = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
+S3_UPLOAD_BUCKET        = os.getenv("S3_UPLOAD_BUCKET")          # final bucket
+S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
 
-S3_ISSUE_BUCKET         = os.getenv("S3_ISSUE_BUCKET")
-S3_ISSUE_PREFIX         = os.getenv("S3_ISSUE_BUCKET_PREFIX", "")
+S3_ISSUE_BUCKET         = os.getenv("S3_ISSUE_BUCKET")           # dupes + rejects
+S3_ISSUE_BUCKET_PREFIX  = os.getenv("S3_ISSUE_BUCKET_PREFIX", "")
 
 BYTESCALE_API_KEY       = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL    = os.getenv("BYTESCALE_UPLOAD_URL")
 
 GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY")
-MODEL_FLASH_ID          = "gemini-2.0-flash"
-MODEL_PRO_ID            = "gemini-2.5-pro-preview-03-25"
+GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-03-25")
 
-PERFORMER_CSV_PATH      = os.getenv("PERFORMER_CSV")   # Optional
+# ─── PROMPTS (place‑holders — tweak to taste) ───────────────────────────────
+TEXT_PROMPT = """You are a strict moderator. Analyse the provided image and answer only with \nPASS or FAIL\n— PASS if the image contains *no* visible text, watermarks, logos, or trademarks.\n— FAIL if *any* text, watermark, logo, or trademark is visible."""
 
+LIKENESS_PROMPT = """You are verifying performer authenticity. Given the image of a *live‑event performer*, decide if the person looks like a believable, naturally lit concert photograph.\nReturn only PASS or FAIL (FAIL for obvious AI artefacts, distorted anatomy, or unrealistic lighting)."""
+
+CLIP_PROMPT = """Detect **body parts or objects passing through solid, opaque objects** (clipping).\nReturn one line: \nVerdict: <PASS/FAIL> — <one‑sentence explanation>."""
+
+# ─── LOGGING ───────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s — %(levelname)s — %(message)s",
     handlers=[logging.StreamHandler()]
 )
-log = logging.getLogger("audit_reformat_worker")
+logger = logging.getLogger("bytescale_worker")
+
+for name, val in (
+    ("Temp bucket"   , f"{S3_TEMP_BUCKET}/{S3_TEMP_BUCKET_PREFIX or '(root)'}"),
+    ("Upload bucket" , f"{S3_UPLOAD_BUCKET}/{S3_UPLOAD_BUCKET_PREFIX or '(root)'}"),
+    ("Issue bucket"  , f"{S3_ISSUE_BUCKET}/{S3_ISSUE_BUCKET_PREFIX or '(root)'}"),
+):
+    logger.info("Using %s: %s", name, val)
 
 # ─── ENV VALIDATION ────────────────────────────────────────────────────────
-required = {
-    "AWS_ACCESS_KEY_ID"     : AWS_ACCESS_KEY_ID,
-    "AWS_SECRET_ACCESS_KEY" : AWS_SECRET_ACCESS_KEY,
-    "AWS_REGION"            : AWS_REGION,
-    "S3_TEMP_BUCKET"        : S3_TEMP_BUCKET,
-    "S3_UPLOAD_BUCKET"      : S3_UPLOAD_BUCKET,
-    "S3_ISSUE_BUCKET"       : S3_ISSUE_BUCKET,
-    "BYTESCALE_API_KEY"     : BYTESCALE_API_KEY,
-    "BYTESCALE_UPLOAD_URL"  : BYTESCALE_UPLOAD_URL,
-    "GEMINI_API_KEY"        : GEMINI_API_KEY,
-}
-missing = [k for k, v in required.items() if not v]
+missing = [
+    var for var, val in {
+        "AWS_ACCESS_KEY_ID"     : AWS_ACCESS_KEY_ID,
+        "AWS_SECRET_ACCESS_KEY" : AWS_SECRET_ACCESS_KEY,
+        "AWS_REGION"            : AWS_REGION,
+        "S3_TEMP_BUCKET"        : S3_TEMP_BUCKET,
+        "S3_UPLOAD_BUCKET"      : S3_UPLOAD_BUCKET,
+        "S3_ISSUE_BUCKET"       : S3_ISSUE_BUCKET,
+        "BYTESCALE_API_KEY"     : BYTESCALE_API_KEY,
+        "BYTESCALE_UPLOAD_URL"  : BYTESCALE_UPLOAD_URL,
+        "GEMINI_API_KEY"        : GEMINI_API_KEY,
+    }.items() if not val
+]
 if missing:
-    log.error("Missing required env vars: %s", ", ".join(missing))
+    logger.error("Missing required environment variables: %s", ", ".join(missing))
     sys.exit(1)
 
-# ─── PERFORMER LOOKUP (optional) ───────────────────────────────────────────
-performer_data: Dict[str, Dict[str, str]] = {}
-if PERFORMER_CSV_PATH:
-    try:
-        df = pd.read_csv(
-            PERFORMER_CSV_PATH,
-            dtype={"performer_id": str},
-            usecols=["performer_id", "name_alias", "category_name"],
-        )
-        performer_data = {
-            r.performer_id: {
-                "name_alias": r.name_alias,
-                "category_name": r.category_name,
-            }
-            for _, r in df.iterrows()
-        }
-        log.info("Loaded %d performer records", len(performer_data))
-    except Exception as exc:
-        log.warning("Unable to read performer CSV (%s): %s – continuing.", PERFORMER_CSV_PATH, exc)
-
-# ─── GEMINI CLIENT ─────────────────────────────────────────────────────────
-search_tool   = Tool(google_search=GoogleSearch())
-GEN_CONFIG    = GenerateContentConfig(tools=[search_tool])
-client        = genai.Client(api_key=GEMINI_API_KEY)
-
-VERDICT_RE = re.compile(r"(?i)^Verdict:\s*(Approve|Reject)\b", re.MULTILINE)
-
-def extract_verdict(text: str | None) -> str:
-    if not text:
-        return "Unknown"
-    m = VERDICT_RE.search(text)
-    return m.group(1) if m else "Unknown"
-
-def call_gemini(model: str, prompt: str, img: Image.Image) -> str:
-    try:
-        resp = client.models.generate_content(
-            model   = model,
-            contents= [prompt, img],
-            config  = GEN_CONFIG,
-        )
-        return resp.text.strip()
-    except Exception as exc:
-        return f"API error: {exc}"
-
-def run_audit(file_bytes: bytes, performer_id: str) -> Tuple[bool, Dict[str, str]]:
-    rec       = performer_data.get(performer_id, {})
-    alias     = rec.get("name_alias", "Unknown performer")
-    category  = rec.get("category_name", "Unknown category")
-
-    try:
-        img = Image.open(io.BytesIO(file_bytes))
-        if img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
-    except Exception as exc:
-        return False, {"audit_error": f"Image read error: {exc}"}
-
-    # Flash audits
-    text_resp = call_gemini(
-        MODEL_FLASH_ID,
-        TEXT_PROMPT.format(name_alias=alias, category_name=category),
-        img,
-    )
-    likeness_resp = call_gemini(
-        MODEL_FLASH_ID,
-        LIKENESS_PROMPT.format(name_alias=alias, category_name=category),
-        img,
-    )
-
-    verdict_text     = extract_verdict(text_resp)
-    verdict_likeness = extract_verdict(likeness_resp)
-
-    md: Dict[str, str] = {
-        "text_audit"       : text_resp[:1900],
-        "likeness_audit"   : likeness_resp[:1900],
-        "verdict_text"     : verdict_text,
-        "verdict_likeness" : verdict_likeness,
-    }
-
-    if verdict_text != "Approve" or verdict_likeness != "Approve":
-        md["audit_result"] = "Fail"
-        return False, md
-
-    # Pro clipping audit
-    clip_resp = call_gemini(
-        MODEL_PRO_ID,
-        CLIP_PROMPT.format(name_alias=alias, category_name=category),
-        img,
-    )
-    verdict_clip        = extract_verdict(clip_resp)
-    md["clip_audit"]    = clip_resp[:1900]
-    md["verdict_clip"]  = verdict_clip
-    md["audit_result"]  = "Pass"
-    return True, md
-
-# ─── AWS S3 CLIENT ─────────────────────────────────────────────────────────
+# ─── INITIALISE CLIENTS ────────────────────────────────────────────────────
 try:
     s3 = boto3.client(
         "s3",
@@ -328,134 +90,227 @@ try:
         region_name           = AWS_REGION,
     )
     s3.list_buckets()
-    log.info("Connected to S3")
-except Exception as exc:
-    log.error("S3 init failed: %s", exc)
+    logger.info("✔︎ Connected to S3")
+except Exception as e:
+    logger.error("Failed to initialise S3 client: %s", e)
     sys.exit(1)
 
-# ─── PROCESSING ────────────────────────────────────────────────────────────
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif")
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel(GEMINI_MODEL_ID)
+    logger.info("✔︎ Gemini model ready (%s)", GEMINI_MODEL_ID)
+except Exception as e:
+    logger.error("Failed to initialise Gemini client: %s", e)
+    sys.exit(1)
 
-def process_key(key: str) -> None:
-    filename = key.split("/")[-1]
-    log.info("Processing %s", filename)
+# ─── GEMINI HELPERS ────────────────────────────────────────────────────────
+
+def _img_part(img_bytes: bytes, mime: str = "image/jpeg") -> dict:
+    return {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}  # type: ignore[return-value]
+
+
+def gemini_single(prompt: str, img_bytes: bytes) -> str:
+    """Call Gemini with *prompt* + image; return text response."""
     try:
-        obj        = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
-        file_bytes = obj["Body"].read()
-        if not file_bytes:
-            log.error("Empty download – skipping.")
-            return
+        resp = gemini_model.generate_content([
+            {"text": prompt},
+            _img_part(img_bytes)
+        ])
+        return resp.text.strip()
+    except Exception as e:
+        logger.error("Gemini call failed: %s", e)
+        return "ERROR"
 
-        performer_id = filename.split(".")[0]  # before first '.'
-        passed, audit_md = run_audit(file_bytes, performer_id)
 
-        if not passed:
-            issue_key = f"{S3_ISSUE_PREFIX}{filename.rsplit('.',1)[0]}_auditFail{os.path.splitext(filename)[1]}"
+def gemini_audit(img_bytes: bytes) -> dict:
+    """Run the three audits; return dict with results."""
+    text_verdict     = gemini_single(TEXT_PROMPT, img_bytes)
+    likeness_verdict = gemini_single(LIKENESS_PROMPT, img_bytes)
+    clip_output      = gemini_single(CLIP_PROMPT, img_bytes)
+    return {
+        "text"    : text_verdict.upper(),        # expect PASS / FAIL
+        "likeness": likeness_verdict.upper(),
+        "clip"    : clip_output,
+    }
+
+# ─── CORE LOGIC ────────────────────────────────────────────────────────────
+
+def process_image(key: str) -> bool:
+    """Full pipeline for a single image key."""
+    try:
+        filename   = key.split("/")[-1]
+        base_name, ext = os.path.splitext(filename)
+        logger.info("Processing %s …", filename)
+
+        # 1. Download original from Temp
+        obj       = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
+        img_bytes = obj["Body"].read()
+        if not img_bytes:
+            logger.error("Downloaded file is empty → skip")
+            return False
+        content_type = obj.get("ContentType", "image/jpeg")
+
+        meta              = obj.get("Metadata", {}) or {}
+        uploader_initials = meta.get("uploader-initials", "")
+        review_status     = meta.get("review_status", "FALSE")
+        perfimg_status    = meta.get("perfimg_status", "FALSE")
+
+        # 2. FIRST GEMINI AUDIT ------------------------------------------------
+        audit1 = gemini_audit(img_bytes)
+        clip_1 = audit1["clip"]
+        text_pass     = audit1["text"    ] == "PASS"
+        likeness_pass = audit1["likeness"] == "PASS"
+
+        if not (text_pass and likeness_pass):
+            logger.info("Gemini rejected (text/likeness) — moving to Issue bucket")
+            issue_key = f"{S3_ISSUE_BUCKET_PREFIX}{base_name}_geminiReject{ext}"
+            meta_out = {
+                **meta,
+                "clip_1"      : clip_1,
+                "gemini_text" : audit1["text"],
+                "gemini_like" : audit1["likeness"],
+                "upload_time" : datetime.utcnow().isoformat(),
+            }
+            if uploader_initials:
+                meta_out["uploader-initials"] = uploader_initials
             s3.put_object(
-                Bucket     = S3_ISSUE_BUCKET,
-                Key        = issue_key,
-                Body       = file_bytes,
-                Metadata   = audit_md,
-                ContentType= obj.get("ContentType", "image/jpeg"),
+                Bucket = S3_ISSUE_BUCKET,
+                Key    = issue_key,
+                Body   = img_bytes,
+                ContentType = content_type,
+                Metadata    = meta_out,
             )
-            log.info("Audit failed – moved to %s/%s", S3_ISSUE_BUCKET, issue_key)
             s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
-            return
+            logger.info("Moved to %s/%s and deleted from Temp", S3_ISSUE_BUCKET, issue_key)
+            return True
 
-        # Bytescale reformat
-        up_resp = requests.post(
-            BYTESCALE_UPLOAD_URL,
-            headers={"Authorization": f"Bearer {BYTESCALE_API_KEY}"},
-            files={"file": (filename, file_bytes, obj.get("ContentType", "image/jpeg"))},
-            timeout=60,
-        )
+        # 3. BYTESCALE CONVERSION ---------------------------------------------
+        with requests.Session() as sess:
+            up_resp = sess.post(
+                BYTESCALE_UPLOAD_URL,
+                headers={"Authorization": f"Bearer {BYTESCALE_API_KEY}"},
+                files={"file": (filename, img_bytes, content_type)},
+                timeout=60,
+            )
         if up_resp.status_code != 200:
-            raise RuntimeError(f"Bytescale upload failed: {up_resp.text[:400]}")
-
+            logger.error("Bytescale upload failed: %s", up_resp.text[:400])
+            return False
         file_url = next(
-            (f["fileUrl"] for f in up_resp.json().get("files", [])
-             if f.get("formDataFieldName") == "file"),
+            (f["fileUrl"] for f in up_resp.json().get("files", []) if f.get("formDataFieldName") == "file"),
             None,
         )
         if not file_url:
-            raise RuntimeError("fileUrl missing in Bytescale response")
+            logger.error("Bytescale response missing fileUrl")
+            return False
 
-        proc_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=smart"
-        processed_data = requests.get(proc_url, timeout=60).content
-        if not processed_data:
-            raise RuntimeError("Empty processed Bytescale image")
+        proc_url = (
+            file_url.replace("/raw/", "/image/") +
+            "?f=webp&w=464&h=510&fit=crop&crop=smart"
+        )
+        with requests.get(proc_url, stream=True, timeout=60) as resp:
+            resp.raise_for_status()
+            processed_bytes = resp.content
 
-        base_name, _ = os.path.splitext(filename)
-        processed_filename = f"{base_name.replace('-','.')}.webp"
-        upload_key         = f"{S3_UPLOAD_PREFIX}{processed_filename}"
+        # 4. SECOND CLIP AUDIT -------------------------------------------------
+        clip_2 = gemini_single(CLIP_PROMPT, processed_bytes)
 
+        # 5. Build S3 metadata -------------------------------------------------
+        processed_filename = f"{base_name.replace('-', '.')}.webp"
+        upload_key         = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}"
+
+        metadata_out = {
+            "review_status"  : review_status,
+            "perfimg_status" : perfimg_status,
+            "clip_1"         : clip_1,
+            "clip_2"         : clip_2,
+            "upload_time"    : datetime.utcnow().isoformat(),
+        }
+        if uploader_initials:
+            metadata_out["uploader-initials"] = uploader_initials
+
+        # 6. Duplicate check ---------------------------------------------------
         is_dupe = False
         try:
             s3.head_object(Bucket=S3_UPLOAD_BUCKET, Key=upload_key)
             is_dupe = True
+            logger.info("Duplicate detected in Upload bucket → Issue bucket")
         except Exception:
             pass
 
-        dest_bucket = S3_ISSUE_BUCKET if is_dupe else S3_UPLOAD_BUCKET
-        dest_key    = (
-            f"{S3_ISSUE_PREFIX}{base_name}_dupeUpload.webp" if is_dupe else upload_key
+        target_bucket = S3_ISSUE_BUCKET if is_dupe else S3_UPLOAD_BUCKET
+        target_key    = (
+            f"{S3_ISSUE_BUCKET_PREFIX}{base_name}_dupeUpload.webp" if is_dupe else upload_key
         )
-
-        metadata: Dict[str, str] = {
-            **obj.get("Metadata", {}),
-            **audit_md,
-            "upload_time": datetime.utcnow().isoformat(timespec="seconds"),
-        }
 
         s3.put_object(
-            Bucket     = dest_bucket,
-            Key        = dest_key,
-            Body       = processed_data,
-            ContentType= "image/webp",
-            Metadata   = metadata,
+            Bucket      = target_bucket,
+            Key         = target_key,
+            Body        = processed_bytes,
+            ContentType = "image/webp",
+            Metadata    = metadata_out,
         )
-        log.info("Uploaded to %s/%s", dest_bucket, dest_key)
+        logger.info("Uploaded to %s/%s", target_bucket, target_key)
+
+        # 7. Delete original ---------------------------------------------------
         s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
-        log.info("Deleted original %s", key)
+        logger.info("Deleted original %s from Temp bucket", key)
+        return True
 
-    except Exception as exc:
-        log.error("Error processing %s: %s", key, exc)
+    except Exception as e:
+        logger.error("Error processing %s: %s", key, e)
         traceback.print_exc()
+        return False
 
-def scan_temp() -> None:
-    log.info("Scanning Temp bucket …")
+
+# ─── BUCKET SCAN / SCHEDULER ───────────────────────────────────────────────
+
+def check_temp_bucket():
+    logger.info("Scanning Temp bucket …")
     try:
-        resp = s3.list_objects_v2(Bucket=S3_TEMP_BUCKET, Prefix=S3_TEMP_PREFIX)
-        keys = [
-            o["Key"] for o in resp.get("Contents", [])
-            if o["Key"].lower().endswith(IMAGE_EXTS)
-        ]
-        if not keys:
-            log.info("No images found.")
+        resp = s3.list_objects_v2(Bucket=S3_TEMP_BUCKET, Prefix=S3_TEMP_BUCKET_PREFIX)
+        if "Contents" not in resp:
+            logger.info("No objects found.")
             return
-        log.info("Found %d image(s)", len(keys))
-        for k in keys:
-            process_key(k)
-    except Exception as exc:
-        log.error("Temp scan failed: %s", exc)
+
+        image_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+        work = [o for o in resp["Contents"] if o["Key"].lower().endswith(image_exts)]
+        if not work:
+            logger.info("No images to process.")
+            return
+
+        logger.info("Found %d image(s)", len(work))
+        for obj in work:
+            ok = process_image(obj["Key"])
+            if ok:
+                logger.info("✓ %s processed", obj["Key"])
+            else:
+                logger.error("✗ %s failed", obj["Key"])
+    except Exception as e:
+        logger.error("Temp‑bucket scan failed: %s", e)
         traceback.print_exc()
 
-# ─── ENTRYPOINT ────────────────────────────────────────────────────────────
-def run_scheduler() -> None:
-    log.info("Worker started – checks every 30 s")
-    scan_temp()
-    schedule.every(30).seconds.do(scan_temp)
+
+def run_scheduler():
+    logger.info("Bytescale worker started (checks every 30 s)")
+    check_temp_bucket()                              # immediate first run
+    schedule.every(30).seconds.do(check_temp_bucket)
     while True:
         try:
             schedule.run_pending()
             time.sleep(1)
-        except Exception as exc:
-            log.error("Scheduler error: %s", exc)
+        except Exception as e:
+            logger.error("Scheduler loop error: %s", e)
             traceback.print_exc()
-            time.sleep(30)
+            time.sleep(60)
+
+
+# ─── ENTRY ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     try:
         run_scheduler()
     except KeyboardInterrupt:
-        log.info("Exiting – Ctrl-C")
+        logger.info("Exiting (Ctrl‑C)")
+    except Exception as exc:
+        logger.error("Fatal error: %s", exc)
+        traceback.print_exc()
