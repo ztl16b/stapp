@@ -506,7 +506,9 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
     
     # Determine content type based on file extension
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-        
+    
+    app.logger.info(f"Prepared S3 operation details: SourceBucket='{source_bucket}', OriginalSourceKey='{original_key}', DestBucket='{dest_bucket}', Calculated DestKey='{dest_key}', DestinationHint='{destination}', ContentType='{content_type}'")
+
     # Get metadata from source object if it exists
     try:
         head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
@@ -840,8 +842,14 @@ def move_image_route(action, image_key):
 
 def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
+    op_data = {} # Initialize in case _prepare_s3_operation fails early
     try:
+        app.logger.info(f"Attempting to copy '{object_key}' from SRC bucket '{source_bucket}' to DST bucket '{dest_bucket}' (destination hint: '{destination}')")
+
         op_data = _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination, bad_reason)
+        
+        app.logger.info(f"Prepared copy operation: SourceBucket='{op_data['copy_source']['Bucket']}', SourceKey='{op_data['copy_source']['Key']}', DestBucket='{dest_bucket}', DestKey='{op_data['dest_key']}', ContentType='{op_data['content_type']}', Metadata='{op_data['metadata']}'")
+
         s3_client.copy_object(
             CopySource=op_data['copy_source'],
             Bucket=dest_bucket,
@@ -850,21 +858,38 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
             Metadata=op_data['metadata'],
             MetadataDirective='REPLACE'
         )
-        app.logger.info(f"Copied {op_data['original_key']} from {source_bucket} to {dest_bucket} as {op_data['dest_key']}")
-        return True
+        app.logger.info(f"S3 API call to copy_object completed for DestBucket='{dest_bucket}', DestKey='{op_data['dest_key']}'.")
+
+        # Verification step specifically for 'incredible' destination
+        if destination == 'incredible':
+            try:
+                app.logger.info(f"VERIFICATION STEP for 'incredible' copy: Checking Bucket='{dest_bucket}', Key='{op_data['dest_key']}'")
+                s3_client.head_object(Bucket=dest_bucket, Key=op_data['dest_key'])
+                app.logger.info(f"VERIFICATION SUCCESS: Object '{op_data['dest_key']}' IS PRESENT in '{dest_bucket}' (intended for S3_INCREDIBLE_BUCKET: '{S3_INCREDIBLE_BUCKET}') with hint '{destination}'.")
+            except ClientError as ce:
+                app.logger.error(f"VERIFICATION FAILED for '{destination}' copy: Object '{op_data['dest_key']}' NOT FOUND in '{dest_bucket}' (intended for S3_INCREDIBLE_BUCKET: '{S3_INCREDIBLE_BUCKET}') after copy_object reported success. ClientError: {ce.response['Error']['Code']} - {ce.response['Error']['Message']}")
+                flash(f"File '{op_data.get('filename', object_key)}' copy to {destination} bucket reported success by S3, but verification failed. The file may not be in the {destination} bucket.", "danger")
+                return False # Return False if verification fails
+            except Exception as e_verify:
+                app.logger.error(f"VERIFICATION ERROR for '{destination}' copy: Unexpected error during head_object for '{op_data['dest_key']}' in '{dest_bucket}'. Error: {e_verify}", exc_info=True)
+                flash(f"Error verifying file in {destination} bucket after copy. Check logs.", "warning")
+                return False # Also return False for unexpected verification error
+        
+        return True # Original copy_object call succeeded
+
     except ClientError as e:
-        app.logger.error(f"Error copying object {object_key}: {e}")
+        filename_display = op_data.get('filename', object_key) if op_data else object_key
+        app.logger.error(f"ClientError during copy of '{filename_display}' from '{source_bucket}' to '{dest_bucket}': {e}. Error Code: {e.response.get('Error', {}).get('Code')}, Message: {e.response.get('Error', {}).get('Message', str(e))}", exc_info=True)
         error_code = e.response.get('Error', {}).get('Code')
         error_message = e.response.get('Error', {}).get('Message', str(e))
-        filename_display = op_data.get('filename', object_key) if 'op_data' in locals() else object_key
-
         if error_code == 'AccessDenied':
             flash(f"Access Denied: Cannot copy {filename_display}. Check S3 permissions (GetObject for source, PutObject for destination).", "danger")
         else:
             flash(f"Error copying file '{filename_display}': {error_message}", "danger")
+        return False
     except Exception as e:
-        app.logger.error(f"Unexpected error copying object {object_key}: {e}")
-        filename_display = op_data.get('filename', object_key) if 'op_data' in locals() else object_key
+        filename_display = op_data.get('filename', object_key) if op_data else object_key
+        app.logger.error(f"Unexpected error copying object '{filename_display}' from '{source_bucket}' to '{dest_bucket}': {e}", exc_info=True)
         flash(f"An unexpected error occurred while copying '{filename_display}'.", "danger")
     return False
 
