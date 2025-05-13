@@ -1,64 +1,56 @@
 #!/usr/bin/env python3
 """
-bytescale_worker.py
+bytescale_worker.py — sequential Gemini audits
 ──────────────────────────────────────────────────────────────────────────────
-Heroku worker that audits images with Gemini, converts passing ones via
-Bytescale, and pushes results to the appropriate S3 bucket.
-
-Changes in this revision
-• Parses new multi-line audit formats (“Verdict: Approve|Reject”).
-• If Text audit rejects → key ends with _text    (Issue bucket)
-  If Likeness audit rejects → key ends with _likeness (Issue bucket)
-• Sanitises ALL metadata for ASCII + header-safe characters.
+1. Text audit  → if Reject ➜ Issue bucket (_text)
+2. Likeness    → if Reject ➜ Issue bucket (_likeness)
+3. Clip audit  (original)  ➜ clip_1 metadata
+4. Bytescale convert (WebP)
+5. Clip audit  (WebP)      ➜ clip_2 metadata
+Duplicates still routed to Issue bucket (_dupeUpload.webp)
 """
 
 from __future__ import annotations
 
-import base64
-import logging
-import os
-import re
-import sys
-import time
-import traceback
+import base64, logging, os, re, sys, time, traceback
 from datetime import datetime, timezone
 from typing import Dict, Tuple
 
-import boto3  # type: ignore
-import google.generativeai as genai  # type: ignore
-import requests  # type: ignore
-import schedule  # type: ignore
+import boto3                 # type: ignore
+import google.generativeai as genai   # type: ignore
+import requests               # type: ignore
+import schedule               # type: ignore
 from botocore.exceptions import ClientError  # type: ignore
 from dotenv import load_dotenv  # type: ignore
 
-# ─── ENV ────────────────────────────────────────────────────────────────────
+# ─────────────────────────── ENV ────────────────────────────────────────────
 load_dotenv()
 
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = os.getenv("AWS_REGION")
+AWS_ACCESS_KEY_ID       = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY   = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION              = os.getenv("AWS_REGION")
 
-S3_TEMP_BUCKET = os.getenv("S3_TEMP_BUCKET")
-S3_TEMP_BUCKET_PREFIX = os.getenv("S3_TEMP_BUCKET_PREFIX", "")
+S3_TEMP_BUCKET          = os.getenv("S3_TEMP_BUCKET")
+S3_TEMP_BUCKET_PREFIX   = os.getenv("S3_TEMP_BUCKET_PREFIX", "")
 
-S3_UPLOAD_BUCKET = os.getenv("S3_UPLOAD_BUCKET")
+S3_UPLOAD_BUCKET        = os.getenv("S3_UPLOAD_BUCKET")
 S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
 
-S3_ISSUE_BUCKET = os.getenv("S3_ISSUE_BUCKET")
-S3_ISSUE_BUCKET_PREFIX = os.getenv("S3_ISSUE_BUCKET_PREFIX", "")
+S3_ISSUE_BUCKET         = os.getenv("S3_ISSUE_BUCKET")
+S3_ISSUE_BUCKET_PREFIX  = os.getenv("S3_ISSUE_BUCKET_PREFIX", "")
 
-BYTESCALE_API_KEY = os.getenv("BYTESCALE_API_KEY")
-BYTESCALE_UPLOAD_URL = os.getenv("BYTESCALE_UPLOAD_URL")
+BYTESCALE_API_KEY       = os.getenv("BYTESCALE_API_KEY")
+BYTESCALE_UPLOAD_URL    = os.getenv("BYTESCALE_UPLOAD_URL")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-03-25")
+GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-05-06")
 
-# ─── PROMPTS (unchanged but now multi-line verdicts) ────────────────────────
-TEXT_PROMPT = """…⟨omitted for brevity – unchanged ⟩"""
-LIKENESS_PROMPT = """…"""
-CLIP_PROMPT = """…"""
+# ─────────────────────── PROMPTS (short-form here) ──────────────────────────
+TEXT_PROMPT     = "... your full text prompt ..."
+LIKENESS_PROMPT = "... your full likeness prompt ..."
+CLIP_PROMPT     = "... your full clip prompt ..."
 
-# ─── LOGGING ────────────────────────────────────────────────────────────────
+# ───────────────────────── LOGGING ──────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s — %(levelname)s — %(message)s",
@@ -66,248 +58,185 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bytescale_worker")
 
-# ─── VALIDATE ENV ───────────────────────────────────────────────────────────
-_required = {
-    "AWS_ACCESS_KEY_ID": AWS_ACCESS_KEY_ID,
-    "AWS_SECRET_ACCESS_KEY": AWS_SECRET_ACCESS_KEY,
-    "AWS_REGION": AWS_REGION,
-    "S3_TEMP_BUCKET": S3_TEMP_BUCKET,
-    "S3_UPLOAD_BUCKET": S3_UPLOAD_BUCKET,
-    "S3_ISSUE_BUCKET": S3_ISSUE_BUCKET,
-    "BYTESCALE_API_KEY": BYTESCALE_API_KEY,
-    "BYTESCALE_UPLOAD_URL": BYTESCALE_UPLOAD_URL,
-    "GEMINI_API_KEY": GEMINI_API_KEY,
-}
-missing = [k for k, v in _required.items() if not v]
-if missing:
-    logger.error("Missing required env vars: %s", ", ".join(missing))
-    sys.exit(1)
+# ──────────────────────── CLIENTS / INIT ────────────────────────────────────
+for var in (
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION,
+    S3_TEMP_BUCKET, S3_UPLOAD_BUCKET, S3_ISSUE_BUCKET,
+    BYTESCALE_API_KEY, BYTESCALE_UPLOAD_URL, GEMINI_API_KEY
+):
+    if not var:
+        logger.error("Required env var missing. Exiting.")
+        sys.exit(1)
 
-# ─── CLIENTS ────────────────────────────────────────────────────────────────
-try:
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION,
-    )
-    s3.list_buckets()
-    logger.info("✔︎ Connected to S3")
-except Exception as exc:
-    logger.error("Failed to init S3 client: %s", exc)
-    sys.exit(1)
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_REGION,
+)
 
-try:
-    genai.configure(api_key=GEMINI_API_KEY)
-    GEMINI = genai.GenerativeModel(GEMINI_MODEL_ID)
-    logger.info("✔︎ Gemini model ready (%s)", GEMINI_MODEL_ID)
-except Exception as exc:
-    logger.error("Failed to init Gemini client: %s", exc)
-    sys.exit(1)
+genai.configure(api_key=GEMINI_API_KEY)
+GEMINI = genai.GenerativeModel(GEMINI_MODEL_ID)
 
-# ─── SMALL HELPERS ──────────────────────────────────────────────────────────
-def _http_safe(text: str, max_len: int = 250) -> str:
-    """ASCII, strip CR/LF/TAB, collapse whitespace, trim length."""
-    cleaned = (
-        text.encode("ascii", "ignore")
-        .decode()
-        .replace("\n", " ")
-        .replace("\r", " ")
-        .replace("\t", " ")
-    )
-    return re.sub(r"\s{2,}", " ", cleaned)[:max_len]
+# ───────────────────────── HELPERS ──────────────────────────────────────────
+def _http_safe(txt: str, n: int = 250) -> str:
+    return re.sub(r"\s{2,}", " ", txt.encode("ascii", "ignore").decode()
+                  .replace("\n", " ").replace("\r", " "))[:n]
 
-
-def _img_part(b: bytes, mime: str = "image/jpeg") -> Dict[str, str]:
+def _img_part(b: bytes, mime="image/jpeg") -> Dict[str, str]:
     return {"mime_type": mime, "data": base64.b64encode(b).decode()}
 
-
-def gemini_single(prompt: str, img: bytes) -> str:
+def _gemini(prompt: str, img: bytes) -> str:
     try:
-        resp = GEMINI.generate_content([{"text": prompt}, _img_part(img)])
-        return resp.text.strip()
-    except Exception as exc:
-        logger.error("Gemini call failed: %s", exc)
+        return GEMINI.generate_content([{"text": prompt}, _img_part(img)]).text.strip()
+    except Exception as e:
+        logger.error("Gemini error: %s", e)
         return ""
 
-
 def _verdict(raw: str) -> Tuple[str, str]:
-    """
-    Return (APPROVE|REJECT|UNKNOWN, short_reason).
-    Also maps PASS→APPROVE and FAIL→REJECT.
-    """
-    match = re.search(r"VERDICT\s*:\s*(APPROVE|REJECT|PASS|FAIL)", raw, re.I)
-    v = match.group(1).upper() if match else "UNKNOWN"
-    verdict = "APPROVE" if v in ("APPROVE", "PASS") else "REJECT" if v in ("REJECT", "FAIL") else "UNKNOWN"
-
-    reason = ""
-    m_reason = re.search(r"REASON\s*:\s*(.+)", raw, re.I | re.S)
-    if m_reason:
-        reason = m_reason.group(1).strip()
+    m = re.search(r"VERDICT\s*:\s*(APPROVE|REJECT|PASS|FAIL)", raw, re.I)
+    verdict = (m.group(1).upper() if m else "UNKNOWN")
+    verdict = "APPROVE" if verdict in ("APPROVE", "PASS") else "REJECT" if verdict in ("REJECT", "FAIL") else verdict
+    reason  = _http_safe(re.search(r"REASON\s*:\s*(.+)", raw, re.I | re.S).group(1)) if re.search(r"REASON\s*:", raw, re.I) else ""
     return verdict, reason
 
-
-def gemini_audit(img: bytes) -> Dict[str, str]:
-    text_raw = gemini_single(TEXT_PROMPT, img)
-    like_raw = gemini_single(LIKENESS_PROMPT, img)
-    clip_raw = gemini_single(CLIP_PROMPT, img)
-
-    text_v, text_reason = _verdict(text_raw)
-    like_v, like_reason = _verdict(like_raw)
-    clip_v, clip_reason = _verdict(clip_raw)
-
-    return {
-        "text_verdict": text_v,
-        "text_reason": text_reason,
-        "likeness_verdict": like_v,
-        "likeness_reason": like_reason,
-        "clip_verdict": clip_v,
-        "clip_reason": clip_reason,
-    }
-
-# ─── CORE PIPELINE ──────────────────────────────────────────────────────────
+# ─────────────────────── PROCESS IMAGE ──────────────────────────────────────
 def process_image(key: str) -> bool:
     try:
-        filename = key.rsplit("/", 1)[-1]
-        base_name, ext = os.path.splitext(filename)
-        logger.info("Processing %s …", filename)
+        filename = key.split("/")[-1]
+        base, ext = os.path.splitext(filename)
+        logger.info("→ %s", filename)
 
-        obj = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
-        img_bytes: bytes = obj["Body"].read()
-        if not img_bytes:
-            logger.error("Downloaded file empty → skip")
-            return False
-        content_type = obj.get("ContentType", "image/jpeg")
-        meta_in = obj.get("Metadata", {}) or {}
+        obj   = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
+        bytes_orig: bytes = obj["Body"].read()
+        ctype = obj.get("ContentType", "image/jpeg")
 
-        audit = gemini_audit(img_bytes)
-        text_ok = audit["text_verdict"] == "APPROVE"
-        like_ok = audit["likeness_verdict"] == "APPROVE"
-
-        # ---------- Reject path (Text / Likeness) ---------------------------
-        if not (text_ok and like_ok):
-            suffix = "_text" if not text_ok else "_likeness"
-            issue_key = f"{S3_ISSUE_BUCKET_PREFIX}{base_name}{suffix}{ext}"
-
-            meta = {
-                "text_v": audit["text_verdict"],
-                "like_v": audit["likeness_verdict"],
-                "clip_v": audit["clip_verdict"],
-                "clip_reason": _http_safe(audit["clip_reason"]),
-                "upload_time": datetime.now(timezone.utc).isoformat(),
-            }
-            s3.put_object(
-                Bucket=S3_ISSUE_BUCKET,
-                Key=issue_key,
-                Body=img_bytes,
-                ContentType=content_type,
-                Metadata={k: _http_safe(v) for k, v in meta.items()},
-            )
+        # 1) TEXT AUDIT
+        raw_text = _gemini(TEXT_PROMPT, bytes_orig)
+        text_v, text_r = _verdict(raw_text)
+        if text_v != "APPROVE":
+            _to_issue(bytes_orig, ctype, base + "_text" + ext,
+                      {"text_v": text_v, "text_r": text_r})
             s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
-            logger.info("Rejected → %s/%s", S3_ISSUE_BUCKET, issue_key)
             return True
 
-        # ---------- Bytescale conversion for passing images -----------------
-        with requests.Session() as sess:
-            resp = sess.post(
-                BYTESCALE_UPLOAD_URL,
-                headers={"Authorization": f"Bearer {BYTESCALE_API_KEY}"},
-                files={"file": (filename, img_bytes, content_type)},
-                timeout=60,
-            )
-        if resp.status_code != 200:
-            logger.error("Bytescale upload failed (%s): %s", resp.status_code, resp.text[:300])
+        # 2) LIKENESS AUDIT
+        raw_like = _gemini(LIKENESS_PROMPT, bytes_orig)
+        like_v, like_r = _verdict(raw_like)
+        if like_v != "APPROVE":
+            _to_issue(bytes_orig, ctype, base + "_likeness" + ext,
+                      {"text_v": text_v, "like_v": like_v, "like_r": like_r})
+            s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
+            return True
+
+        # 3) CLIP-1
+        raw_clip1 = _gemini(CLIP_PROMPT, bytes_orig)
+        clip1_v, clip1_r = _verdict(raw_clip1)
+
+        # 4) BYTESCALE CONVERT
+        webp_bytes = _bytescale_convert(filename, bytes_orig, ctype)
+        if not webp_bytes:
             return False
 
-        file_url = next(
-            (f["fileUrl"] for f in resp.json().get("files", []) if f["formDataFieldName"] == "file"),
-            None,
-        )
-        if not file_url:
-            logger.error("Bytescale response missing fileUrl")
-            return False
+        # 5) CLIP-2
+        raw_clip2 = _gemini(CLIP_PROMPT, webp_bytes)
+        clip2_v, clip2_r = _verdict(raw_clip2)
 
-        proc_url = file_url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=smart"
-        proc_bytes = requests.get(proc_url, timeout=60).content
+        # 6) SAVE (dup-aware)
+        processed_name = f"{base.replace('-', '.')}.webp"
+        upload_key = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_name}"
+        duplicate = _object_exists(S3_UPLOAD_BUCKET, upload_key)
 
-        # second clip audit
-        clip2_raw = gemini_single(CLIP_PROMPT, proc_bytes)
-        clip2_v, clip2_reason = _verdict(clip2_raw)
+        bucket = S3_ISSUE_BUCKET if duplicate else S3_UPLOAD_BUCKET
+        key_out = (f"{S3_ISSUE_BUCKET_PREFIX}{base}_dupeUpload.webp"
+                   if duplicate else upload_key)
 
-        # Metadata
-        processed_filename = f"{base_name.replace('-', '.')}.webp"
-        upload_key = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_filename}"
-        meta_out = {
-            "text_v": audit["text_verdict"],
-            "like_v": audit["likeness_verdict"],
-            "clip_v1": audit["clip_verdict"],
-            "clip_v2": clip2_v,
-            "clip_r2": _http_safe(clip2_reason),
+        meta = {
+            "text_v": text_v,
+            "like_v": like_v,
+            "clip1_v": clip1_v,
+            "clip2_v": clip2_v,
+            "clip1_r": clip1_r,
+            "clip2_r": clip2_r,
             "upload_time": datetime.now(timezone.utc).isoformat(),
         }
 
-        # Duplicate?
-        try:
-            s3.head_object(Bucket=S3_UPLOAD_BUCKET, Key=upload_key)
-            is_dupe = True
-        except ClientError:
-            is_dupe = False
-
-        target_bucket = S3_ISSUE_BUCKET if is_dupe else S3_UPLOAD_BUCKET
-        target_key = (
-            f"{S3_ISSUE_BUCKET_PREFIX}{base_name}_dupeUpload.webp" if is_dupe else upload_key
-        )
-
         s3.put_object(
-            Bucket=target_bucket,
-            Key=target_key,
-            Body=proc_bytes,
+            Bucket=bucket,
+            Key=key_out,
+            Body=webp_bytes,
             ContentType="image/webp",
-            Metadata={k: _http_safe(v) for k, v in meta_out.items()},
+            Metadata={k: _http_safe(v) for k, v in meta.items()},
         )
-        logger.info("Uploaded to %s/%s", target_bucket, target_key)
+        logger.info("✓ Stored in %s/%s", bucket, key_out)
 
-        # cleanup
         s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
         return True
 
-    except Exception as exc:
-        logger.error("Error processing %s: %s", key, exc)
+    except Exception as e:
+        logger.error("Process failed: %s", e)
         traceback.print_exc()
         return False
 
-# ─── SCHEDULER ──────────────────────────────────────────────────────────────
-def check_temp_bucket() -> None:
-    logger.info("Scanning Temp bucket …")
+# ───────────── helper: upload to Issue bucket ─────────────
+def _to_issue(body: bytes, ctype: str, keyname: str, extra_meta: Dict[str, str]) -> None:
+    meta = {**extra_meta, "upload_time": datetime.now(timezone.utc).isoformat()}
+    s3.put_object(
+        Bucket=S3_ISSUE_BUCKET,
+        Key=f"{S3_ISSUE_BUCKET_PREFIX}{keyname}",
+        Body=body,
+        ContentType=ctype,
+        Metadata={k: _http_safe(v) for k, v in meta.items()},
+    )
+    logger.info("Rejected → %s/%s", S3_ISSUE_BUCKET, keyname)
+
+# ───────────── helper: Bytescale conversion ─────────────
+def _bytescale_convert(name: str, data: bytes, ctype: str) -> bytes | None:
+    r = requests.post(
+        BYTESCALE_UPLOAD_URL,
+        headers={"Authorization": f"Bearer {BYTESCALE_API_KEY}"},
+        files={"file": (name, data, ctype)},
+        timeout=60,
+    )
+    if r.status_code != 200:
+        logger.error("Bytescale upload error %s", r.status_code)
+        return None
+    url = next((f["fileUrl"] for f in r.json()["files"] if f["formDataFieldName"] == "file"), "")
+    if not url:
+        logger.error("Bytescale response missing fileUrl.")
+        return None
+    img_url = url.replace("/raw/", "/image/") + "?f=webp&w=464&h=510&fit=crop&crop=smart"
+    return requests.get(img_url, timeout=60).content
+
+# ───────────── helper: object exists ─────────────
+def _object_exists(bucket: str, key: str) -> bool:
     try:
-        resp = s3.list_objects_v2(Bucket=S3_TEMP_BUCKET, Prefix=S3_TEMP_BUCKET_PREFIX)
-        objs = resp.get("Contents", [])
-        imgs = [o for o in objs if o["Key"].lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"))]
-        if not imgs:
-            logger.info("No images to process.")
-            return
-        logger.info("Found %d image(s)", len(imgs))
-        for o in imgs:
-            process_image(o["Key"])
-    except Exception as exc:
-        logger.error("Temp-bucket scan failed: %s", exc)
-        traceback.print_exc()
+        s3.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError:
+        return False
 
+# ───────────────── SCHEDULER LOOP ─────────────────
+def _scan():
+    resp = s3.list_objects_v2(Bucket=S3_TEMP_BUCKET, Prefix=S3_TEMP_BUCKET_PREFIX)
+    objs = [o["Key"] for o in resp.get("Contents", [])
+            if o["Key"].lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"))]
+    if not objs:
+        return
+    logger.info("Scanning %d object(s)", len(objs))
+    for k in objs:
+        process_image(k)
 
-def run_scheduler() -> None:
-    logger.info("Bytescale worker started (checks every 30 s)")
-    check_temp_bucket()  # immediate run
-    schedule.every(30).seconds.do(check_temp_bucket)
+def run():
+    logger.info("Worker up – polling every 30 s")
+    _scan()
+    schedule.every(30).seconds.do(_scan)
     while True:
         schedule.run_pending()
         time.sleep(1)
 
-# ─── ENTRY ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     try:
-        run_scheduler()
+        run()
     except KeyboardInterrupt:
-        logger.info("Exiting (Ctrl-C)")
-    except Exception as exc:
-        logger.error("Fatal error: %s", exc)
-        traceback.print_exc()
+        logger.info("Shutdown.")
