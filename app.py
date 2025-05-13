@@ -1644,7 +1644,7 @@ def perf_review_image_route():
     perfimg_status = "FALSE"  # Default for new images from upload bucket
     performer_name = "Unknown Performer"
     performer_id = None
-    metadata = metadata
+    metadata = {}
 
     if image_key:
         image_url = get_presigned_url(source_bucket, image_key)
