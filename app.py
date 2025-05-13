@@ -506,9 +506,7 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
     
     # Determine content type based on file extension
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-    
-    app.logger.info(f"Prepared S3 operation details: SourceBucket='{source_bucket}', OriginalSourceKey='{original_key}', DestBucket='{dest_bucket}', Calculated DestKey='{dest_key}', DestinationHint='{destination}', ContentType='{content_type}'")
-
+        
     # Get metadata from source object if it exists
     try:
         head_response = s3_client.head_object(Bucket=source_bucket, Key=original_key)
@@ -842,54 +840,33 @@ def move_image_route(action, image_key):
 
 def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad_reason=None):
     """Copies an object from source_bucket to dest_bucket without deleting the original."""
-    op_data = {} # Initialize in case _prepare_s3_operation fails early
+    app.logger.info(f"[copy_s3_object] Attempting to copy: {object_key} from {source_bucket} to {dest_bucket} (destination hint: {destination})")
     try:
-        app.logger.info(f"Attempting to copy '{object_key}' from SRC bucket '{source_bucket}' to DST bucket '{dest_bucket}' (destination hint: '{destination}')")
-
         op_data = _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination, bad_reason)
-        
-        app.logger.info(f"Prepared copy operation: SourceBucket='{op_data['copy_source']['Bucket']}', SourceKey='{op_data['copy_source']['Key']}', DestBucket='{dest_bucket}', DestKey='{op_data['dest_key']}', ContentType='{op_data['content_type']}', Metadata='{op_data['metadata']}'")
-
+        app.logger.info(f"[copy_s3_object] Prepared operation data. Effective dest_bucket: {dest_bucket}, dest_key: {op_data['dest_key']}")
         s3_client.copy_object(
             CopySource=op_data['copy_source'],
-            Bucket=dest_bucket,
+            Bucket=dest_bucket, # Use the dest_bucket passed to copy_s3_object
             Key=op_data['dest_key'],
             ContentType=op_data['content_type'],
             Metadata=op_data['metadata'],
             MetadataDirective='REPLACE'
         )
-        app.logger.info(f"S3 API call to copy_object completed for DestBucket='{dest_bucket}', DestKey='{op_data['dest_key']}'.")
-
-        # Verification step specifically for 'incredible' destination
-        if destination == 'incredible':
-            try:
-                app.logger.info(f"VERIFICATION STEP for 'incredible' copy: Checking Bucket='{dest_bucket}', Key='{op_data['dest_key']}'")
-                s3_client.head_object(Bucket=dest_bucket, Key=op_data['dest_key'])
-                app.logger.info(f"VERIFICATION SUCCESS: Object '{op_data['dest_key']}' IS PRESENT in '{dest_bucket}' (intended for S3_INCREDIBLE_BUCKET: '{S3_INCREDIBLE_BUCKET}') with hint '{destination}'.")
-            except ClientError as ce:
-                app.logger.error(f"VERIFICATION FAILED for '{destination}' copy: Object '{op_data['dest_key']}' NOT FOUND in '{dest_bucket}' (intended for S3_INCREDIBLE_BUCKET: '{S3_INCREDIBLE_BUCKET}') after copy_object reported success. ClientError: {ce.response['Error']['Code']} - {ce.response['Error']['Message']}")
-                flash(f"File '{op_data.get('filename', object_key)}' copy to {destination} bucket reported success by S3, but verification failed. The file may not be in the {destination} bucket.", "danger")
-                return False # Return False if verification fails
-            except Exception as e_verify:
-                app.logger.error(f"VERIFICATION ERROR for '{destination}' copy: Unexpected error during head_object for '{op_data['dest_key']}' in '{dest_bucket}'. Error: {e_verify}", exc_info=True)
-                flash(f"Error verifying file in {destination} bucket after copy. Check logs.", "warning")
-                return False # Also return False for unexpected verification error
-        
-        return True # Original copy_object call succeeded
-
+        app.logger.info(f"[copy_s3_object] Successfully copied {op_data['original_key']} from {source_bucket} to {dest_bucket} as {op_data['dest_key']}")
+        return True
     except ClientError as e:
-        filename_display = op_data.get('filename', object_key) if op_data else object_key
-        app.logger.error(f"ClientError during copy of '{filename_display}' from '{source_bucket}' to '{dest_bucket}': {e}. Error Code: {e.response.get('Error', {}).get('Code')}, Message: {e.response.get('Error', {}).get('Message', str(e))}", exc_info=True)
+        app.logger.error(f"[copy_s3_object] ClientError copying {object_key} from {source_bucket} to {dest_bucket} (dest_key: {op_data.get('dest_key', 'N/A')}): {e}")
         error_code = e.response.get('Error', {}).get('Code')
         error_message = e.response.get('Error', {}).get('Message', str(e))
+        filename_display = op_data.get('filename', object_key) if 'op_data' in locals() else object_key
+
         if error_code == 'AccessDenied':
             flash(f"Access Denied: Cannot copy {filename_display}. Check S3 permissions (GetObject for source, PutObject for destination).", "danger")
         else:
             flash(f"Error copying file '{filename_display}': {error_message}", "danger")
-        return False
     except Exception as e:
-        filename_display = op_data.get('filename', object_key) if op_data else object_key
-        app.logger.error(f"Unexpected error copying object '{filename_display}' from '{source_bucket}' to '{dest_bucket}': {e}", exc_info=True)
+        app.logger.error(f"Unexpected error copying object {object_key}: {e}")
+        filename_display = op_data.get('filename', object_key) if 'op_data' in locals() else object_key
         flash(f"An unexpected error occurred while copying '{filename_display}'.", "danger")
     return False
 
@@ -1755,39 +1732,41 @@ def performer_action_route(action, image_key):
         elif action == 'incredible':
             copied_to_performers = False
             copied_to_incredible = False
+            filename_for_logs = image_key.split('/')[-1] # For clearer logs
 
             # 1. Copy to Performers Bucket (destination='good' sets review_status=TRUE, perfimg_status=TRUE)
+            app.logger.info(f"[performer_action_route/incredible] Attempting to copy {filename_for_logs} from {source_bucket} to S3_PERFORMER_BUCKET ({S3_PERFORMER_BUCKET})")
             if copy_s3_object(source_bucket, S3_PERFORMER_BUCKET, image_key, destination='good'):
-                app.logger.info(f"Image '{filename}' copied to Performers bucket.")
+                app.logger.info(f"[performer_action_route/incredible] Successfully copied {filename_for_logs} to S3_PERFORMER_BUCKET ({S3_PERFORMER_BUCKET}).")
                 copied_to_performers = True
             else:
-                app.logger.error(f"Failed to copy image '{filename}' to Performers bucket.")
+                app.logger.error(f"[performer_action_route/incredible] FAILED to copy {filename_for_logs} to S3_PERFORMER_BUCKET ({S3_PERFORMER_BUCKET}).")
                 # copy_s3_object flashes its own errors
-                # flash(f"Failed to copy image '{filename}' to Performers bucket. Aborting incredible action.", "danger") # Redundant
 
             # 2. Copy to Incredible Bucket (destination='incredible' also sets review_status=TRUE, perfimg_status=TRUE)
             if copied_to_performers: # Only attempt second copy if the first was successful
+                app.logger.info(f"[performer_action_route/incredible] Attempting to copy {filename_for_logs} from {source_bucket} to S3_INCREDIBLE_BUCKET ({S3_INCREDIBLE_BUCKET})")
                 if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
-                    app.logger.info(f"Image '{filename}' copied to Incredible bucket.")
+                    app.logger.info(f"[performer_action_route/incredible] Successfully copied {filename_for_logs} to S3_INCREDIBLE_BUCKET ({S3_INCREDIBLE_BUCKET}).")
                     copied_to_incredible = True
                 else:
-                    app.logger.error(f"Failed to copy image '{filename}' to Incredible bucket.")
+                    app.logger.error(f"[performer_action_route/incredible] FAILED to copy {filename_for_logs} to S3_INCREDIBLE_BUCKET ({S3_INCREDIBLE_BUCKET}).")
                     # copy_s3_object flashes its own errors
-                    # flash(f"Image '{filename}' copied to Performers, but FAILED to copy to Incredible bucket.", "warning") # Redundant
             
             # 3. Delete from Upload Bucket if both copies were successful
             if copied_to_performers and copied_to_incredible:
+                app.logger.info(f"[performer_action_route/incredible] Both copies successful. Attempting to delete {image_key} from {source_bucket}")
                 try:
                     s3_client.delete_object(Bucket=source_bucket, Key=image_key)
-                    app.logger.info(f"Image '{image_key}' deleted from {source_bucket} after successful copies to Performers and Incredible buckets.")
+                    app.logger.info(f"[performer_action_route/incredible] Successfully deleted {image_key} from {source_bucket}.")
                     flash(f"Image '{filename}' marked INCREDIBLE: copied to Performers and Incredible buckets, and removed from Upload bucket.", "success")
                 except Exception as e:
-                    app.logger.error(f"Error deleting '{image_key}' from {source_bucket} after copies: {e}")
+                    app.logger.error(f"[performer_action_route/incredible] Error deleting '{image_key}' from {source_bucket} after copies: {e}")
                     flash(f"Image '{filename}' copied to Performers & Incredible, but FAILED to delete from Upload bucket. Please check manually.", "warning")
             elif copied_to_performers and not copied_to_incredible:
                 # This case means it's in Performers, but not Incredible. Original is NOT deleted.
                 # copy_s3_object (for incredible) should have flashed an error.
-                app.logger.warning(f"Image '{filename}' copied to Performers, but FAILED to copy to Incredible. Original NOT deleted from {source_bucket}.")
+                app.logger.warning(f"[performer_action_route/incredible] Image '{filename}' copied to Performers, but FAILED to copy to Incredible. Original NOT deleted from {source_bucket}.")
                 # Ensure a clear message if copy_s3_object didn't provide one or it was missed.
                 if not any('Incredible bucket' in m[1] for m in session.get('_flashes', []) if m[0] in ['danger', 'warning']):
                     flash(f"Image '{filename}' was copied to Performers, but failed to copy to Incredible. Original image remains in upload bucket.", "warning")
