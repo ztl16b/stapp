@@ -1680,7 +1680,8 @@ def perf_review_image_route():
         review_status=review_status,
         perfimg_status=perfimg_status,
         performer_name=performer_name,
-        performer_id=performer_id  # Pass performer_id for reference images
+        performer_id=performer_id,  # Pass performer_id for reference images
+        metadata=metadata
     )
 
 @app.route('/performer_action/<action>/<path:image_key>', methods=['POST'])
