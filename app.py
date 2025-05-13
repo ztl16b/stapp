@@ -1696,58 +1696,41 @@ def performer_action_route(action, image_key):
         flash("Source bucket not provided in form.", "danger")
         return redirect(url_for('perf_review_image_route'))
     
-    app.logger.info(f"Performer action: {action} for image: {image_key} from source bucket: {source_bucket}")
+    bad_reason_selected = request.form.get('bad_reason')
+    other_reason_text = request.form.get('other_reason')
+    final_bad_reason = None
+
+    if action == 'bad':
+        if bad_reason_selected == 'other' and other_reason_text:
+            final_bad_reason = other_reason_text.strip()
+        elif bad_reason_selected:
+            final_bad_reason = bad_reason_selected
+
+        if not final_bad_reason:
+            flash("A reason must be selected or provided for 'BAD' action.", 'warning')
+            return redirect(url_for('perf_review_image_route'))
+
+    app.logger.info(f"Performer action: {action} for image: {image_key} from source bucket: {source_bucket}. Reason: {final_bad_reason if final_bad_reason else 'N/A'}")
 
     # As per user request, this review page now only processes images from S3_UPLOAD_BUCKET.
     if source_bucket == S3_UPLOAD_BUCKET:
         filename = image_key.split('/')[-1] # Get filename for messages and local saving
 
         if action == 'good':
-            # Move to S3_PERFORMER_BUCKET. 
+            # Move to S3_PERFORMER_BUCKET.
             # Metadata (review_status=TRUE, perfimg_status=TRUE) is set by move_s3_object via _prepare_s3_operation.
             if move_s3_object(source_bucket, S3_PERFORMER_BUCKET, image_key, destination='good'):
                 flash(f"Image '{filename}' approved and moved to Performers bucket.", "success")
             else:
                 flash(f"Failed to move image '{filename}' to Performers bucket.", "danger")
-        
-        elif action == 'bad':
-            # Download to local folder, then delete from S3_UPLOAD_BUCKET
-            local_error_dir = os.path.expanduser("~/local_files/performer_images_error") # Expand ~ to user's home dir
-            download_successful = False
-            local_file_path = ""
-            try:
-                os.makedirs(local_error_dir, exist_ok=True)
-                local_file_path = os.path.join(local_error_dir, filename) # filename is defined earlier in the function
-                
-                s3_client.download_file(source_bucket, image_key, local_file_path)
-                app.logger.info(f"Image '{filename}' downloaded to {local_file_path}")
-                download_successful = True
-            except ClientError as e: # More specific S3 error handling
-                app.logger.error(f"S3 error downloading '{filename}' for BAD action: {e}")
-                error_code = e.response.get('Error', {}).get('Code')
-                error_message = e.response.get('Error', {}).get('Message', str(e))
-                if error_code == 'AccessDenied':
-                    flash(f"Access Denied: Cannot download '{filename}'. Check S3 GetObject permissions for the upload bucket.", "danger")
-                else:
-                    flash(f"S3 error downloading '{filename}': {error_message}", "danger")
-            except Exception as e: # Catches other errors like local permission issues for os.makedirs/saving file
-                app.logger.error(f"Local file error processing BAD action for '{filename}' (path: {local_file_path}): {e}")
-                flash(f"Error saving '{filename}' locally (check path & permissions): {str(e)}", "danger")
 
-            if download_successful:
-                try:
-                    s3_client.delete_object(Bucket=source_bucket, Key=image_key)
-                    app.logger.info(f"Image '{image_key}' deleted from {source_bucket} after local download.")
-                    flash(f"Image '{filename}' marked BAD, saved locally, and removed from upload bucket.", "success")
-                except ClientError as e:
-                    app.logger.error(f"S3 error deleting '{image_key}' after download for BAD action: {e}")
-                    error_message = e.response.get('Error', {}).get('Message', str(e))
-                    flash(f"Image '{filename}' saved locally, but FAILED to delete from S3: {error_message}", "warning")
-                except Exception as e:
-                    app.logger.error(f"Unexpected error deleting '{image_key}' after download for BAD action: {e}")
-                    flash(f"Image '{filename}' saved locally, but FAILED to delete from S3 due to an unexpected error.", "warning")
-            # If download was not successful, an error has already been flashed by the download exception block.
-        
+        elif action == 'bad':
+            # Move to S3_BAD_BUCKET with the bad_reason in metadata.
+            if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad', bad_reason=final_bad_reason):
+                flash(f"Image '{filename}' marked BAD, reason '{final_bad_reason}', and moved to Bad Images bucket.", "success")
+            else:
+                flash(f"Failed to move image '{filename}' to Bad Images bucket.", "danger")
+
         elif action == 'incredible':
             copied_to_performers = False
             copied_to_incredible = False

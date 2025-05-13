@@ -55,6 +55,22 @@
         gap: 10px;
     }
 
+    /* Styling for the bad reason dropdown */
+    .bad-form-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .bad-reason-select {
+        /*width: 100%;*/ /* Let button size dictate or set a specific width */
+        min-width: 150px; /* Ensure dropdown is not too small */
+        margin-bottom: 8px;
+        padding: 6px;
+        border-radius: 4px;
+        border: 1px solid #ced4da;
+    }
+
     /* —— Reference grid —— */
     .reference-grid {
         width: 100%;
@@ -142,10 +158,25 @@
                             <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
                             <button type="submit" class="btn btn-success btn-lg">GOOD</button>
                         </form>
-                        <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
-                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                            <button type="submit" class="btn btn-danger btn-lg">BAD</button>
-                        </form>
+                        <div class="bad-form-container">
+                            <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
+                                <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                                <select name="bad_reason" class="bad-reason-select" required id="badReasonSelect">
+                                    <option value="" disabled selected>Select reason</option>
+                                    <option value="not performer">Not Performer</option>
+                                    <option value="blurry">Blurry</option>
+                                    <option value="bad angle">Bad Angle</option>
+                                    <option value="low quality">Low Quality</option>
+                                    <option value="duplicate">Duplicate</option>
+                                    <option value="other">Other</option>
+                                </select>
+                                <div id="otherReasonContainer" style="display: none; width: 100%; margin-bottom: 8px;">
+                                    <input type="text" name="other_reason" id="otherReasonInput" class="form-control"
+                                        placeholder="Please specify reason..." style="margin-bottom: 8px;">
+                                </div>
+                                <button type="submit" class="btn btn-danger btn-lg">BAD</button>
+                            </form>
+                        </div>
                         <form action="{{ url_for('performer_action_route', action='incredible', image_key=image_key) }}" method="post">
                             <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
                             <button type="submit" class="btn btn-primary btn-lg">INCREDIBLE</button>
@@ -189,6 +220,40 @@
     document.addEventListener('DOMContentLoaded', function() {
         console.log('Current image key:', "{{ image_key }}");
         console.log('Page loaded at:', new Date().toISOString());
+
+        // Handle the "Other" option in bad reason dropdown
+        const badReasonSelect = document.getElementById('badReasonSelect');
+        const otherReasonContainer = document.getElementById('otherReasonContainer');
+        const otherReasonInput = document.getElementById('otherReasonInput');
+
+        if (badReasonSelect && otherReasonContainer && otherReasonInput) {
+            badReasonSelect.addEventListener('change', function() {
+                if (this.value === 'other') {
+                    otherReasonContainer.style.display = 'block';
+                    otherReasonInput.setAttribute('required', 'required');
+                } else {
+                    otherReasonContainer.style.display = 'none';
+                    otherReasonInput.removeAttribute('required');
+                }
+            });
+
+            // Handle form submission
+            const badForm = badReasonSelect.closest('form');
+            if (badForm) {
+                badForm.addEventListener('submit', function(e) {
+                    if (badReasonSelect.value === 'other' && !otherReasonInput.value.trim()) {
+                        e.preventDefault();
+                        alert('Please specify a reason when selecting "Other"');
+                        // Stop form submission if "Other" is selected but no reason is provided
+                        return false;
+                    }
+
+                    // If "Other" is selected, use the text input value as the bad_reason
+                    // This will be sent as 'other_reason', and the select will send 'bad_reason' as 'other'
+                    // Backend will handle combining these.
+                });
+            }
+        }
     });
 </script>
 {% endblock %}
