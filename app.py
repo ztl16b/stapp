@@ -361,7 +361,9 @@ def process_image(file_data, filename, content_type, uploader_initials=None):
         metadata['upload_time'] = upload_time
         
         extra_args['Metadata'] = metadata
-        app.logger.info(f"Adding metadata: {metadata}")
+        extra_args['ACL'] = "public-read"
+        extra_args['ContentDisposition'] = "inline"
+        app.logger.info(f"Adding metadata and ACL: {metadata}, ACL: public-read, ContentDisposition: inline")
         
         # Upload to S3 using BytesIO for memory efficiency
         file_obj = BytesIO(file_data)
@@ -570,7 +572,9 @@ def move_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
             Key=op_data['dest_key'],
             ContentType=op_data['content_type'],
             Metadata=op_data['metadata'],
-            MetadataDirective='REPLACE'
+            MetadataDirective='REPLACE',
+            ACL="public-read",
+            ContentDisposition="inline"
         )
         app.logger.info(f"Copied {op_data['original_key']} from {source_bucket} to {dest_bucket} as {op_data['dest_key']}")
         copy_successful = True
@@ -746,7 +750,9 @@ def move_image_route(action, image_key):
                     Key=bad_dest_key,
                     Body=file_data,
                     ContentType=content_type,
-                    Metadata=current_metadata
+                    Metadata=current_metadata,
+                    ACL="public-read",
+                    ContentDisposition="inline"
                 )
                 
                 # Delete from good bucket
@@ -776,7 +782,9 @@ def move_image_route(action, image_key):
                     Key=incredible_dest_key,
                     Metadata=current_metadata,
                     ContentType=content_type,
-                    MetadataDirective='REPLACE'
+                    MetadataDirective='REPLACE',
+                    ACL="public-read",
+                    ContentDisposition="inline"
                 )
                 
                 # Update metadata in the good bucket
@@ -786,7 +794,9 @@ def move_image_route(action, image_key):
                     Key=image_key,
                     Metadata=current_metadata,
                     MetadataDirective='REPLACE',
-                    ContentType=content_type
+                    ContentType=content_type,
+                    ACL="public-read",
+                    ContentDisposition="inline"
                 )
                 
                 app.logger.info(f"Updated metadata for {image_key} and copied to incredible bucket")
@@ -799,7 +809,9 @@ def move_image_route(action, image_key):
                     Key=image_key,
                     Metadata=current_metadata,
                     MetadataDirective='REPLACE',
-                    ContentType=content_type
+                    ContentType=content_type,
+                    ACL="public-read",
+                    ContentDisposition="inline"
                 )
                 
                 app.logger.info(f"Updated metadata for {image_key} to mark as reviewed")
@@ -861,7 +873,9 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
             Key=op_data['dest_key'],
             ContentType=op_data['content_type'],
             Metadata=op_data['metadata'],
-            MetadataDirective='REPLACE'
+            MetadataDirective='REPLACE',
+            ACL="public-read",
+            ContentDisposition="inline"
         )
         app.logger.info(f"[copy_s3_object] Successfully copied {op_data['original_key']} from {source_bucket} to {dest_bucket} as {op_data['dest_key']}")
         return True
@@ -1550,7 +1564,9 @@ def toggle_perfimg_status_route(bucket_name, object_key):
             Key=object_key,
             Metadata=current_metadata,
             MetadataDirective='REPLACE',
-            ContentType=content_type
+            ContentType=content_type,
+            ACL="public-read",
+            ContentDisposition="inline"
         )
         
         # Log the metadata update
