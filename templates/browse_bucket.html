@@ -197,6 +197,8 @@
                             <th>Performer</th>
                             <th>Reviewed</th>
                             <th>Perf Img</th>
+                            <th>Clip 1 Verdict</th>
+                            <th>Clip 2 Verdict</th>
                             {% if bucket_name == 'bad' %}
                             <th>Bad Reason</th>
                             {% endif %}
@@ -237,6 +239,8 @@
                                     <span class="badge bg-danger">FALSE</span>
                                 {% endif %}
                             </td>
+                            <td>{{ file.metadata.get('clip1_v', 'N/A') }}</td>
+                            <td>{{ file.metadata.get('clip2_v', 'N/A') }}</td>
                             {% if bucket_name == 'bad' %}
                             <td>
                                 {% if file.metadata.get('bad_reason') %}
