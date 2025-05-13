@@ -76,6 +76,14 @@ S3_RESOURCES_BUCKET = "etickets-content-test-bucket"
 S3_REF_BUCKET = os.getenv("S3_REF_BUCKET") # New reference bucket
 S3_REF_BUCKET_PREFIX = os.getenv("S3_REF_BUCKET_PREFIX") # New reference bucket prefix
 
+S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX")
+S3_GOOD_BUCKET_PREFIX = os.getenv("S3_GOOD_BUCKET_PREFIX")
+S3_BAD_BUCKET_PREFIX = os.getenv("S3_BAD_BUCKET_PREFIX")
+S3_INCREDIBLE_BUCKET_PREFIX = os.getenv("S3_INCREDIBLE_BUCKET_PREFIX")
+S3_TEMP_BUCKET_PREFIX = os.getenv("S3_TEMP_BUCKET_PREFIX")
+S3_ISSUE_BUCKET_PREFIX = os.getenv("S3_ISSUE_BUCKET_PREFIX")
+S3_PERFORMER_BUCKET_PREFIX = os.getenv("S3_PERFORMER_BUCKET_PREFIX")
+
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -490,18 +498,21 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
         if len(parts) >= 3:
             filename = parts[2]  # Get just the original filename part
     
-    # Determine destination path based on dest_bucket and/or destination hint
-    # Default dest_key is just the filename, implying root of dest_bucket if not otherwise specified below
+    # Determine destination path based on dest_bucket
+    # Default dest_key is just the filename. This might be used if a bucket doesn't have a defined prefix
+    # or isn't one of the explicitly handled cases below.
     dest_key = filename
 
-    if dest_bucket == S3_PERFORMER_BUCKET:
-        dest_key = f"images/performers/detail/{filename}"
-    elif dest_bucket == S3_INCREDIBLE_BUCKET: # Check for incredible first
-        dest_key = f"incredible_images/{filename}"
-    elif dest_bucket == S3_GOOD_BUCKET:
-        dest_key = f"images/performer-at-venue/detail/{filename}"
-    elif dest_bucket == S3_BAD_BUCKET:
-        dest_key = f"bad_images/{filename}"
+    if dest_bucket == S3_PERFORMER_BUCKET and S3_PERFORMER_BUCKET_PREFIX:
+        dest_key = f"{S3_PERFORMER_BUCKET_PREFIX}{filename}"
+    elif dest_bucket == S3_INCREDIBLE_BUCKET and S3_INCREDIBLE_BUCKET_PREFIX:
+        dest_key = f"{S3_INCREDIBLE_BUCKET_PREFIX}{filename}"
+    elif dest_bucket == S3_GOOD_BUCKET and S3_GOOD_BUCKET_PREFIX:
+        dest_key = f"{S3_GOOD_BUCKET_PREFIX}{filename}"
+    elif dest_bucket == S3_BAD_BUCKET and S3_BAD_BUCKET_PREFIX:
+        dest_key = f"{S3_BAD_BUCKET_PREFIX}{filename}"
+    elif dest_bucket == S3_ISSUE_BUCKET and S3_ISSUE_BUCKET_PREFIX: # Added for completeness based on available prefixes
+        dest_key = f"{S3_ISSUE_BUCKET_PREFIX}{filename}"
     # If no specific bucket matches, dest_key remains `filename` (root of dest_bucket)
     
     # Determine content type based on file extension
