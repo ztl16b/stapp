@@ -5,7 +5,7 @@ chrome://net-internals/#sockets
 heroku config:set ADMIN_PASSWORD="Verysecure" --app stapp
 
 heroku config:set GOOGLE_CSE_KEY="xxx" --app stapp
-heroku config:set GOOGLE_CSE_CX="xxx" --app stapp
+heroku config:set GEMINI_API_KEY="xxx" --app stapp
 
 
 git add . && git commit -m "performer" && git push stapp main
@@ -37,6 +37,11 @@ heroku logs --app stapp --ps perf_worker -t
 
 
 
+
+heroku ps:restart new_worker --app stapp
+heroku ps:scale new_worker=1 --app stapp
+heroku ps:scale new_worker=0 --app stapp
+heroku logs --app stapp --ps new_worker -t
 
 
 heroku ps:restart dupe_worker --app stapp
