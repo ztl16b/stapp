@@ -282,8 +282,10 @@ def process_image(key: str) -> bool:
         s3.put_object(
             Bucket=bucket,
             Key=key_out,
+            ExtraArgs={"ACL": "public-read", "ContentDisposition": "inline"},
             Body=webp_bytes,
             ContentType="image/webp",
+            
             Metadata={k: _http_safe(v) for k, v in meta.items()},
         )
         logger.info("✓ Stored in %s/%s", bucket, key_out)
@@ -302,6 +304,7 @@ def _to_issue(body: bytes, ctype: str, keyname: str, extra_meta: Dict[str, str])
     s3.put_object(
         Bucket=S3_ISSUE_BUCKET,
         Key=f"{S3_ISSUE_BUCKET_PREFIX}{keyname}",
+        ExtraArgs={"ACL": "public-read", "ContentDisposition": "inline"},
         Body=body,
         ContentType=ctype,
         Metadata={k: _http_safe(v) for k, v in meta.items()},
