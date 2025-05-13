@@ -133,14 +133,25 @@ except Exception as e:
 
 def extract_performer_id(filename):
     try:
-        # Get the part of the filename before the first dot, or the whole filename if no dot
-        name_part = filename.split('.')[0]
-        
-        # Extract leading digits from this part
-        match = re.match(r"^(\\d+)", name_part)
-        if match:
-            return match.group(1)
-            
+        # First, check if an underscore is present
+        if '_' in filename:
+            # Take the part before the first underscore
+            performer_id_str = filename.split('_', 1)[0]
+        else:
+            # Fallback to splitting by dot if no underscore
+            parts = filename.split('.')
+            # First part is performer_id
+            if len(parts) >= 1:
+                performer_id_str = parts[0]
+            else:
+                return None # Should not happen if filename is valid
+
+        # Validate if the extracted part is numeric
+        if performer_id_str.isdigit():
+            return performer_id_str
+        else:
+            app.logger.warning(f"Extracted performer_id '{performer_id_str}' from '{filename}' is not numeric.")
+            return None
     except Exception as e:
         app.logger.error(f"Error extracting performer_id from {filename}: {e}")
     return None
