@@ -100,7 +100,7 @@ def load_performer_data():
     s3 = get_s3_client()
     
     try:
-        csv_obj = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key="temp/performer-infos (1).csv")
+        csv_obj = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key="temp/performer-infos.csv")
         csv_content = csv_obj['Body'].read().decode('utf-8')
         
         csv_reader = csv.DictReader(csv_content.splitlines())

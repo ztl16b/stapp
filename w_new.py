@@ -1,28 +1,20 @@
 #!/usr/bin/env python3
 """
-bytescale_worker.py — sequential Gemini audits (logs raw Gemini responses)
-──────────────────────────────────────────────────────────────────────────────
-1. Text audit  → if Reject ➜ Issue bucket (_text)
-2. Likeness    → if Reject ➜ Issue bucket (_likeness)
-3. Clip audit  (original)  ➜ clip_1 metadata
-4. Bytescale convert (WebP)
-5. Clip audit  (WebP)      ➜ clip_2 metadata
-Duplicates still routed to Issue bucket (_dupeUpload.webp)
-All saved objects are uploaded with ACL=public-read and inline disposition.
+bytescale_worker.py — sequential Gemini audits (dynamic alias/category lookup)
 """
 
 from __future__ import annotations
-
-import base64, logging, os, re, sys, time, traceback
+import base64, csv, logging, os, re, sys, time, traceback
 from datetime import datetime, timezone
+from io import StringIO
 from typing import Dict, Tuple
 
-import boto3                     # type: ignore
-import google.generativeai as genai  # type: ignore
-import requests                  # type: ignore
-import schedule                  # type: ignore
+import boto3                      # type: ignore
+import google.generativeai as genai   # type: ignore
+import requests                   # type: ignore
+import schedule                   # type: ignore
 from botocore.exceptions import ClientError  # type: ignore
-from dotenv import load_dotenv   # type: ignore
+from dotenv import load_dotenv    # type: ignore
 
 # ─────────────────────────── ENV ────────────────────────────────────────────
 load_dotenv()
@@ -40,13 +32,27 @@ S3_UPLOAD_BUCKET_PREFIX = os.getenv("S3_UPLOAD_BUCKET_PREFIX", "")
 S3_ISSUE_BUCKET         = os.getenv("S3_ISSUE_BUCKET")
 S3_ISSUE_BUCKET_PREFIX  = os.getenv("S3_ISSUE_BUCKET_PREFIX", "")
 
+#  NEW: resources bucket + CSV key
+S3_RESOURCES_BUCKET     = os.getenv("S3_RESOURCES_BUCKET")
+PERFORMER_META_CSV_KEY  = os.getenv("PERFORMER_META_CSV_KEY")   # e.g. "lookups/performers.csv"
+
 BYTESCALE_API_KEY       = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL    = os.getenv("BYTESCALE_UPLOAD_URL")
 
 GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-05-06")
 
-# ─────────────────────── PROMPTS (truncate here) ────────────────────────────
+REQUIRED_VARS = (
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION,
+    S3_TEMP_BUCKET, S3_UPLOAD_BUCKET, S3_ISSUE_BUCKET,
+    S3_RESOURCES_BUCKET, PERFORMER_META_CSV_KEY,
+    BYTESCALE_API_KEY, BYTESCALE_UPLOAD_URL, GEMINI_API_KEY
+)
+if not all(REQUIRED_VARS):
+    logging.error("Missing one or more required environment variables; exiting.")
+    sys.exit(1)
+
+# ─────────────────────── PROMPTS (full text omitted for brevity) ────────────
 TEXT_PROMPT = """
 You are an image-audit specialist. Your directive:
 
@@ -178,24 +184,36 @@ logging.basicConfig(
 logger = logging.getLogger("bytescale_worker")
 
 # ──────────────────────── CLIENTS / INIT ────────────────────────────────────
-for var in (
-    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION,
-    S3_TEMP_BUCKET, S3_UPLOAD_BUCKET, S3_ISSUE_BUCKET,
-    BYTESCALE_API_KEY, BYTESCALE_UPLOAD_URL, GEMINI_API_KEY
-):
-    if not var:
-        logger.error("Required env var missing. Exiting.")
-        sys.exit(1)
-
 s3 = boto3.client(
     "s3",
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     region_name=AWS_REGION,
 )
-
 genai.configure(api_key=GEMINI_API_KEY)
 GEMINI = genai.GenerativeModel(GEMINI_MODEL_ID)
+
+# ─────────────────────── LOAD PERFORMER LOOK-UP ─────────────────────────────
+def _load_performer_csv() -> dict[str, tuple[str, str]]:
+    try:
+        obj = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key=PERFORMER_META_CSV_KEY)
+        csv_text = obj["Body"].read().decode()
+        reader = csv.DictReader(StringIO(csv_text))
+        table: dict[str, tuple[str, str]] = {}
+        for row in reader:
+            pid = row.get("performer_id", "").strip()
+            alias = row.get("name_alias", "").strip()
+            cat   = row.get("category_name", "").strip()
+            if pid:
+                table[pid] = (alias, cat)
+        logger.info("Loaded %d performer rows from %s/%s",
+                    len(table), S3_RESOURCES_BUCKET, PERFORMER_META_CSV_KEY)
+        return table
+    except Exception as e:
+        logger.error("Failed to load performer CSV: %s", e)
+        return {}
+
+PERFORMER_INFO = _load_performer_csv()
 
 # ───────────────────────── HELPERS ──────────────────────────────────────────
 def _http_safe(txt: str, n: int = 250) -> str:
@@ -205,10 +223,13 @@ def _http_safe(txt: str, n: int = 250) -> str:
 def _img_part(b: bytes, mime="image/jpeg") -> Dict[str, str]:
     return {"mime_type": mime, "data": base64.b64encode(b).decode()}
 
-def _gemini(prompt: str, img: bytes, tag: str) -> str:
+def _gemini(prompt_tmpl: str, img: bytes, tag: str,
+            alias: str, category: str) -> str:
+    prompt = prompt_tmpl.format(name_alias=alias or "N/A",
+                                category_name=category or "N/A")
     try:
         resp_txt = GEMINI.generate_content([{"text": prompt}, _img_part(img)]).text.strip()
-        logger.info("Gemini %s response:\n%s", tag, resp_txt)   # raw response log
+        logger.info("Gemini %s response:\n%s", tag, resp_txt)
         return resp_txt
     except Exception as e:
         logger.error("Gemini error during %s audit: %s", tag, e)
@@ -223,46 +244,56 @@ def _verdict(raw: str) -> Tuple[str, str]:
              if re.search(r"REASON\s*:", raw, re.I) else ""
     return verdict, reason
 
-# ─────────────────────── PROCESS IMAGE ──────────────────────────────────────
+def _extract_performer_id(fname: str) -> str:
+    m = re.match(r"(\d+)", fname)
+    return m.group(1) if m else ""
+
+# ───────────────────── PROCESS IMAGE ───────────────────────────────────────
 def process_image(key: str) -> bool:
     try:
         filename = key.rsplit("/", 1)[-1]
         base, ext = os.path.splitext(filename)
         logger.info("→ %s", filename)
 
+        # look-up alias & category
+        pid = _extract_performer_id(base)
+        alias, category = PERFORMER_INFO.get(pid, ("", ""))
+        if not alias and not category:
+            logger.warning("Performer ID %s not found in CSV; using blanks.", pid)
+
         obj = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
-        bytes_orig: bytes = obj["Body"].read()
+        img_bytes: bytes = obj["Body"].read()
         ctype = obj.get("ContentType", "image/jpeg")
 
         # 1) TEXT AUDIT
-        text_raw = _gemini(TEXT_PROMPT, bytes_orig, "TEXT")
+        text_raw = _gemini(TEXT_PROMPT, img_bytes, "TEXT", alias, category)
         text_v, text_r = _verdict(text_raw)
         if text_v != "APPROVE":
-            _to_issue(bytes_orig, ctype, base + "_text" + ext,
+            _to_issue(img_bytes, ctype, base + "_text" + ext,
                       {"text_v": text_v, "text_r": text_r})
             s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
             return True
 
         # 2) LIKENESS AUDIT
-        like_raw = _gemini(LIKENESS_PROMPT, bytes_orig, "LIKENESS")
+        like_raw = _gemini(LIKENESS_PROMPT, img_bytes, "LIKENESS", alias, category)
         like_v, like_r = _verdict(like_raw)
         if like_v != "APPROVE":
-            _to_issue(bytes_orig, ctype, base + "_likeness" + ext,
+            _to_issue(img_bytes, ctype, base + "_likeness" + ext,
                       {"text_v": text_v, "like_v": like_v, "like_r": like_r})
             s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
             return True
 
         # 3) CLIP-1 AUDIT
-        clip1_raw = _gemini(CLIP_PROMPT, bytes_orig, "CLIP-1")
+        clip1_raw = _gemini(CLIP_PROMPT, img_bytes, "CLIP-1", alias, category)
         clip1_v, clip1_r = _verdict(clip1_raw)
 
         # 4) BYTESCALE CONVERT
-        webp_bytes = _bytescale_convert(filename, bytes_orig, ctype)
+        webp_bytes = _bytescale_convert(filename, img_bytes, ctype)
         if not webp_bytes:
             return False
 
         # 5) CLIP-2 AUDIT
-        clip2_raw = _gemini(CLIP_PROMPT, webp_bytes, "CLIP-2")
+        clip2_raw = _gemini(CLIP_PROMPT, webp_bytes, "CLIP-2", alias, category)
         clip2_v, clip2_r = _verdict(clip2_raw)
 
         # 6) SAVE (dup-aware)
@@ -275,13 +306,11 @@ def process_image(key: str) -> bool:
                    if duplicate else upload_key)
 
         meta = {
-            "text_v": text_v,
-            "like_v": like_v,
-            "clip1_v": clip1_v,
-            "clip2_v": clip2_v,
-            "clip1_r": clip1_r,
-            "clip2_r": clip2_r,
+            "text_v": text_v,  "like_v": like_v,
+            "clip1_v": clip1_v, "clip2_v": clip2_v,
+            "clip1_r": clip1_r, "clip2_r": clip2_r,
             "upload_time": datetime.now(timezone.utc).isoformat(),
+            "name_alias": _http_safe(alias), "category": _http_safe(category),
         }
 
         s3.put_object(
