@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bytescale_worker.py — sequential Gemini audits
+bytescale_worker.py — sequential Gemini audits (logs raw Gemini responses)
 ──────────────────────────────────────────────────────────────────────────────
 1. Text audit  → if Reject ➜ Issue bucket (_text)
 2. Likeness    → if Reject ➜ Issue bucket (_likeness)
@@ -8,6 +8,7 @@ bytescale_worker.py — sequential Gemini audits
 4. Bytescale convert (WebP)
 5. Clip audit  (WebP)      ➜ clip_2 metadata
 Duplicates still routed to Issue bucket (_dupeUpload.webp)
+All saved objects are uploaded with ACL=public-read and inline disposition.
 """
 
 from __future__ import annotations
@@ -16,12 +17,12 @@ import base64, logging, os, re, sys, time, traceback
 from datetime import datetime, timezone
 from typing import Dict, Tuple
 
-import boto3                 # type: ignore
-import google.generativeai as genai   # type: ignore
-import requests               # type: ignore
-import schedule               # type: ignore
+import boto3                     # type: ignore
+import google.generativeai as genai  # type: ignore
+import requests                  # type: ignore
+import schedule                  # type: ignore
 from botocore.exceptions import ClientError  # type: ignore
-from dotenv import load_dotenv  # type: ignore
+from dotenv import load_dotenv   # type: ignore
 
 # ─────────────────────────── ENV ────────────────────────────────────────────
 load_dotenv()
@@ -45,7 +46,7 @@ BYTESCALE_UPLOAD_URL    = os.getenv("BYTESCALE_UPLOAD_URL")
 GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-05-06")
 
-# ─────────────────────── PROMPTS (short-form here) ──────────────────────────
+# ─────────────────────── PROMPTS (truncate here) ────────────────────────────
 TEXT_PROMPT = """
 You are an image-audit specialist. Your directive:
 
@@ -198,40 +199,44 @@ GEMINI = genai.GenerativeModel(GEMINI_MODEL_ID)
 
 # ───────────────────────── HELPERS ──────────────────────────────────────────
 def _http_safe(txt: str, n: int = 250) -> str:
-    return re.sub(r"\s{2,}", " ", txt.encode("ascii", "ignore").decode()
-                  .replace("\n", " ").replace("\r", " "))[:n]
+    return re.sub(r"\s{2,}", " ",
+                  txt.encode("ascii", "ignore").decode().replace("\n", " ").replace("\r", " "))[:n]
 
 def _img_part(b: bytes, mime="image/jpeg") -> Dict[str, str]:
     return {"mime_type": mime, "data": base64.b64encode(b).decode()}
 
-def _gemini(prompt: str, img: bytes) -> str:
+def _gemini(prompt: str, img: bytes, tag: str) -> str:
     try:
-        return GEMINI.generate_content([{"text": prompt}, _img_part(img)]).text.strip()
+        resp_txt = GEMINI.generate_content([{"text": prompt}, _img_part(img)]).text.strip()
+        logger.info("Gemini %s response:\n%s", tag, resp_txt)   # raw response log
+        return resp_txt
     except Exception as e:
-        logger.error("Gemini error: %s", e)
+        logger.error("Gemini error during %s audit: %s", tag, e)
         return ""
 
 def _verdict(raw: str) -> Tuple[str, str]:
     m = re.search(r"VERDICT\s*:\s*(APPROVE|REJECT|PASS|FAIL)", raw, re.I)
     verdict = (m.group(1).upper() if m else "UNKNOWN")
-    verdict = "APPROVE" if verdict in ("APPROVE", "PASS") else "REJECT" if verdict in ("REJECT", "FAIL") else verdict
-    reason  = _http_safe(re.search(r"REASON\s*:\s*(.+)", raw, re.I | re.S).group(1)) if re.search(r"REASON\s*:", raw, re.I) else ""
+    verdict = "APPROVE" if verdict in ("APPROVE", "PASS") else \
+              "REJECT"  if verdict in ("REJECT", "FAIL") else verdict
+    reason  = _http_safe(re.search(r"REASON\s*:\s*(.+)", raw, re.I | re.S).group(1)) \
+             if re.search(r"REASON\s*:", raw, re.I) else ""
     return verdict, reason
 
 # ─────────────────────── PROCESS IMAGE ──────────────────────────────────────
 def process_image(key: str) -> bool:
     try:
-        filename = key.split("/")[-1]
+        filename = key.rsplit("/", 1)[-1]
         base, ext = os.path.splitext(filename)
         logger.info("→ %s", filename)
 
-        obj   = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
+        obj = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
         bytes_orig: bytes = obj["Body"].read()
         ctype = obj.get("ContentType", "image/jpeg")
 
         # 1) TEXT AUDIT
-        raw_text = _gemini(TEXT_PROMPT, bytes_orig)
-        text_v, text_r = _verdict(raw_text)
+        text_raw = _gemini(TEXT_PROMPT, bytes_orig, "TEXT")
+        text_v, text_r = _verdict(text_raw)
         if text_v != "APPROVE":
             _to_issue(bytes_orig, ctype, base + "_text" + ext,
                       {"text_v": text_v, "text_r": text_r})
@@ -239,33 +244,33 @@ def process_image(key: str) -> bool:
             return True
 
         # 2) LIKENESS AUDIT
-        raw_like = _gemini(LIKENESS_PROMPT, bytes_orig)
-        like_v, like_r = _verdict(raw_like)
+        like_raw = _gemini(LIKENESS_PROMPT, bytes_orig, "LIKENESS")
+        like_v, like_r = _verdict(like_raw)
         if like_v != "APPROVE":
             _to_issue(bytes_orig, ctype, base + "_likeness" + ext,
                       {"text_v": text_v, "like_v": like_v, "like_r": like_r})
             s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
             return True
 
-        # 3) CLIP-1
-        raw_clip1 = _gemini(CLIP_PROMPT, bytes_orig)
-        clip1_v, clip1_r = _verdict(raw_clip1)
+        # 3) CLIP-1 AUDIT
+        clip1_raw = _gemini(CLIP_PROMPT, bytes_orig, "CLIP-1")
+        clip1_v, clip1_r = _verdict(clip1_raw)
 
         # 4) BYTESCALE CONVERT
         webp_bytes = _bytescale_convert(filename, bytes_orig, ctype)
         if not webp_bytes:
             return False
 
-        # 5) CLIP-2
-        raw_clip2 = _gemini(CLIP_PROMPT, webp_bytes)
-        clip2_v, clip2_r = _verdict(raw_clip2)
+        # 5) CLIP-2 AUDIT
+        clip2_raw = _gemini(CLIP_PROMPT, webp_bytes, "CLIP-2")
+        clip2_v, clip2_r = _verdict(clip2_raw)
 
         # 6) SAVE (dup-aware)
         processed_name = f"{base.replace('-', '.')}.webp"
         upload_key = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_name}"
         duplicate = _object_exists(S3_UPLOAD_BUCKET, upload_key)
 
-        bucket = S3_ISSUE_BUCKET if duplicate else S3_UPLOAD_BUCKET
+        bucket  = S3_ISSUE_BUCKET if duplicate else S3_UPLOAD_BUCKET
         key_out = (f"{S3_ISSUE_BUCKET_PREFIX}{base}_dupeUpload.webp"
                    if duplicate else upload_key)
 
@@ -282,14 +287,13 @@ def process_image(key: str) -> bool:
         s3.put_object(
             Bucket=bucket,
             Key=key_out,
-            ExtraArgs={"ACL": "public-read", "ContentDisposition": "inline"},
+            ACL="public-read",
+            ContentDisposition="inline",
             Body=webp_bytes,
             ContentType="image/webp",
-            
             Metadata={k: _http_safe(v) for k, v in meta.items()},
         )
         logger.info("✓ Stored in %s/%s", bucket, key_out)
-
         s3.delete_object(Bucket=S3_TEMP_BUCKET, Key=key)
         return True
 
@@ -304,7 +308,8 @@ def _to_issue(body: bytes, ctype: str, keyname: str, extra_meta: Dict[str, str])
     s3.put_object(
         Bucket=S3_ISSUE_BUCKET,
         Key=f"{S3_ISSUE_BUCKET_PREFIX}{keyname}",
-        ExtraArgs={"ACL": "public-read", "ContentDisposition": "inline"},
+        ACL="public-read",
+        ContentDisposition="inline",
         Body=body,
         ContentType=ctype,
         Metadata={k: _http_safe(v) for k, v in meta.items()},
