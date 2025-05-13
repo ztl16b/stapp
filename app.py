@@ -496,12 +496,12 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
 
     if dest_bucket == S3_PERFORMER_BUCKET:
         dest_key = f"images/performers/detail/{filename}"
+    elif dest_bucket == S3_INCREDIBLE_BUCKET: # Check for incredible first
+        dest_key = f"incredible_images/{filename}"
     elif dest_bucket == S3_GOOD_BUCKET:
         dest_key = f"images/performer-at-venue/detail/{filename}"
     elif dest_bucket == S3_BAD_BUCKET:
         dest_key = f"bad_images/{filename}"
-    elif dest_bucket == S3_INCREDIBLE_BUCKET:
-        dest_key = f"incredible_images/{filename}"
     # If no specific bucket matches, dest_key remains `filename` (root of dest_bucket)
     
     # Determine content type based on file extension
