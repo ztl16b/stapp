@@ -2,10 +2,12 @@ Reset Local Enviroment
 chrome://net-internals/#sockets
 
 
+https://etickets-content-test-bucket.s3.amazonaws.com/ref_images/4.1.jpg
+
 heroku config:set ADMIN_PASSWORD="Verysecure" --app stapp
 
-heroku config:set GOOGLE_CSE_KEY="xxx" --app stapp
-heroku config:set GEMINI_API_KEY="xxx" --app stapp
+heroku config:set S3_RESOURCES_BUCKET="xxx" --app stapp
+heroku config:set PERFORMER_META_CSV_KEY="xxx" --app stapp
 
 
 git add . && git commit -m "performer" && git push stapp main

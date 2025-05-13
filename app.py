@@ -133,11 +133,14 @@ except Exception as e:
 
 def extract_performer_id(filename):
     try:
-        # Split the filename by dots
-        parts = filename.split('.')
-        # First part is always performer_id regardless of format
-        if len(parts) >= 1:
-            return parts[0]  # First part is performer_id
+        # Get the part of the filename before the first dot, or the whole filename if no dot
+        name_part = filename.split('.')[0]
+        
+        # Extract leading digits from this part
+        match = re.match(r"^(\\d+)", name_part)
+        if match:
+            return match.group(1)
+            
     except Exception as e:
         app.logger.error(f"Error extracting performer_id from {filename}: {e}")
     return None
