@@ -1696,40 +1696,35 @@ def performer_action_route(action, image_key):
         flash("Source bucket not provided in form.", "danger")
         return redirect(url_for('perf_review_image_route'))
     
-    bad_reason_selected = request.form.get('bad_reason')
-    other_reason_text = request.form.get('other_reason')
-    final_bad_reason = None
-
-    if action == 'bad':
-        if bad_reason_selected == 'other' and other_reason_text:
-            final_bad_reason = other_reason_text.strip()
-        elif bad_reason_selected:
-            final_bad_reason = bad_reason_selected
-
-        if not final_bad_reason:
-            flash("A reason must be selected or provided for 'BAD' action.", 'warning')
-            return redirect(url_for('perf_review_image_route'))
-
-    app.logger.info(f"Performer action: {action} for image: {image_key} from source bucket: {source_bucket}. Reason: {final_bad_reason if final_bad_reason else 'N/A'}")
+    app.logger.info(f"Performer action: {action} for image: {image_key} from source bucket: {source_bucket}")
 
     # As per user request, this review page now only processes images from S3_UPLOAD_BUCKET.
     if source_bucket == S3_UPLOAD_BUCKET:
-        filename = image_key.split('/')[-1] # Get filename for messages and local saving
+        filename = image_key.split('/')[-1] # Get filename for messages
 
         if action == 'good':
-            # Move to S3_PERFORMER_BUCKET.
+            # Move to S3_PERFORMER_BUCKET. 
             # Metadata (review_status=TRUE, perfimg_status=TRUE) is set by move_s3_object via _prepare_s3_operation.
             if move_s3_object(source_bucket, S3_PERFORMER_BUCKET, image_key, destination='good'):
                 flash(f"Image '{filename}' approved and moved to Performers bucket.", "success")
             else:
                 flash(f"Failed to move image '{filename}' to Performers bucket.", "danger")
-
+        
         elif action == 'bad':
-            # Move to S3_BAD_BUCKET with the bad_reason in metadata.
-            if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad', bad_reason=final_bad_reason):
-                flash(f"Image '{filename}' marked BAD, reason '{final_bad_reason}', and moved to Bad Images bucket.", "success")
+            # Move to S3_BAD_BUCKET.
+            # Metadata (review_status=TRUE, bad_reason can be set) is set by move_s3_object.
+            if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad'):
+                flash(f"Image '{filename}' marked BAD and moved to Bad Images bucket.", "success")
             else:
-                flash(f"Failed to move image '{filename}' to Bad Images bucket.", "danger")
+                # move_s3_object already flashes detailed errors for copy or delete failures.
+                # Add a general failure message if not already covered by move_s3_object's flashes.
+                # However, to avoid double flashing, rely on move_s3_object's messages.
+                # If move_s3_object returns False, it has already flashed an error.
+                app.logger.error(f"Failed to move image '{filename}' to Bad Images bucket. Check earlier logs/flashes from move_s3_object.")
+                # Flash a generic message if specific one wasn't set by helper
+                # This might be redundant if move_s3_object is comprehensive.
+                if not any(m[0] == 'danger' for m in session.get('_flashes', [])):
+                     flash(f"Failed to move image '{filename}' to Bad Images bucket. See logs for details.", "danger")
 
         elif action == 'incredible':
             copied_to_performers = False
@@ -1741,28 +1736,43 @@ def performer_action_route(action, image_key):
                 copied_to_performers = True
             else:
                 app.logger.error(f"Failed to copy image '{filename}' to Performers bucket.")
-                flash(f"Failed to copy image '{filename}' to Performers bucket. Aborting incredible action.", "danger")
+                # copy_s3_object flashes its own errors
+                # flash(f"Failed to copy image '{filename}' to Performers bucket. Aborting incredible action.", "danger") # Redundant
 
             # 2. Copy to Incredible Bucket (destination='incredible' also sets review_status=TRUE, perfimg_status=TRUE)
-            if copied_to_performers:
+            if copied_to_performers: # Only attempt second copy if the first was successful
                 if copy_s3_object(source_bucket, S3_INCREDIBLE_BUCKET, image_key, destination='incredible'):
                     app.logger.info(f"Image '{filename}' copied to Incredible bucket.")
                     copied_to_incredible = True
                 else:
                     app.logger.error(f"Failed to copy image '{filename}' to Incredible bucket.")
-                    flash(f"Image '{filename}' copied to Performers, but FAILED to copy to Incredible bucket.", "warning")
+                    # copy_s3_object flashes its own errors
+                    # flash(f"Image '{filename}' copied to Performers, but FAILED to copy to Incredible bucket.", "warning") # Redundant
             
             # 3. Delete from Upload Bucket if both copies were successful
             if copied_to_performers and copied_to_incredible:
                 try:
                     s3_client.delete_object(Bucket=source_bucket, Key=image_key)
-                    app.logger.info(f"Image '{image_key}' deleted from {source_bucket} after copies to Performers and Incredible.")
-                    flash(f"Image '{filename}' marked INCREDIBLE and moved to Performers & Incredible buckets.", "success")
+                    app.logger.info(f"Image '{image_key}' deleted from {source_bucket} after successful copies to Performers and Incredible buckets.")
+                    flash(f"Image '{filename}' marked INCREDIBLE: copied to Performers and Incredible buckets, and removed from Upload bucket.", "success")
                 except Exception as e:
                     app.logger.error(f"Error deleting '{image_key}' from {source_bucket} after copies: {e}")
                     flash(f"Image '{filename}' copied to Performers & Incredible, but FAILED to delete from Upload bucket. Please check manually.", "warning")
             elif copied_to_performers and not copied_to_incredible:
-                pass
+                # This case means it's in Performers, but not Incredible. Original is NOT deleted.
+                # copy_s3_object (for incredible) should have flashed an error.
+                app.logger.warning(f"Image '{filename}' copied to Performers, but FAILED to copy to Incredible. Original NOT deleted from {source_bucket}.")
+                # Ensure a clear message if copy_s3_object didn't provide one or it was missed.
+                if not any('Incredible bucket' in m[1] for m in session.get('_flashes', []) if m[0] in ['danger', 'warning']):
+                    flash(f"Image '{filename}' was copied to Performers, but failed to copy to Incredible. Original image remains in upload bucket.", "warning")
+
+            elif not copied_to_performers:
+                # This case means the first copy (to Performers) failed. Nothing should be deleted.
+                # copy_s3_object (for performers) should have flashed an error.
+                app.logger.warning(f"Image '{filename}' FAILED to copy to Performers. Subsequent steps aborted. Original NOT deleted from {source_bucket}.")
+                if not any('Performers bucket' in m[1] for m in session.get('_flashes', []) if m[0] in ['danger', 'warning']):
+                     flash(f"Image '{filename}' failed to copy to Performers bucket. Original image remains in upload bucket.", "danger")
+
 
         else:
             flash(f"Invalid action: {action} for image from {S3_UPLOAD_BUCKET}.", "danger")
