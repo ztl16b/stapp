@@ -199,6 +199,7 @@
                             <th>Perf Img</th>
                             <th>Clip 1 Verdict</th>
                             <th>Clip 2 Verdict</th>
+                            <th>URL</th>
                             {% if bucket_name == 'bad' %}
                             <th>Bad Reason</th>
                             {% endif %}
@@ -241,6 +242,11 @@
                             </td>
                             <td>{{ file.metadata.get('clip1_v', 'N/A') }}</td>
                             <td>{{ file.metadata.get('clip2_v', 'N/A') }}</td>
+                            <td>
+                                <a href="https://{{ bucket.bucket }}.s3.amazonaws.com/{{ file.key }}" target="_blank">
+                                    https://{{ bucket.bucket }}.s3.amazonaws.com/{{ file.key }}
+                                </a>
+                            </td>
                             {% if bucket_name == 'bad' %}
                             <td>
                                 {% if file.metadata.get('bad_reason') %}
