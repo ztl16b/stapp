@@ -128,6 +128,8 @@
                                 <span class="badge bg-danger">FALSE</span>
                             {% endif %}
                         </p>
+                        <p class="mb-2"><strong>Clip 1 Verdict:</strong> {{ metadata.get('clip1_v', 'N/A') }}</p>
+                        <p class="mb-2"><strong>Clip 2 Verdict:</strong> {{ metadata.get('clip2_v', 'N/A') }}</p>
                         <p class="mb-2"><strong>Source:</strong> {{ source_bucket }}</p>
                         <p class="mb-0"><strong>Key:</strong> <span class="text-muted small">{{ image_key }}</span></p>
                     </div>
