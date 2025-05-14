@@ -1974,6 +1974,26 @@ def generate_images_route():
             last_progress_line = job.meta.get('last_progress_line', '')
             stderr_output = job.meta.get('stderr_output', '')
 
+            problem_performers = []
+            if progress_lines:
+                for line in progress_lines:
+                    if line.startswith("❌ Generation failed for"):
+                        match = re.search(r"❌ Generation failed for (.+?) \(ID: (\d+)\): (.*)", line)
+                        if match:
+                            problem_performers.append({
+                                "name": match.group(1).strip(),
+                                "id": match.group(2).strip(),
+                                "reason": match.group(3).strip()
+                            })
+                    elif line.startswith("❌ Upload failed for"):
+                        match = re.search(r"❌ Upload failed for (.+?) \(ID: (\d+)\): (.*)", line)
+                        if match:
+                            problem_performers.append({
+                                "name": match.group(1).strip(),
+                                "id": match.group(2).strip(),
+                                "reason": f"Upload Error: {match.group(3).strip()}"
+                            })
+
             if job.is_finished:
                 output = job.result if job.result is not None else "(Job finished with no explicit result)"
                 current_task_description = job.meta.get('current_task_description', 'Job Finished') 
@@ -2022,7 +2042,8 @@ def generate_images_route():
         progress_lines=progress_lines,
         last_progress_line=last_progress_line,
         current_task_description=current_task_description,
-        stderr_output=stderr_output
+        stderr_output=stderr_output,
+        problem_performers=problem_performers if job_id else [] # Pass problem_performers
     )
 
 if __name__ == '__main__':

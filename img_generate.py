@@ -126,9 +126,10 @@ def process_performer_id(perf_id: int, df: pd.DataFrame) -> str:
         upload_to_s3(tmp_path, s3_key)
         tmp_path.unlink(missing_ok=True)
     except subprocess.CalledProcessError as err:
-        return f"❌  Generation failed for {performer}: {err.stderr or err}"
+        details = err.stderr or str(err)
+        return f"❌ Generation failed for {performer} (ID: {perf_id}): {details}"
     except Exception as err:
-        return f"❌  Upload failed for {performer}: {err}"
+        return f"❌ Upload failed for {performer} (ID: {perf_id}): {err}"
     else:
         elapsed = time.perf_counter() - start
         return f"✅ [{performer} 🕒 {elapsed:.2f}s] → s3://{S3_BUCKET}/{s3_key}"
