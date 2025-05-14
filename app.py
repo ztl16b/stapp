@@ -1896,23 +1896,14 @@ def performer_action_route(action, image_key):
 @app.route('/generate', methods=['GET', 'POST'])
 @login_required
 def generate_images_route():
-    """Page with a form that starts a background image-generation job
-       and shows job status when revisited.
+    """Page with a form that starts a background image-generation job.
+       Flash messages will indicate queueing status.
     """
     redis_url_env = os.getenv("REDIS_URL")
     app.logger.info(f"Attempting to connect to Redis with URL: {redis_url_env}") 
     if not redis_url_env:
         flash("REDIS_URL is not set. Cannot connect to Redis.", "danger")
-        return render_template(
-            "generate.html",
-            output=None,
-            job_status=None,
-            job_id=request.args.get("job"),
-            progress_lines=None,
-            last_progress_line=None,
-            current_task_description=None,
-            stderr_output=None
-        )
+        return render_template("generate.html") # Render without job details
 
     try:
         url = urlparse(redis_url_env)
@@ -1932,9 +1923,7 @@ def generate_images_route():
             password=url.password,
             db=db_number,
             ssl=True,
-            ssl_cert_reqs=None, # Equivalent to ssl.CERT_NONE, tells client not to verify server cert
-            # Forcing a specific SSL version (less likely needed, but for extreme debugging):
-            # ssl_version=ssl.PROTOCOL_TLS_CLIENT 
+            ssl_cert_reqs=None,
         )
         
         app.logger.info(f"Explicitly configured redis.Redis instance. Attempting ping to {url.hostname}:{url.port} DB {db_number}")
@@ -1944,78 +1933,15 @@ def generate_images_route():
     except Exception as e:
         app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}' (parsed to host={url.hostname if 'url' in locals() else 'N/A'}, port={url.port if 'url' in locals() else 'N/A'}): {e}", exc_info=True)
         flash(f"Failed to connect to Redis: {e}", "danger")
-        return render_template(
-            "generate.html",
-            output=None,
-            job_status=None,
-            job_id=request.args.get("job"),
-            progress_lines=None,
-            last_progress_line=None,
-            current_task_description=None,
-            stderr_output=None
-        )
+        return render_template("generate.html") # Render without job details
         
     q = Queue(connection=redis_conn)
 
-    job_id   = request.args.get("job")
-    output   = None
-    job_stat = None
-    progress_lines = None
-    last_progress_line = None
-    current_task_description = None
-    stderr_output = None
-
-    if job_id:
-        try:
-            job = Job.fetch(job_id, connection=redis_conn)
-            job_stat = job.get_status()
-
-            job_meta_for_template = job.meta.copy() if job.meta else {} # Get a copy, or empty dict if no meta
-
-            current_task_description = job.meta.get('current_task_description', 'Fetching job details...')
-            progress_lines = job.meta.get('progress_lines', [])
-            last_progress_line = job.meta.get('last_progress_line', '')
-            stderr_output = job.meta.get('stderr_output', '')
-
-            problem_performers = []
-            if progress_lines:
-                for line in progress_lines:
-                    if line.startswith("❌ Generation failed for"):
-                        match = re.search(r"❌ Generation failed for (.+?) \(ID: (\d+)\): (.*)", line)
-                        if match:
-                            problem_performers.append({
-                                "name": match.group(1).strip(),
-                                "id": match.group(2).strip(),
-                                "reason": match.group(3).strip()
-                            })
-                    elif line.startswith("❌ Upload failed for"):
-                        match = re.search(r"❌ Upload failed for (.+?) \(ID: (\d+)\): (.*)", line)
-                        if match:
-                            problem_performers.append({
-                                "name": match.group(1).strip(),
-                                "id": match.group(2).strip(),
-                                "reason": f"Upload Error: {match.group(3).strip()}"
-                            })
-
-            if job.is_finished:
-                output = job.result if job.result is not None else "(Job finished with no explicit result)"
-                current_task_description = job.meta.get('current_task_description', 'Job Finished') 
-            elif job.is_failed:
-                output = f"Job failed. Check task description and error output. Traceback: {job.exc_info or 'Not available'}"
-                current_task_description = job.meta.get('current_task_description', 'Job Failed')
-            elif job.is_started:
-                current_task_description = job.meta.get('current_task_description', 'Job is running...')
-            elif job.is_queued:
-                current_task_description = job.meta.get('current_task_description', 'Job is queued...')
-            
-        except Exception as e:
-            flash(f"Error fetching job {job_id}: {e}", "warning")
-            app.logger.error(f"Error fetching job {job_id}: {e}")
-            current_task_description = f"Error fetching job: {e}"
+    # Removed all logic for fetching job details on GET requests
+    # The template no longer displays this information.
 
     if request.method == "POST":
         performer_ids_str = request.form.get("performer_ids", "")
-        # Split by comma OR whitespace; keep only digit strings
         performer_ids = [
             pid for pid in re.split(r"[\s,]+", performer_ids_str)
             if pid.strip().isdigit()
@@ -2023,32 +1949,31 @@ def generate_images_route():
 
         if not performer_ids:
             flash("Please enter at least one numeric performer ID.", "warning")
+            # Render the template again, performer_ids_str will be in request.form
+            return render_template("generate.html") 
         else:
-            # enqueue background task  (10-minute hard timeout per job)
-            job = q.enqueue(
-                generate_performers,
-                [int(pid) for pid in performer_ids],
-                job_timeout=600
-            )
-            flash(
-                f"Image-generation job queued for IDs: {', '.join(performer_ids)}.",
-                "success"
-            )
-            # send user back with ?job=<id> so page can poll
-            return redirect(url_for("generate_images_route", job=job.id))
+            try:
+                job = q.enqueue(
+                    generate_performers,
+                    [int(pid) for pid in performer_ids],
+                    job_timeout=600
+                )
+                flash(
+                    f"Image-generation job '{job.id}' queued for IDs: {', '.join(performer_ids)}.",
+                    "success"
+                )
+                # Redirect to the same page (GET request), which will now just show the form and flash message.
+                # The ?job=job.id query parameter is no longer strictly necessary for display
+                # but can be kept if you plan to use it for other purposes or API lookups later.
+                return redirect(url_for("generate_images_route")) # Removed job.id from redirect query args
+            except Exception as e:
+                app.logger.error(f"Error enqueuing job: {e}", exc_info=True)
+                flash(f"Error starting image generation job: {str(e)}. Please try again.", "danger")
+                # Render the template again, performer_ids_str will be in request.form
+                return render_template("generate.html")
 
-    return render_template(
-        "generate.html",
-        output=output,
-        job_status=job_stat,
-        job_id=job_id,
-        job_meta=job_meta_for_template,
-        progress_lines=progress_lines,
-        last_progress_line=last_progress_line,
-        current_task_description=current_task_description,
-        stderr_output=stderr_output,
-        problem_performers=problem_performers if job_id else [] # Pass problem_performers
-    )
+    # For GET requests, or if POST fails before enqueueing and needs to re-render
+    return render_template("generate.html")
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

@@ -4,9 +4,9 @@
 
 {# ─── Auto-refresh while the job is running ──────────────────────────────── #}
 {% block head_extra %}
-    {% if job_id and job_status != 'finished' and job_status != 'failed' %}
+    {# {% if job_id and job_status != 'finished' and job_status != 'failed' %}
         <meta http-equiv="refresh" content="5">
-    {% endif %}
+    {% endif %} #}
 {% endblock %}
 
 {% block content %}
@@ -37,86 +37,19 @@
                 name="performer_ids"
                 rows="5"
                 placeholder="Paste performer IDs here, e.g., 123, 456, 789 or 123 456 789"
-            >{{ request.form.performer_ids or '' }}</textarea>
+            >{{ request.form.get('performer_ids', '') }}</textarea> {# Default to empty or previous form value #}
         </div>
         <button type="submit" class="btn btn-primary">Generate Images</button>
     </form>
 
+    {# All job status, live output, detailed log, and final script output sections are removed #}
+    {# Example of what was removed:
     {% if job_id %}
-        <div class="mt-4">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h3>Job ID: {{ job_id }}</h3>
-                <span class="badge 
-                    {% if job_status == 'finished' %}bg-success
-                    {% elif job_status == 'failed' %}bg-danger
-                    {% else %}bg-info text-dark
-                    {% endif %} fs-6">
-                    Status: {{ job_status }}
-                </span>
-            </div>
-
-            {% if job_status == 'failed' %}
-                <div class="alert alert-danger mt-2">
-                    <strong>Job Failed.</strong>
-                    {% if job_meta and job_meta.current_task_description %}
-                        <br>Reason: {{ job_meta.current_task_description }}
-                    {% elif job_meta and job_meta.last_progress_line and ('Error' in job_meta.last_progress_line or 'failed' in job_meta.last_progress_line or 'Exception' in job_meta.last_progress_line) %}
-                        <br>Details: {{ job_meta.last_progress_line }}
-                    {% endif %}
-                    {% if job_meta and job_meta.stderr_output %}
-                        <hr><strong>Error Output:</strong>
-                        <pre class="small"><code>{{ job_meta.stderr_output }}</code></pre>
-                    {% endif %}
-                </div>
-            {% elif job_status == 'finished' %}
-                <div class="alert alert-success mt-2">
-                    <strong>Job Finished Successfully.</strong>
-                     {% if job_meta and job_meta.current_task_description %}
-                        <br>{{ job_meta.current_task_description }}
-                     {% endif %}
-                </div>
-            {% elif job_status and job_status != 'finished' and job_status != 'failed' %} {# queued, started, deferred etc. #}
-                 <div class="alert alert-info mt-2">
-                    Job is <strong>{{ job_status }}</strong>.
-                    {% if job_meta and job_meta.current_task_description %}
-                        <br>{{ job_meta.current_task_description }}
-                    {% elif job_meta and job_meta.last_progress_line %}
-                        <br>Latest update: {{ job_meta.last_progress_line }}
-                    {% endif %}
-                    <br>This page refreshes every 5 seconds if the job is active.
-                 </div>
-            {% endif %}
-
-            {# Combined Log Output #}
-            <h4 class="mt-3">Live Output / Detailed Log:</h4>
-            {% if job_meta and (job_meta.progress_lines or job_meta.last_progress_line or (job_status == 'failed' and not job_meta.stderr_output and not job_meta.progress_lines and not job_meta.last_progress_line) ) %}
-                <pre class="bg-light p-3 rounded small" style="max-height: 600px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;"><code>{% if job_meta.progress_lines %}
-{% for line in job_meta.progress_lines -%}
-{{ line }}
-{% endfor %}
-{% elif job_meta.last_progress_line %}
-{{ job_meta.last_progress_line }}
-{% elif job_status == 'failed' and not job_meta.stderr_output and not job_meta.progress_lines and not job_meta.last_progress_line %}
-No detailed error log available. Check worker console if issues persist.
-{% endif %}</code></pre>
-            {% else %}
-                 {% if job_status == 'queued' or job_status == 'started' or job_status == 'deferred' %}
-                    <p class="mt-2">Waiting for log output... Job is <strong>{{ job_status }}</strong>.</p>
-                 {% elif job_status == 'finished' and not (job_meta and job_meta.progress_lines) %}
-                     <p class="mt-2">Job finished. No detailed log output was recorded.</p>
-                 {% elif job_status != 'failed' %} {# Default message if no logs and not failed #}
-                    <p class="mt-2">No log output available for job status '{{ job_status }}'.</p>
-                 {% endif %}
-            {% endif %}
-        </div>
+        ... job status and log display ...
     {% endif %}
-
-    {# ─── Final script output (legacy, might be different from progress_lines) #}
     {% if output %}
-        <div class="mt-4">
-            <h2>Final Script&nbsp;Output</h2>
-            <pre class="bg-light p-3 rounded small"><code>{{ output }}</code></pre>
-        </div>
+        ... final script output ...
     {% endif %}
+    #}
 </div>
 {% endblock %}
