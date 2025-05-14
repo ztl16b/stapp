@@ -46,12 +46,12 @@ def load_performer_meta() -> pd.DataFrame:
 
 # ─── API-key pool & quotas (unchanged) ───────────────────────────────────────
 API_CONFIGS = {
-    "ztl": {"key": os.getenv("OPENAI_API_KEY_ZTL"), "rate_limit": 100},
+    "ztl": {"key": os.getenv("OPENAI_API_KEY"), "rate_limit": 100},
     # add more keys here …
 }
 API_CONFIGS = {k: v for k, v in API_CONFIGS.items() if v["key"]}
 if not API_CONFIGS:
-    sys.exit("ERROR: No OPENAI_API_KEY_* variables found.")
+    sys.exit("ERROR: No OPENAI_API_KEY variables found.")
 
 WINDOW_SECONDS   = 60
 TOTAL_RATE_LIMIT = sum(cfg["rate_limit"] for cfg in API_CONFIGS.values())
