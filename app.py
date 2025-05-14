@@ -26,9 +26,9 @@ from zoneinfo import ZoneInfo
 import csv
 import subprocess
 import shlex
-from redis import Redis
-from rq import Queue
-from rq.job import Job
+from redis import Redis #type:ignore
+from rq import Queue #type:ignore
+from rq.job import Job #type:ignore
 from tasks import generate_performers
 
 load_dotenv()
@@ -1897,7 +1897,32 @@ def generate_images_route():
     """Page with a form that starts a background image-generation job
        and shows job status when revisited.
     """
-    redis_conn = Redis.from_url(os.getenv("REDIS_URL"))
+    redis_url_env = os.getenv("REDIS_URL")
+    if not redis_url_env:
+        flash("REDIS_URL is not set. Cannot connect to Redis.", "danger")
+        return render_template(
+            "generate.html",
+            output=None,
+            job_status=None,
+            job_id=request.args.get("job")
+        )
+
+    try:
+        # Add ssl_cert_reqs=None if the URL is for a secure Redis connection (rediss://)
+        # For redis-py 4.2+, passing ssl_cert_reqs=None is safe and will be ignored for non-SSL connections.
+        redis_conn = Redis.from_url(redis_url_env, ssl_cert_reqs=None)
+        # Test connection (optional, but good for immediate feedback)
+        redis_conn.ping()
+    except Exception as e:
+        app.logger.error(f"Failed to connect to Redis: {e}")
+        flash(f"Failed to connect to Redis: {e}", "danger")
+        return render_template(
+            "generate.html",
+            output=None,
+            job_status=None,
+            job_id=request.args.get("job")
+        )
+        
     q = Queue(connection=redis_conn)
 
     # ── 1. Poll an existing job, if ?job=<id> is in the query string ─────────
