@@ -98,6 +98,32 @@
             <pre class="bg-light p-3 rounded small"><code>{{ job_meta.last_progress_line }}</code></pre>
         </div>
         {% endif %}
+
+        {# ─── S3 Upload Progress (New Section) ─────────────────────── #}
+        {% if job_meta and job_meta.progress_lines %}
+            {# Pass 1: Check if any relevant lines exist to avoid showing the header if none are found #}
+            {% set has_s3_specific_updates = false %}
+            {% for line in job_meta.progress_lines %}
+                {% set line_lower = line|lower %}
+                {% if ("reference image" in line_lower and "s3" in line_lower) or \
+                      ("final image" in line_lower and "temp bucket" in line_lower) %}
+                    {% set has_s3_specific_updates = true %}
+                    {% break %}
+                {% endif %}
+            {% endfor %}
+
+            {% if has_s3_specific_updates %}
+            <div class="mt-3">
+                <h4>S3 Upload Progress:</h4>
+                <pre class="bg-light p-3 rounded small" style="max-height: 200px; overflow-y: auto;"><code>{% for line in job_meta.progress_lines -%}
+{% set line_lower = line|lower %}{% if ("reference image" in line_lower and "s3" in line_lower) or \
+      ("final image" in line_lower and "temp bucket" in line_lower) -%}
+{{ line }}
+{% endif -%}
+{% endfor %}</code></pre>
+            </div>
+            {% endif %}
+        {% endif %} {# End of if job_meta and job_meta.progress_lines for S3 progress #}
     {% endif %}
 
     {# ─── Final script output (legacy, might be different from progress_lines) #}
