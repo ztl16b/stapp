@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""
-Starts an RQ worker that consumes the default queue.
-
-Procfile entry:
-    worker: python worker.py
-"""
-
 import os
-from redis import Redis
-from rq import Worker, Queue, Connection
+from redis import Redis #type:ignore
+from rq import Worker, Queue, Connection #type:ignore
 
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_url = os.getenv("REDIS_URL")
 listen_queues = ["default"]           # change if you use a custom queue name
 
 with Connection(Redis.from_url(redis_url)):
