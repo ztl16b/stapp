@@ -2,7 +2,6 @@
 import os
 from redis import Redis #type:ignore
 from rq import Worker, Queue #type:ignore
-from rq.connections import Connection #type:ignore
 import sys # Add sys import for sys.exit
 
 # Get REDIS_URL, default to local Redis for development if not set
@@ -25,7 +24,11 @@ except Exception as e:
     print(f"ERROR: Worker failed to connect to Redis at {worker_redis_url}: {e}")
     sys.exit(1)
 
-with Connection(redis_connection):
-    worker = Worker(map(Queue, listen_queues))
-    print(f"RQ worker listening on {listen_queues} (redis: {worker_redis_url})")
-    worker.work()
+# Create Queue instances with the explicit connection
+queues_to_listen = [Queue(name, connection=redis_connection) for name in listen_queues]
+
+# Create Worker with the explicit list of Queue objects and the connection
+worker = Worker(queues_to_listen, connection=redis_connection)
+
+print(f"RQ worker listening on {listen_queues} (redis: {worker_redis_url})")
+worker.work()
