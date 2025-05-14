@@ -36,9 +36,8 @@ def generate_performers(ids: List[int]) -> None:
     print(f"→ Executing: {logged_cmd}", flush=True)
 
     if job:
-        job.meta['current_task_description'] = f"Starting generation for IDs: {', '.join(map(str, ids))}"
         job.meta['progress_lines'] = [] # Initialize a list for progress lines
-        job.meta['last_progress_line'] = "Job starting..."
+        job.meta['last_progress_line'] = f"Job initiated for IDs: {', '.join(map(str, ids))}. Waiting for first log line..."
         job.meta['stderr_output'] = "" # Initialize stderr output
         job.save_meta()
 
