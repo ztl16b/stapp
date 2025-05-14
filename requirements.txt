@@ -13,3 +13,5 @@ pandas
 openai
 Pillow
 google-generativeai
+redis>=5.0
+rq>=1.16

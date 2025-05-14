@@ -1,11 +1,20 @@
+{# templates/generate.html #}
 {% extends "base.html" %}
 
 {% block title %}Generate Images{% endblock %}
+
+{# ─── Auto-refresh while the job is running ──────────────────────────────── #}
+{% block head_extra %}
+    {% if job_id and job_status != 'finished' and job_status != 'failed' %}
+        <meta http-equiv="refresh" content="5">
+    {% endif %}
+{% endblock %}
 
 {% block content %}
 <div class="container mt-4">
     <h1>Generate Performer Images</h1>
 
+    {# ─── Flash messages ──────────────────────────────────────────────────── #}
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             {% for category, message in messages %}
@@ -17,19 +26,52 @@
         {% endif %}
     {% endwith %}
 
+    {# ─── Input form ──────────────────────────────────────────────────────── #}
     <form method="POST" action="{{ url_for('generate_images_route') }}">
         <div class="mb-3">
-            <label for="performer_ids" class="form-label">Performer IDs (comma or space-separated):</label>
-            <textarea class="form-control" id="performer_ids" name="performer_ids" rows="5" placeholder="Paste performer IDs here, e.g., 123, 456, 789 or 123 456 789">{{ request.form.performer_ids }}</textarea>
+            <label for="performer_ids" class="form-label">
+                Performer&nbsp;IDs&nbsp;(comma&nbsp;or&nbsp;space-separated):
+            </label>
+            <textarea
+                class="form-control"
+                id="performer_ids"
+                name="performer_ids"
+                rows="5"
+                placeholder="Paste performer IDs here, e.g., 123, 456, 789 or 123 456 789"
+            >{{ request.form.performer_ids or '' }}</textarea>
         </div>
         <button type="submit" class="btn btn-primary">Generate Images</button>
     </form>
 
+    {# ─── Live job status ─────────────────────────────────────────────────── #}
+    {% if job_id %}
+        <div class="mt-4">
+            <h2>Job&nbsp;Status</h2>
+
+            {% if job_status == 'finished' %}
+                <div class="alert alert-success">
+                    Job&nbsp;{{ job_id }} finished&nbsp;✓
+                </div>
+            {% elif job_status == 'failed' %}
+                <div class="alert alert-danger">
+                    Job&nbsp;{{ job_id }} failed&nbsp;✕ – check worker logs.
+                </div>
+            {% else %}
+                <div class="alert alert-info">
+                    Job&nbsp;{{ job_id }} is <strong>{{ job_status }}</strong>&hellip;
+                    <br>
+                    This page refreshes every&nbsp;5&nbsp;seconds.
+                </div>
+            {% endif %}
+        </div>
+    {% endif %}
+
+    {# ─── Final script output (only after finish) ─────────────────────────── #}
     {% if output %}
-    <div class="mt-4">
-        <h2>Script Output:</h2>
-        <pre class="bg-light p-3 rounded"><code>{{ output }}</code></pre>
-    </div>
+        <div class="mt-4">
+            <h2>Script&nbsp;Output</h2>
+            <pre class="bg-light p-3 rounded small"><code>{{ output }}</code></pre>
+        </div>
     {% endif %}
 </div>
-{% endblock %} 
+{% endblock %}
