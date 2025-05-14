@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 print("DEBUG: img.py script started executing!", flush=True)
 import sys
 import os
@@ -10,8 +12,6 @@ print(f"DEBUG: img.py S3_REF_BUCKET_PREFIX from env: {os.getenv('S3_REF_BUCKET_P
 print(f"DEBUG: img.py GOOGLE_CSE_KEY from env: {os.getenv('GOOGLE_CSE_KEY')}", flush=True)
 print(f"DEBUG: img.py GOOGLE_CSE_CX from env: {os.getenv('GOOGLE_CSE_CX')}", flush=True)
 print(f"DEBUG: img.py OPENAI_API_KEY from env: {os.getenv('OPENAI_API_KEY')}", flush=True)
-
-from __future__ import annotations
 
 import argparse, base64, concurrent.futures as cf, io, json, os, sys, time, urllib.parse # sys already imported but fine
 from pathlib import Path
