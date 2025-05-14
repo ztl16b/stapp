@@ -1904,14 +1904,15 @@ def generate_images_route():
             "generate.html",
             output=None,
             job_status=None,
-            job_id=request.args.get("job")
+            job_id=request.args.get("job"),
+            progress_lines=None,
+            last_progress_line=None,
+            current_task_description=None,
+            stderr_output=None
         )
 
     try:
-        # Add ssl_cert_reqs=None if the URL is for a secure Redis connection (rediss://)
-        # For redis-py 4.2+, passing ssl_cert_reqs=None is safe and will be ignored for non-SSL connections.
         redis_conn = Redis.from_url(redis_url_env, ssl_cert_reqs=None)
-        # Test connection (optional, but good for immediate feedback)
         redis_conn.ping()
     except Exception as e:
         app.logger.error(f"Failed to connect to Redis: {e}")
@@ -1920,27 +1921,48 @@ def generate_images_route():
             "generate.html",
             output=None,
             job_status=None,
-            job_id=request.args.get("job")
+            job_id=request.args.get("job"),
+            progress_lines=None,
+            last_progress_line=None,
+            current_task_description=None,
+            stderr_output=None
         )
         
     q = Queue(connection=redis_conn)
 
-    # ── 1. Poll an existing job, if ?job=<id> is in the query string ─────────
     job_id   = request.args.get("job")
     output   = None
     job_stat = None
+    progress_lines = None
+    last_progress_line = None
+    current_task_description = None
+    stderr_output = None
+
     if job_id:
         try:
             job = Job.fetch(job_id, connection=redis_conn)
-            job_stat = job.get_status()          # queued | started | finished | failed
-            if job.is_finished:
-                output = job.result or "(no output)"
-            elif job.is_failed:
-                output = "The job failed. Check worker logs."
-        except Exception:
-            flash("Unknown job ID.", "warning")
+            job_stat = job.get_status()
+            current_task_description = job.meta.get('current_task_description', 'Fetching job details...')
+            progress_lines = job.meta.get('progress_lines', [])
+            last_progress_line = job.meta.get('last_progress_line', '')
+            stderr_output = job.meta.get('stderr_output', '')
 
-    # ── 2. Handle form submission ────────────────────────────────────────────
+            if job.is_finished:
+                output = job.result if job.result is not None else "(Job finished with no explicit result)"
+                current_task_description = job.meta.get('current_task_description', 'Job Finished') 
+            elif job.is_failed:
+                output = f"Job failed. Check task description and error output. Traceback: {job.exc_info or 'Not available'}"
+                current_task_description = job.meta.get('current_task_description', 'Job Failed')
+            elif job.is_started:
+                current_task_description = job.meta.get('current_task_description', 'Job is running...')
+            elif job.is_queued:
+                current_task_description = job.meta.get('current_task_description', 'Job is queued...')
+            
+        except Exception as e:
+            flash(f"Error fetching job {job_id}: {e}", "warning")
+            app.logger.error(f"Error fetching job {job_id}: {e}")
+            current_task_description = f"Error fetching job: {e}"
+
     if request.method == "POST":
         performer_ids_str = request.form.get("performer_ids", "")
         # Split by comma OR whitespace; keep only digit strings
@@ -1967,9 +1989,13 @@ def generate_images_route():
 
     return render_template(
         "generate.html",
-        output=output,        # stdout from img_generate.py when finished
-        job_status=job_stat,  # for template to show spinner / progress
-        job_id=job_id
+        output=output,
+        job_status=job_stat,
+        job_id=job_id,
+        progress_lines=progress_lines,
+        last_progress_line=last_progress_line,
+        current_task_description=current_task_description,
+        stderr_output=stderr_output
     )
 
 if __name__ == '__main__':
