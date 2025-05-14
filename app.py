@@ -30,6 +30,7 @@ from redis import Redis #type:ignore
 from rq import Queue #type:ignore
 from rq.job import Job #type:ignore
 from tasks import generate_performers
+import ssl # Add ssl import
 
 load_dotenv()
 
@@ -1898,7 +1899,7 @@ def generate_images_route():
        and shows job status when revisited.
     """
     redis_url_env = os.getenv("REDIS_URL")
-    app.logger.info(f"Attempting to connect to Redis with URL: {redis_url_env}") # Log the URL
+    app.logger.info(f"Attempting to connect to Redis with URL: {redis_url_env}") 
     if not redis_url_env:
         flash("REDIS_URL is not set. Cannot connect to Redis.", "danger")
         return render_template(
@@ -1913,10 +1914,30 @@ def generate_images_route():
         )
 
     try:
-        redis_conn = Redis.from_url(redis_url_env, ssl_cert_reqs=None)
+        # Create a more explicit SSL context for the web dyno
+        # This mirrors what ssl_cert_reqs=None should do but is more direct
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        # redis-py >= 4.2.0 allows passing an SSLContext directly
+        # For Redis.from_url, we can't pass the context directly in one go.
+        # We need to parse the URL and then pass components.
+        # However, a simpler approach might be to see if there's a global SSL issue.
+        # Let's first ensure this part of the code is reached cleanly.
+        
+        # The existing method should be fine, but the error is baffling.
+        # The workers use the same REDIS_URL and connect.
+        # For now, keeping the Redis.from_url as is, as the issue is likely environmental
+        # to the web dyno's SSL handling rather than redis-py's options.
+        # The SSL error happens *during* the SSL handshake (_ssl.c:1028).
+
+        redis_conn = Redis.from_url(redis_url_env, ssl_cert_reqs=None) # Keeping this as is for now
+        app.logger.info("Attempting redis_conn.ping()")
         redis_conn.ping()
+        app.logger.info("Redis ping successful in /generate")
     except Exception as e:
-        app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}': {e}") # Enhanced error log
+        app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}': {e}", exc_info=True) # Add exc_info=True for full traceback
         flash(f"Failed to connect to Redis: {e}", "danger")
         return render_template(
             "generate.html",
