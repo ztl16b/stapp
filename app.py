@@ -395,88 +395,109 @@ def process_image(file_data, filename, content_type, uploader_initials=None):
         }
 
 def get_random_image_key(bucket_name, filter_by_review=None):
-    """Gets a random object key from the specified bucket, optionally filtered by review status."""
+    """Gets a random object key from the specified bucket, optionally filtered by review status.
+       Limits initial scan to a defined number of items before further processing.
+    """
+    MAX_ITEMS_TO_CONSIDER = 200
+    collected_objects = []
+    prefix = None
+
     try:
         # Different prefix depending on which bucket we're using
-        prefix = None
         if bucket_name == S3_UPLOAD_BUCKET:
             prefix = 'temp_performer_at_venue_images/'
         elif bucket_name == S3_TEMP_BUCKET:
             prefix = 'tmp_upload/'
         elif bucket_name == S3_GOOD_BUCKET:
             prefix = 'images/performer-at-venue/detail/'
-            
-        # Get list of objects with the appropriate prefix
-        response = s3_client.list_objects_v2(
+
+        paginator = s3_client.get_paginator('list_objects_v2')
+        page_iterator = paginator.paginate(
             Bucket=bucket_name,
             Prefix=prefix if prefix else ''
         )
+
+        for page in page_iterator:
+            if 'Contents' in page:
+                for obj in page['Contents']:
+                    # Skip folder-like objects
+                    if not obj['Key'].endswith('/'):
+                        collected_objects.append(obj)
+                    if len(collected_objects) >= MAX_ITEMS_TO_CONSIDER:
+                        break
+            if len(collected_objects) >= MAX_ITEMS_TO_CONSIDER:
+                break
+        
+        app.logger.info(f"Collected {len(collected_objects)} items from {bucket_name} (prefix: {prefix}) for random selection pool.")
+
+        if not collected_objects:
+            app.logger.info("No objects collected after initial scan.")
+            return None
             
-        if 'Contents' in response and response['Contents']:
-            all_objects = response['Contents']
-            
-            # Filter by file type and structure based on bucket
-            image_objects = []
-            
-            # For Good bucket, filter by review status if requested
-            if bucket_name == S3_GOOD_BUCKET and filter_by_review:
-                for obj in all_objects:
-                    # Get metadata to check review status
-                    try:
-                        head_response = s3_client.head_object(
-                            Bucket=bucket_name,
-                            Key=obj['Key']
-                        )
-                        metadata = head_response.get('Metadata', {})
-                        review_status = metadata.get('review_status', 'FALSE')
-                        
-                        # If filtering for unreviewed images, only include those with FALSE status
-                        if filter_by_review == 'unreviewed' and review_status != 'TRUE':
-                            image_objects.append(obj)
-                        # If filtering for reviewed images, only include those with TRUE status
-                        elif filter_by_review == 'reviewed' and review_status == 'TRUE':
-                            image_objects.append(obj)
-                    except Exception as e:
-                        app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
-                        continue
-            # For temp bucket, accept all image file types
-            elif bucket_name == S3_TEMP_BUCKET:
-                image_objects = [
-                    obj for obj in all_objects
-                    if obj['Key'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
-                ]
-            else:
-                # For upload bucket, keep only webp files and make sure they match the expected format
-                # Format should be numeric_id.numeric_id.webp
-                image_objects = []
-                for obj in all_objects:
-                    filename = obj['Key'].split('/')[-1]
-                    # Skip files that don't end with .webp
-                    if not filename.lower().endswith('.webp'):
-                        continue
-                        
-                    # Skip files that are marked as duplicates (ending with _dupe.webp)
-                    if "_dupe." in filename:
-                        continue
-                        
-                    # Skip files that don't match numeric_id.numeric_id.webp format
-                    base_name = os.path.splitext(filename)[0]  # Remove .webp
-                    parts = base_name.split('.')
+        # The rest of the function now uses 'collected_objects' instead of 'all_objects'
+        # from a single list_objects_v2 call.
+        all_objects_to_filter = collected_objects
+        image_objects = []
+        
+        # For Good bucket, filter by review status if requested
+        if bucket_name == S3_GOOD_BUCKET and filter_by_review:
+            for obj in all_objects_to_filter:
+                # Get metadata to check review status
+                try:
+                    head_response = s3_client.head_object(
+                        Bucket=bucket_name,
+                        Key=obj['Key']
+                    )
+                    metadata = head_response.get('Metadata', {})
+                    review_status = metadata.get('review_status', 'FALSE')
                     
-                    # Must have one dot separating two parts
-                    if len(parts) != 2:
-                        continue
-                        
-                    # Both parts must be numeric
-                    try:
-                        int(parts[0])
-                        int(parts[1])
+                    # If filtering for unreviewed images, only include those with FALSE status
+                    if filter_by_review == 'unreviewed' and review_status != 'TRUE':
                         image_objects.append(obj)
-                    except ValueError:
-                        continue
+                    # If filtering for reviewed images, only include those with TRUE status
+                    elif filter_by_review == 'reviewed' and review_status == 'TRUE':
+                        image_objects.append(obj)
+                except Exception as e:
+                    app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
+                    continue
+        # For temp bucket, accept all image file types
+        elif bucket_name == S3_TEMP_BUCKET:
+            image_objects = [
+                obj for obj in all_objects_to_filter
+                if obj['Key'].lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
+            ]
+        else: # This covers S3_UPLOAD_BUCKET as per original logic
+            # For upload bucket, keep only webp files and make sure they match the expected format
+            # Format should be numeric_id.numeric_id.webp
+            image_objects = []
+            for obj in all_objects_to_filter:
+                filename = obj['Key'].split('/')[-1]
+                # Skip files that don't end with .webp
+                if not filename.lower().endswith('.webp'):
+                    continue
+                    
+                # Skip files that are marked as duplicates (ending with _dupe.webp)
+                if "_dupe." in filename:
+                    continue
+                    
+                # Skip files that don't match numeric_id.numeric_id.webp format
+                base_name = os.path.splitext(filename)[0]  # Remove .webp
+                parts = base_name.split('.')
                 
-            if image_objects:
-                return random.choice(image_objects)['Key']
+                # Must have one dot separating two parts
+                if len(parts) != 2:
+                    continue
+                    
+                # Both parts must be numeric
+                try:
+                    int(parts[0])
+                    int(parts[1])
+                    image_objects.append(obj)
+                except ValueError:
+                    continue
+            
+        if image_objects:
+            return random.choice(image_objects)['Key']
     except ClientError as e:
         app.logger.error(f"Error listing objects in bucket {bucket_name}: {e}")
         flash(f"Error accessing bucket {bucket_name}: {e.response['Error']['Message']}", "danger")
@@ -1572,58 +1593,72 @@ def toggle_perfimg_status_route(bucket_name, object_key):
     return redirect(url_for('browse_bucket', bucket_name=bucket_name))
 
 def get_performer_image_key(filter_by_review=None):
-    """Gets a random object key from the performers bucket, specifically from the performers/detail folder."""
+    """Gets a random object key from the performers bucket, specifically from the performers/detail folder.
+       Limits initial scan to a defined number of items before further processing.
+    """
+    MAX_ITEMS_TO_CONSIDER = 200
+    collected_objects = []
+    prefix = 'images/performers/detail/'
+
     try:
-        # Define the specific prefix for performer images
-        prefix = 'images/performers/detail/'
-        
-        # Get list of objects with the performers prefix
-        response = s3_client.list_objects_v2(
+        paginator = s3_client.get_paginator('list_objects_v2')
+        page_iterator = paginator.paginate(
             Bucket=S3_PERFORMER_BUCKET,
             Prefix=prefix
         )
-            
-        if 'Contents' in response and response['Contents']:
-            all_objects = response['Contents']
-            
-            # Filter to include only image files
-            image_objects = []
-            
-            for obj in all_objects:
-                # Skip the prefix itself or any folder objects
-                if obj['Key'] == prefix or obj['Key'].endswith('/'):
-                    continue
-                
-                # Only include image files
-                file_ext = obj['Key'].lower().split('.')[-1] if '.' in obj['Key'] else ''
-                if file_ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
-                    continue
-                
-                # If filtering by review status
-                if filter_by_review:
-                    try:
-                        head_response = s3_client.head_object(
-                            Bucket=S3_PERFORMER_BUCKET,
-                            Key=obj['Key']
-                        )
-                        metadata = head_response.get('Metadata', {})
-                        review_status = metadata.get('review_status', 'FALSE')
-                        
-                        # If filtering for unreviewed images, only include those with FALSE status
-                        if filter_by_review == 'unreviewed' and review_status != 'TRUE':
-                            image_objects.append(obj)
-                        # If filtering for reviewed images, only include those with TRUE status
-                        elif filter_by_review == 'reviewed' and review_status == 'TRUE':
-                            image_objects.append(obj)
-                    except Exception as e:
-                        app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
+
+        for page in page_iterator:
+            if 'Contents' in page:
+                for obj in page['Contents']:
+                    # Skip the prefix itself or any folder objects
+                    if obj['Key'] == prefix or obj['Key'].endswith('/'):
                         continue
-                else:
-                    # If not filtering by review status, include all image files
-                    image_objects.append(obj)
+                    collected_objects.append(obj)
+                    if len(collected_objects) >= MAX_ITEMS_TO_CONSIDER:
+                        break
+            if len(collected_objects) >= MAX_ITEMS_TO_CONSIDER:
+                break
+        
+        app.logger.info(f"Collected {len(collected_objects)} items from {S3_PERFORMER_BUCKET} (prefix: {prefix}) for performer image selection pool.")
+
+        if not collected_objects:
+            app.logger.info("No objects collected from performer bucket after initial scan.")
+            return None
+
+        all_objects_to_filter = collected_objects
+        image_objects = []
+        
+        for obj in all_objects_to_filter:
+            # Only include image files
+            file_ext = obj['Key'].lower().split('.')[-1] if '.' in obj['Key'] else ''
+            if file_ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
+                continue
             
-            if image_objects:
-                return random.choice(image_objects)['Key']
+            # If filtering by review status
+            if filter_by_review:
+                try:
+                    head_response = s3_client.head_object(
+                        Bucket=S3_PERFORMER_BUCKET,
+                        Key=obj['Key']
+                    )
+                    metadata = head_response.get('Metadata', {})
+                    review_status = metadata.get('review_status', 'FALSE')
+                    
+                    # If filtering for unreviewed images, only include those with FALSE status
+                    if filter_by_review == 'unreviewed' and review_status != 'TRUE':
+                        image_objects.append(obj)
+                    # If filtering for reviewed images, only include those with TRUE status
+                    elif filter_by_review == 'reviewed' and review_status == 'TRUE':
+                        image_objects.append(obj)
+                except Exception as e:
+                    app.logger.error(f"Error checking metadata for {obj['Key']}: {e}")
+                    continue
+            else:
+                # If not filtering by review status, include all image files
+                image_objects.append(obj)
+        
+        if image_objects:
+            return random.choice(image_objects)['Key']
     except ClientError as e:
         app.logger.error(f"Error listing objects in Performers bucket: {e}")
         flash(f"Error accessing Performers bucket: {e.response['Error']['Message']}", "danger")
