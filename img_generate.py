@@ -141,14 +141,58 @@ def main(ids: List[int]) -> None:
         sys.exit(1)
 
     df = load_performer_meta()
+    problematic_ids = [] # List to store IDs that cause issues
 
     max_workers = min(len(ids), TOTAL_RATE_LIMIT)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(process_performer_id, pid, df): pid for pid in ids}
         for fut in as_completed(futures):
-            print(fut.result())
+            original_pid = futures[fut] # Get the original pid associated with this future
+            try:
+                result_message = fut.result()
+                print(result_message) # Keep existing print behavior
 
-    print("Completed")
+                # Check for failure or warning messages
+                if (result_message.startswith("❌ Generation failed for") or \
+                    result_message.startswith("❌ Upload failed for") or \
+                    result_message.startswith("⚠️")):
+                    problematic_ids.append(str(original_pid))
+            
+            except Exception as e:
+                # This catches exceptions from the process_performer_id task itself,
+                # not just errors reported in its return string.
+                print(f"ERROR: Exception while processing performer ID {original_pid}: {e}")
+                problematic_ids.append(str(original_pid)) # Log ID if task itself crashes
+
+    print("\nProcessing completed for all submitted IDs.")
+
+    if problematic_ids:
+        # Remove duplicates and sort for consistency
+        unique_problematic_ids = sorted(list(set(problematic_ids)))
+        
+        failure_file_content = "\n".join(unique_problematic_ids)
+        s3_key_for_failures = "problem_performers.txt" # You can change the key/path if needed
+
+        print(f"\nEncountered issues with {len(unique_problematic_ids)} performer ID(s). Attempting to upload list to S3...")
+        
+        try:
+            # RESOURCES_BUCKET is checked for existence at the start of the script.
+            # The global s3 client is used.
+            s3.put_object(
+                Bucket=RESOURCES_BUCKET, 
+                Key=s3_key_for_failures, 
+                Body=failure_file_content,
+                ContentType='text/plain',
+                # Consider adding ACL if needed, e.g., ACL='public-read' or other
+            )
+            print(f"Successfully uploaded list of problematic performer IDs to: s3://{RESOURCES_BUCKET}/{s3_key_for_failures}")
+        except Exception as e:
+            print(f"ERROR: Failed to upload problematic performer IDs list to S3. Details: {e}")
+            print("Problematic IDs were:")
+            for pid_val in unique_problematic_ids:
+                print(f"- {pid_val}")
+    else:
+        print("\nNo issues encountered with any performer IDs during this run.")
 
 if __name__ == "__main__":
     try:
