@@ -7,3 +7,7 @@
 
 *.txt
 commands.txt
+
+
+generate_aws.py
+images.py
