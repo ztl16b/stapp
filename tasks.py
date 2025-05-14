@@ -61,6 +61,9 @@ def generate_performers(ids: List[int]) -> None:
                 continue
             print(line, flush=True) # Log to worker console
             if job:
+                # ---- START DEBUG LOGGING ----
+                # print(f"TASK_DEBUG: Checking line: '{line}'", flush=True)
+                # ---- END DEBUG LOGGING ----
                 current_progress_lines = job.meta.get('progress_lines', [])
                 current_progress_lines.append(line)
                 
@@ -69,16 +72,35 @@ def generate_performers(ids: List[int]) -> None:
                 
                 # Check for specific generation failure message
                 if line.startswith("❌ Generation failed for"):
+                    # ---- START DEBUG LOGGING ----
+                    print(f"TASK_DEBUG: Line starts with failure emoji: '{line}'", flush=True)
+                    # ---- END DEBUG LOGGING ----
                     match = re.search(r"❌ Generation failed for (.+?) \\(ID: (\\d+)\\): (.*)", line)
                     if match:
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG: Regex MATCHED! Groups: {match.groups()}", flush=True)
+                        # ---- END DEBUG LOGGING ----
                         failure_info = {
                             "name": match.group(1).strip(),
                             "id": match.group(2).strip(),
                             "reason": match.group(3).strip()
                         }
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG: Parsed failure_info: {failure_info}", flush=True)
+                        # ---- END DEBUG LOGGING ----
                         current_failures = job.meta.get('failed_generations', [])
+                        # ---- START DEBUG LOGGING ----
+                        # print(f"TASK_DEBUG: current_failures (before append): {current_failures}", flush=True)
+                        # ---- END DEBUG LOGGING ----
                         current_failures.append(failure_info)
                         job.meta['failed_generations'] = current_failures
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG: job.meta['failed_generations'] (after append): {job.meta['failed_generations']}", flush=True)
+                        # ---- END DEBUG LOGGING ----
+                    else:
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG: Line started with emoji BUT regex FAILED to match: '{line}'", flush=True)
+                        # ---- END DEBUG LOGGING ----
                 
                 job.save_meta()
     
@@ -98,16 +120,32 @@ def generate_performers(ids: List[int]) -> None:
 
                 # Check for specific generation failure message in remaining output
                 if line.startswith("❌ Generation failed for"):
+                    # ---- START DEBUG LOGGING ----
+                    print(f"TASK_DEBUG (REMAINING_OUTPUT): Line starts with failure emoji: '{line}'", flush=True)
+                    # ---- END DEBUG LOGGING ----
                     match = re.search(r"❌ Generation failed for (.+?) \\(ID: (\\d+)\\): (.*)", line)
                     if match:
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG (REMAINING_OUTPUT): Regex MATCHED! Groups: {match.groups()}", flush=True)
+                        # ---- END DEBUG LOGGING ----
                         failure_info = {
                             "name": match.group(1).strip(),
                             "id": match.group(2).strip(),
                             "reason": match.group(3).strip()
                         }
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG (REMAINING_OUTPUT): Parsed failure_info: {failure_info}", flush=True)
+                        # ---- END DEBUG LOGGING ----
                         current_failures = job.meta.get('failed_generations', [])
                         current_failures.append(failure_info)
                         job.meta['failed_generations'] = current_failures
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG (REMAINING_OUTPUT): job.meta['failed_generations'] (after append): {job.meta['failed_generations']}", flush=True)
+                        # ---- END DEBUG LOGGING ----
+                    else:
+                        # ---- START DEBUG LOGGING ----
+                        print(f"TASK_DEBUG (REMAINING_OUTPUT): Line started with emoji BUT regex FAILED to match: '{line}'", flush=True)
+                        # ---- END DEBUG LOGGING ----
                 
                 job.save_meta()
 

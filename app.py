@@ -32,7 +32,7 @@ from rq.job import Job #type:ignore
 from tasks import generate_performers
 import ssl # Add ssl import
 from urllib.parse import urlparse # Add urlparse import
-from rq.exceptions import NoSuchJobError # Import NoSuchJobError
+from rq.exceptions import NoSuchJobError # Import NoSuchJobError #type:ignore
 
 load_dotenv()
 
