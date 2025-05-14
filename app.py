@@ -1969,6 +1969,9 @@ def generate_images_route():
         try:
             job = Job.fetch(job_id, connection=redis_conn)
             job_stat = job.get_status()
+
+            job_meta_for_template = job.meta.copy() if job.meta else {} # Get a copy, or empty dict if no meta
+
             current_task_description = job.meta.get('current_task_description', 'Fetching job details...')
             progress_lines = job.meta.get('progress_lines', [])
             last_progress_line = job.meta.get('last_progress_line', '')
@@ -2039,6 +2042,7 @@ def generate_images_route():
         output=output,
         job_status=job_stat,
         job_id=job_id,
+        job_meta=job_meta_for_template,
         progress_lines=progress_lines,
         last_progress_line=last_progress_line,
         current_task_description=current_task_description,
