@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import os
 from redis import Redis #type:ignore
-from rq import Worker, Queue, Connection #type:ignore
+from rq import Worker, Queue
+from rq.connections import Connection #type:ignore
 import sys # Add sys import for sys.exit
 
 # Get REDIS_URL, default to local Redis for development if not set
