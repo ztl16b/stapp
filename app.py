@@ -27,7 +27,8 @@ import csv
 import subprocess
 import shlex
 from redis import Redis
-from rq import Queue, Job
+from rq import Queue
+from rq.job import Job
 from tasks import generate_performers
 
 load_dotenv()
@@ -1941,7 +1942,7 @@ def generate_images_route():
 
     return render_template(
         "generate.html",
-        output=output,        # stdout from generate.py when finished
+        output=output,        # stdout from img_generate.py when finished
         job_status=job_stat,  # for template to show spinner / progress
         job_id=job_id
     )

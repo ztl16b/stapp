@@ -1,4 +1,4 @@
-web: gunicorn app:app --log-file=- --timeout 300
+web: WEB_CONCURRENCY=1 gunicorn app:app --log-file=- --timeout 300
 bytescale_worker: python w_bytescale.py
 new_worker: python w_new.py
 worker: python worker.py
