@@ -1716,6 +1716,20 @@ def performer_action_route(action, image_key):
     
     app.logger.info(f"Performer action: {action} for image: {image_key} from source bucket: {source_bucket}")
 
+    # Get bad_reason and other_reason from the form
+    bad_reason = request.form.get('bad_reason', None)
+    other_reason = request.form.get('other_reason', None)
+
+    # Process bad_reason
+    processed_bad_reason = None
+    if bad_reason == 'other' and other_reason and other_reason.strip():
+        processed_bad_reason = f"Other: {other_reason.strip()}"
+    elif bad_reason:
+        processed_bad_reason = bad_reason
+
+    if processed_bad_reason:
+        app.logger.info(f"Bad reason selected: {processed_bad_reason}")
+
     # As per user request, this review page now only processes images from S3_UPLOAD_BUCKET.
     if source_bucket == S3_UPLOAD_BUCKET:
         filename = image_key.split('/')[-1] # Get filename for messages
@@ -1731,7 +1745,7 @@ def performer_action_route(action, image_key):
         elif action == 'bad':
             # Move to S3_BAD_BUCKET.
             # Metadata (review_status=TRUE, bad_reason can be set) is set by move_s3_object.
-            if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad'):
+            if move_s3_object(source_bucket, S3_BAD_BUCKET, image_key, destination='bad', bad_reason=processed_bad_reason):
                 flash(f"Image '{filename}' marked BAD and moved to Bad Images bucket.", "success")
             else:
                 # move_s3_object already flashes detailed errors for copy or delete failures.

@@ -55,6 +55,25 @@
         gap: 10px;
     }
 
+    .btn-group-centered form {
+        margin: 0 5px;
+    }
+
+    /* Styling for the bad reason dropdown */
+    .bad-form-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .bad-reason-select {
+        width: 100%;
+        margin-bottom: 8px;
+        padding: 6px;
+        border-radius: 4px;
+        border: 1px solid #ced4da;
+    }
+
     /* —— Reference grid —— */
     .reference-grid {
         width: 100%;
@@ -142,10 +161,27 @@
                             <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
                             <button type="submit" class="btn btn-success btn-lg">GOOD</button>
                         </form>
-                        <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
-                            <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
-                            <button type="submit" class="btn btn-danger btn-lg">BAD</button>
-                        </form>
+                        <div class="bad-form-container">
+                            <form action="{{ url_for('performer_action_route', action='bad', image_key=image_key) }}" method="post">
+                                <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
+                                <select name="bad_reason" class="bad-reason-select" required id="badReasonSelectPerfReview">
+                                    <option value="" disabled selected>Select reason</option>
+                                    <option value="text">Text</option>
+                                    <option value="warping">Warping</option>
+                                    <option value="bad positioning">Bad Positioning</option>
+                                    <option value="stylization">Stylization</option>
+                                    <option value="facial expression">Facial Expression</option>
+                                    <option value="not performer">Not Performer</option>
+                                    <option value="low quality">Low Quality</option>
+                                    <option value="other">Other</option>
+                                </select>
+                                <div id="otherReasonContainerPerfReview" style="display: none; width: 100%; margin-bottom: 8px;">
+                                    <input type="text" name="other_reason" id="otherReasonInputPerfReview" class="form-control" 
+                                        placeholder="Please specify reason..." style="margin-bottom: 8px;">
+                                </div>
+                                <button type="submit" class="btn btn-danger btn-lg">BAD</button>
+                            </form>
+                        </div>
                         <form action="{{ url_for('performer_action_route', action='incredible', image_key=image_key) }}" method="post">
                             <input type="hidden" name="source_bucket" value="{{ source_bucket }}">
                             <button type="submit" class="btn btn-primary btn-lg">INCREDIBLE</button>
@@ -189,6 +225,36 @@
     document.addEventListener('DOMContentLoaded', function() {
         console.log('Current image key:', "{{ image_key }}");
         console.log('Page loaded at:', new Date().toISOString());
+
+        // Handle the "Other" option in bad reason dropdown for performer review
+        const badReasonSelect = document.getElementById('badReasonSelectPerfReview');
+        const otherReasonContainer = document.getElementById('otherReasonContainerPerfReview');
+        const otherReasonInput = document.getElementById('otherReasonInputPerfReview');
+        
+        if (badReasonSelect && otherReasonContainer && otherReasonInput) {
+            badReasonSelect.addEventListener('change', function() {
+                if (this.value === 'other') {
+                    otherReasonContainer.style.display = 'block';
+                    otherReasonInput.setAttribute('required', 'required');
+                } else {
+                    otherReasonContainer.style.display = 'none';
+                    otherReasonInput.removeAttribute('required');
+                    otherReasonInput.value = ''; // Clear the input if "Other" is deselected
+                }
+            });
+            
+            // Handle form submission validation for "Other"
+            const badForm = badReasonSelect.closest('form');
+            if (badForm) {
+                badForm.addEventListener('submit', function(e) {
+                    if (badReasonSelect.value === 'other' && !otherReasonInput.value.trim()) {
+                        e.preventDefault();
+                        alert('Please specify a reason when selecting "Other".');
+                    }
+                    // Note: The Python backend will handle combining "Other: " + otherReasonInput.value
+                });
+            }
+        }
     });
 </script>
 {% endblock %}
