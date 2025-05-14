@@ -1898,74 +1898,72 @@ def performer_action_route(action, image_key):
 @login_required
 def generate_images_route():
     """Page with a form that starts a background image-generation job.
-       Flash messages will indicate queueing status.
-       Displays specific generation failures if a job ID is provided.
+       Displays a list of problematic performer IDs from S3.
     """
     redis_url_env = os.getenv("REDIS_URL")
-    app.logger.info(f"Attempting to connect to Redis with URL: {redis_url_env}") 
-    if not redis_url_env:
-        flash("REDIS_URL is not set. Cannot connect to Redis.", "danger")
-        return render_template("generate.html")
+    # ... (Redis connection logic for POST requests remains the same) ...
+    # This part is primarily for POST to enqueue jobs.
+    # For GET, we don't strictly need Redis connection unless other job-related info is shown.
 
+    s3_problem_performers = []
+    s3_problem_performers_error = None
+
+    # --- Fetch problematic performers list from S3 on every GET request ---
     try:
-        url = urlparse(redis_url_env)
-        app.logger.info(f"Parsed Redis URL: scheme={url.scheme}, hostname={url.hostname}, port={url.port}, password_present={'Yes' if url.password else 'No'}, path={url.path}")
-
-        if url.scheme != "rediss":
-            app.logger.error(f"REDIS_URL scheme is '{url.scheme}', expected 'rediss'. Cannot enforce SSL correctly.")
-            raise ValueError("REDIS_URL must use rediss:// scheme for SSL connections.")
-
-        db_number = 0
-        if url.path and len(url.path) > 1 and url.path[1:].isdigit():
-            db_number = int(url.path[1:])
-
-        redis_conn = Redis(
-            host=url.hostname,
-            port=url.port,
-            password=url.password,
-            db=db_number,
-            ssl=True,
-            ssl_cert_reqs=None,
-        )
-        
-        app.logger.info(f"Explicitly configured redis.Redis instance. Attempting ping to {url.hostname}:{url.port} DB {db_number}")
-        redis_conn.ping()
-        app.logger.info("Redis ping successful in /generate with explicit config")
-        
+        s3 = get_s3_client() # Use your existing S3 client getter
+        if not S3_RESOURCES_BUCKET:
+            s3_problem_performers_error = "S3_RESOURCES_BUCKET environment variable is not set."
+            app.logger.error(s3_problem_performers_error)
+        else:
+            problem_file_key = "temp/problem_performers.txt"
+            try:
+                response = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key=problem_file_key)
+                file_content = response['Body'].read().decode('utf-8')
+                if file_content.strip(): # Ensure content is not just whitespace
+                    s3_problem_performers = [line.strip() for line in file_content.splitlines() if line.strip()]
+                # If file is empty or only whitespace, s3_problem_performers remains empty []
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    s3_problem_performers_error = f"File '{problem_file_key}' not found in bucket '{S3_RESOURCES_BUCKET}'."
+                    app.logger.info(s3_problem_performers_error) # Info level, as it might be normal for the file not to exist
+                else:
+                    s3_problem_performers_error = f"Error fetching '{problem_file_key}' from S3: {str(e)}"
+                    app.logger.error(s3_problem_performers_error)
+            except Exception as e:
+                s3_problem_performers_error = f"Unexpected error reading '{problem_file_key}' from S3: {str(e)}"
+                app.logger.error(s3_problem_performers_error, exc_info=True)
     except Exception as e:
-        app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}' (parsed to host={url.hostname if 'url' in locals() else 'N/A'}, port={url.port if 'url' in locals() else 'N/A'}): {e}", exc_info=True)
-        flash(f"Failed to connect to Redis: {e}", "danger")
-        return render_template("generate.html")
-        
-    q = Queue(connection=redis_conn)
-
-    job_id = request.args.get("job")
-    failed_generations_info = []
-    job_status_for_page = None # To inform template if job is still running or failed broadly
-
-    if job_id:
-        try:
-            job = Job.fetch(job_id, connection=redis_conn)
-            failed_generations_info = job.meta.get('failed_generations', [])
-            job_status_for_page = job.get_status()
-
-            if job.is_failed and not failed_generations_info:
-                # General job failure, not specific line items
-                flash(f"Job {job_id} failed. Details: {job.exc_info or job.meta.get('current_task_description', 'No specific error message.')}", "danger")
-            elif job.is_finished and not failed_generations_info:
-                flash(f"Job {job_id} completed successfully with no reported generation failures.", "info")
-            # If job is still running (started, queued), failed_generations_info might be empty or partial.
-            # The template will just show what's available.
-
-        except NoSuchJobError:
-            flash(f"Job ID {job_id} not found.", "warning")
-            job_id = None # Clear job_id if not found, so template doesn't expect it
-        except Exception as e:
-            app.logger.error(f"Error fetching job {job_id} for failure details: {e}", exc_info=True)
-            flash(f"Error retrieving details for job {job_id}.", "warning")
-            # Keep job_id so user knows which job had an error during fetch
+        s3_problem_performers_error = f"Error initializing S3 client for fetching problem performers: {str(e)}"
+        app.logger.error(s3_problem_performers_error, exc_info=True)
+    # End of S3 fetch logic
 
     if request.method == "POST":
+        # Redis connection for POST (job enqueuing)
+        if not redis_url_env:
+            flash("REDIS_URL is not set. Cannot connect to Redis to enqueue job.", "danger")
+            # Pass current S3 fetched data even if POST fails early
+            return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
+
+        try:
+            url = urlparse(redis_url_env)
+            # ... (rest of Redis connection setup as before) ...
+            if url.scheme != "rediss":
+                raise ValueError("REDIS_URL must use rediss:// scheme for SSL connections.")
+            db_number = 0
+            if url.path and len(url.path) > 1 and url.path[1:].isdigit():
+                db_number = int(url.path[1:])
+            redis_conn = Redis(
+                host=url.hostname, port=url.port, password=url.password,
+                db=db_number, ssl=True, ssl_cert_reqs=None
+            )
+            redis_conn.ping()
+            q = Queue(connection=redis_conn)
+        except Exception as e:
+            app.logger.error(f"Redis connection failed during POST: {e}", exc_info=True)
+            flash(f"Failed to connect to Redis to enqueue job: {e}", "danger")
+            return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
+        
+        # ... (performer_ids parsing logic remains the same) ...
         performer_ids_str = request.form.get("performer_ids", "")
         performer_ids = [
             pid for pid in re.split(r"[\s,]+", performer_ids_str)
@@ -1974,7 +1972,7 @@ def generate_images_route():
 
         if not performer_ids:
             flash("Please enter at least one numeric performer ID.", "warning")
-            return render_template("generate.html", failed_generations=failed_generations_info, job_id=job_id, job_status=job_status_for_page)
+            return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
         else:
             try:
                 job = q.enqueue(
@@ -1986,13 +1984,16 @@ def generate_images_route():
                     f"Image-generation job '{job.id}' queued for IDs: {', '.join(performer_ids)}.",
                     "success"
                 )
-                return redirect(url_for("generate_images_route", job=job.id)) # Add job.id back
+                # Redirect back to the GET version of the page. The GET will re-fetch S3 data.
+                # No job.id needed in redirect for this display requirements.
+                return redirect(url_for("generate_images_route")) 
             except Exception as e:
                 app.logger.error(f"Error enqueuing job: {e}", exc_info=True)
                 flash(f"Error starting image generation job: {str(e)}. Please try again.", "danger")
-                return render_template("generate.html", failed_generations=failed_generations_info, job_id=job_id, job_status=job_status_for_page)
+                return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
 
-    return render_template("generate.html", failed_generations=failed_generations_info, job_id=job_id, job_status=job_status_for_page)
+    # For GET requests, or if POST fails and re-renders
+    return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

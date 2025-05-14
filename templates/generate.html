@@ -2,11 +2,8 @@
 
 {% block title %}Generate Images{% endblock %}
 
-{# ─── Auto-refresh while the job is running ──────────────────────────────── #}
 {% block head_extra %}
-    {% if job_id and job_status and job_status not in ['finished', 'failed'] %}
-        <meta http-equiv="refresh" content="10">
-    {% endif %}
+    {# Auto-refresh removed as the primary dynamic content (problem performers list) is fetched on each page load #}
 {% endblock %}
 
 {% block content %}
@@ -37,44 +34,32 @@
                 name="performer_ids"
                 rows="5"
                 placeholder="Paste performer IDs here, e.g., 123, 456, 789 or 123 456 789"
-            >{{ request.form.get('performer_ids', '') }}</textarea> {# Default to empty or previous form value #}
+            >{{ request.form.get('performer_ids', '') }}</textarea>
         </div>
         <button type="submit" class="btn btn-primary">Generate Images</button>
     </form>
 
-    {# ─── Display Failed Generations ────────────────────────────────────── #}
-    {% if job_id and failed_generations %}
-        <div class="mt-4">
-            <h4>Image Generation Failures for Job <small class="text-muted">{{ job_id }}</small>:</h4>
+    {# ─── Display Problematic Performers from S3 File ───────────────────── #}
+    <div class="mt-4">
+        <h4>Problematic Performer IDs (from S3 file):</h4>
+        {% if s3_problem_performers_error %}
+            <div class="alert alert-danger" role="alert">
+                <strong>Error loading problematic performers list:</strong> {{ s3_problem_performers_error }}
+            </div>
+        {% elif s3_problem_performers %}
             <div class="alert alert-warning" role="alert">
-                <ul class="list-unstyled mb-0">
-                    {% for failure in failed_generations %}
-                        <li class="mb-2 pb-2 border-bottom">
-                            <strong>Performer:</strong> {{ failure.name }} (ID: {{ failure.id }})
-                            <br>
-                            <small class="text-danger"><strong>Reason:</strong> {{ failure.reason }}</small>
-                        </li>
+                <p>The following performer IDs were previously identified as problematic during generation runs:</p>
+                <ul class="list-group">
+                    {% for performer_id in s3_problem_performers %}
+                        <li class="list-group-item">{{ performer_id }}</li>
                     {% endfor %}
                 </ul>
             </div>
-        </div>
-    {% elif job_id and job_status %}
-        {# Optionally, provide some feedback if job_id is present but no specific failures listed #}
-        {# This could be because the job is still running, or finished successfully without itemized errors #}
-        <div class="mt-4">
-            {% if job_status == 'finished' %}
-                {# <div class="alert alert-info">Job {{ job_id }} finished. No specific generation failures reported through this view.</div> #}
-            {% elif job_status == 'failed' %}
-                {# General failure messages are flashed by app.py route, so this might be redundant #}
-                {# <div class="alert alert-danger">Job {{ job_id }} failed. Check flashed messages for details.</div> #}
-            {% elif job_status in ['queued', 'started', 'deferred'] %}
-                <div class="alert alert-info">
-                    Job {{ job_id }} is currently <strong>{{ job_status }}</strong>.
-                    Page will refresh in 10 seconds to check for updates.
-                    Specific generation failures will appear above if they occur.
-                </div> 
-            {% endif %}
-        </div>
-    {% endif %}
+        {% else %}
+            <div class="alert alert-success" role="alert">
+                No problematic performer IDs currently listed in <code>temp/problem_performers.txt</code> in the resources bucket.
+            </div>
+        {% endif %}
+    </div>
 </div>
 {% endblock %}
