@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 from redis import Redis #type:ignore
-from rq import Worker, Queue
+from rq import Worker, Queue #type:ignore
 from rq.connections import Connection #type:ignore
 import sys # Add sys import for sys.exit
 
