@@ -85,6 +85,7 @@ S3_ISSUE_BUCKET_PREFIX = os.getenv("S3_ISSUE_BUCKET_PREFIX")
 S3_PERFORMER_BUCKET_PREFIX = os.getenv("S3_PERFORMER_BUCKET_PREFIX")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+REVIEWER_PASSWORD = os.getenv("REVIEWER_PASSWORD")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -190,22 +191,31 @@ def login():
     if request.method == 'POST':
         password = request.form.get('password')
         admin_password = os.getenv('ADMIN_PASSWORD')
-        
+        reviewer_password = os.getenv('REVIEWER_PASSWORD') # Get reviewer password
+
         if password == admin_password:
-            # Simple session setup
             session['logged_in'] = True
-            session.permanent = True  # Make the session permanent
-            
-            flash('Login successful!', 'success')
-            
-            # Handle redirect
+            session['permission_level'] = 'admin' # Set permission level
+            session.permanent = True
+            flash('Admin login successful!', 'success')
             next_url = session.get('next')
             if next_url:
                 session.pop('next', None)
                 return redirect(next_url)
             return redirect(url_for('browse_buckets'))
-            
-        flash('Invalid password. Please try again.', 'error')
+        elif reviewer_password and password == reviewer_password: # Check reviewer password
+            session['logged_in'] = True
+            session['permission_level'] = 'reviewer' # Set permission level
+            session.permanent = True
+            flash('Reviewer login successful!', 'success')
+            next_url = session.get('next')
+            if next_url:
+                session.pop('next', None)
+                return redirect(next_url)
+            # Reviewers can be redirected to 'upload' or a review page. 'upload' is fine.
+            return redirect(url_for('upload'))
+        else:
+            flash('Invalid password. Please try again.', 'error')
     return render_template('login.html')
 
 @app.route('/logout')
@@ -234,6 +244,7 @@ def index():
     return redirect(url_for('upload'))
 
 @app.route('/upload', methods=['GET', 'POST'])
+@login_required
 def upload():
     if request.method == 'POST':
         # Basic validation for file upload
@@ -936,6 +947,10 @@ def copy_s3_object(source_bucket, dest_bucket, object_key, destination=None, bad
 @app.route('/browse')
 @login_required
 def browse_buckets():
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
     app.logger.info("Entering browse_buckets function")
     app.logger.info(f"S3_GOOD_BUCKET: {S3_GOOD_BUCKET}")
     app.logger.info(f"S3_BAD_BUCKET: {S3_BAD_BUCKET}")
@@ -969,6 +984,10 @@ def browse_buckets():
 @app.route('/browse/<bucket_name>')
 @login_required
 def browse_bucket(bucket_name):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
     # Clear success messages related to uploads from session
     flashed_messages = session.get('_flashes', [])
     if flashed_messages:
@@ -1350,6 +1369,10 @@ def apply_date_filter(last_modified, date_from, date_to):
 @app.route('/delete/<bucket_name>/<path:object_key>', methods=['POST'])
 @login_required
 def delete_object_route(bucket_name, object_key):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
     buckets = {
         'good': S3_GOOD_BUCKET,
         'bad': S3_BAD_BUCKET,
@@ -1386,6 +1409,10 @@ def delete_object_route(bucket_name, object_key):
 @app.route('/delete-all/<bucket_name>', methods=['POST'])
 @login_required
 def delete_all_objects_route(bucket_name):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
     buckets = {
         'good': {'name': 'Good Images', 'bucket': S3_GOOD_BUCKET, 'prefix': 'images/performer-at-venue/detail/'},
         'bad': {'name': 'Bad Images', 'bucket': S3_BAD_BUCKET, 'prefix': 'bad_images/'},
@@ -1459,6 +1486,10 @@ def delete_all_objects_route(bucket_name):
 @app.route('/delete-selected/<bucket_name>', methods=['POST'])
 @login_required
 def delete_selected_route(bucket_name):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
     buckets = {
         'good': S3_GOOD_BUCKET,
         'bad': S3_BAD_BUCKET,
@@ -1524,6 +1555,10 @@ def delete_selected_route(bucket_name):
 @app.route('/toggle-perfimg-status/<bucket_name>/<path:object_key>', methods=['POST'])
 @login_required
 def toggle_perfimg_status_route(bucket_name, object_key):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
     buckets = {
         'good': S3_GOOD_BUCKET,
         'bad': S3_BAD_BUCKET,
