@@ -63,10 +63,6 @@ def generate_performers(ids: List[int]) -> None:
                 current_progress_lines = job.meta.get('progress_lines', [])
                 current_progress_lines.append(line)
                 
-                max_lines = 20 # Keep only the last N lines
-                if len(current_progress_lines) > max_lines:
-                    current_progress_lines = current_progress_lines[-max_lines:]
-                
                 job.meta['progress_lines'] = current_progress_lines
                 job.meta['last_progress_line'] = line 
                 job.save_meta()
@@ -82,8 +78,6 @@ def generate_performers(ids: List[int]) -> None:
             if job:
                 current_progress_lines = job.meta.get('progress_lines', [])
                 current_progress_lines.append(line)
-                max_lines = 20
-                if len(current_progress_lines) > max_lines: current_progress_lines = current_progress_lines[-max_lines:]
                 job.meta['progress_lines'] = current_progress_lines
                 job.meta['last_progress_line'] = line
                 job.save_meta()

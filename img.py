@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-print("DEBUG: img.py script started executing!", flush=True)
 import sys
 import os
-print(f"DEBUG: img.py PID: {os.getpid()}", flush=True)
-print(f"DEBUG: img.py CWD: {os.getcwd()}", flush=True)
-print(f"DEBUG: img.py sys.argv: {sys.argv}", flush=True)
-
 
 import argparse, base64, concurrent.futures as cf, io, json, os, sys, time, urllib.parse # sys already imported but fine
 from pathlib import Path
@@ -26,11 +21,9 @@ from botocore.exceptions import ClientError # type: ignore
 RAW_BUCKET = (os.getenv("S3_REF_BUCKET") or "").strip().strip("/")
 PREFIX     = (os.getenv("S3_REF_BUCKET_PREFIX") or "").strip().strip("/")
 if not RAW_BUCKET:
-    print("DEBUG: img.py ERROR: S3_REF_BUCKET is missing or empty!", flush=True)
     sys.exit("ERROR: S3_REF_BUCKET is missing in .env")
 
-_s3 = boto3.client("s3")          # one thread-safe client
-print("DEBUG: img.py S3 client initialized.", flush=True)
+_s3 = boto3.client("s3")
 
 # ───────── CONFIG ───────── #
 
@@ -38,12 +31,10 @@ MAX_IMAGE_SIDE = 768
 JPEG_QUALITY   = 92
 UA             = "HeroImageBot/2.5 (+https://your-contact.example)"
 REF_DIR        = Path(__file__).resolve().parent / "img_ref" # Use absolute path for reliability
-print(f"DEBUG: img.py REF_DIR calculated as: {REF_DIR}", flush=True)
 try:
     REF_DIR.mkdir(exist_ok=True, parents=True)
-    print(f"DEBUG: img.py REF_DIR.mkdir called. Exists: {REF_DIR.exists()}", flush=True)
 except Exception as e_mkdir:
-    print(f"DEBUG: img.py ERROR creating REF_DIR {REF_DIR}: {e_mkdir}", flush=True)
+    pass # Removed debug print
 
 RETRIES_EDIT   = 5
 
@@ -58,9 +49,7 @@ REALISM_PHRASES = (
 
 try:
     client = OpenAI()
-    print("DEBUG: img.py OpenAI client initialized.", flush=True)
 except Exception as e_openai:
-    print(f"DEBUG: img.py ERROR initializing OpenAI client: {e_openai}", flush=True)
     client = None # Ensure client is defined
 
 # ───────── UTILITIES ───────── #
@@ -71,7 +60,6 @@ def _slugify(text: str) -> str:
 # ───────── LOW-LEVEL HELPERS ───────── #
 
 def _download_and_resize(url: str, retries: int = 3) -> Image.Image:
-    print(f"DEBUG: img.py _download_and_resize called for URL: {url}", flush=True)
     hdrs = {"User-Agent": UA, "Referer": f"https://{urllib.parse.urlparse(url).netloc}/"}
     delay = 1
     for _ in range(retries):
@@ -97,7 +85,6 @@ def _paths_to_files(paths: List[Path]):
 # ───────── S3 UPLOAD ───────── #
 
 def _upload_reference_images(performer_id: str, refs: List[Path]) -> None:
-    print(f"DEBUG: img.py _upload_reference_images called for id {performer_id} with {len(refs)} refs.", flush=True)
     """
     Upload refs to  s3://<bucket>/<prefix>/<performer_id>.<n>.jpg
                         └──── public-read, no auth query string
@@ -123,9 +110,7 @@ def _upload_reference_images(performer_id: str, refs: List[Path]) -> None:
 # ───────── GPT FILTER / RANK ───────── #
 
 def gpt_accepts(img_bytes: bytes, performer: str) -> bool:
-    print(f"DEBUG: img.py gpt_accepts called for performer: {performer}", flush=True)
     if not client:
-        print("DEBUG: img.py gpt_accepts: OpenAI client not available.", flush=True)
         return False
     msg = {
         "role": "user",
@@ -147,16 +132,13 @@ def gpt_accepts(img_bytes: bytes, performer: str) -> bool:
             model="gpt-4o-mini", messages=[msg], max_tokens=1, timeout=10
         )
         result = not r.choices[0].message.content.strip().lower().startswith("n")
-        print(f"DEBUG: img.py gpt_accepts result: {result}", flush=True)
         return result
     except Exception as e:
         print(f"GPT filter error: {e}", flush=True)
         return False
 
 def gpt_best_variant(performer: str, bp: dict, imgs: List[bytes]) -> int:
-    print(f"DEBUG: img.py gpt_best_variant called for performer: {performer}", flush=True)
     if not client:
-        print("DEBUG: img.py gpt_best_variant: OpenAI client not available.", flush=True)
         return 0
     content = [
         {
@@ -174,7 +156,6 @@ def gpt_best_variant(performer: str, bp: dict, imgs: List[bytes]) -> int:
             max_tokens=3,
         )
         idx_str = r.choices[0].message.content.strip()
-        print(f"DEBUG: img.py gpt_best_variant raw response: '{idx_str}'", flush=True)
         idx = int(idx_str) - 1
         return idx if 0 <= idx < len(imgs) else 0
     except Exception as e:
@@ -184,10 +165,8 @@ def gpt_best_variant(performer: str, bp: dict, imgs: List[bytes]) -> int:
 # ───────── IMAGE SEARCH ───────── #
 
 def _google_items(query: str, start: int):
-    print(f"DEBUG: img.py _google_items called with query: '{query}', start: {start}", flush=True)
     key, cx = os.getenv("GOOGLE_CSE_KEY"), os.getenv("GOOGLE_CSE_CX")
     if not (key and cx):
-        print("DEBUG: img.py ERROR: GOOGLE_CSE_KEY or GOOGLE_CSE_CX missing for _google_items!", flush=True)
         sys.exit("Set GOOGLE_CSE_KEY & GOOGLE_CSE_CX.")
     svc = build("customsearch", "v1", developerKey=key)
     return (
@@ -198,13 +177,11 @@ def _google_items(query: str, start: int):
     )
 
 def _fallback_save(img: Image.Image, performer_id: str) -> Path:
-    print(f"DEBUG: img.py _fallback_save for {performer_id}", flush=True)
     p = REF_DIR / f"{performer_id}_fallback_{int(time.time()*1000)}.jpg"
     img.save(p, "JPEG", quality=JPEG_QUALITY)
     return p
 
 def harvest_refs(performer: str, performer_id: str, query: str, need: int) -> List[Path]:
-    print(f"DEBUG: img.py harvest_refs called for performer {performer}, id {performer_id}, query '{query}', need {need}", flush=True)
     safe_id = _slugify(performer_id)
     refs, start, rejects, page = [], 1, 0, 0
     while len(refs) < need and page < 8:
@@ -232,22 +209,18 @@ def harvest_refs(performer: str, performer_id: str, query: str, need: int) -> Li
     return refs
 
 def get_six_refs(performer: str, performer_id: str) -> List[Path]:
-    print(f"DEBUG: img.py get_six_refs for performer {performer}, id {performer_id}", flush=True)
     with cf.ThreadPoolExecutor(max_workers=2) as ex:
         f1 = ex.submit(harvest_refs, performer, performer_id, performer, 5)
         f2 = ex.submit(harvest_refs, performer, performer_id, f"{performer} live", 5)
         refs = f1.result() + f2.result()
     if len(refs) < 6:
-        print(f"DEBUG: img.py Not enough refs found. Expected 6, got {len(refs)}", flush=True)
         sys.exit("Not enough refs.")
     return refs
 
 # ───────── BLUEPRINT & PROMPT ───────── #
 
 def blueprint(performer: str, refs: List[Path]) -> dict:
-    print(f"DEBUG: img.py blueprint called for performer {performer} with {len(refs)} refs.", flush=True)
     if not client:
-        print("DEBUG: img.py blueprint: OpenAI client not available.", flush=True)
         return {}
     msgs = [
         {
@@ -275,14 +248,12 @@ def blueprint(performer: str, refs: List[Path]) -> dict:
             model="gpt-4o-mini", messages=msgs, response_format={"type": "json_object"}
         )
         bp_result = json.loads(r.choices[0].message.content)
-        print(f"DEBUG: img.py blueprint result: {bp_result}", flush=True)
         return bp_result
     except Exception as e:
         print(f"Blueprint error: {e}", flush=True)
         return {}
 
 def build_prompt(performer: str, bp: dict) -> str:
-    print(f"DEBUG: img.py build_prompt called for performer {performer}", flush=True)
     core = (
         f"Ultra-realistic photograph of {performer} performing live.\n"
         f"Hair: {bp.get('hair_color', '')}; Outfit: {bp.get('signature_outfit', '')}; "
@@ -298,9 +269,7 @@ def build_prompt(performer: str, bp: dict) -> str:
     )
 
 def generate_variants(prompt: str, refs: List[Path], n: int) -> List[bytes]:
-    print(f"DEBUG: img.py generate_variants called with n={n}, {len(refs)} refs.", flush=True)
     if not client:
-        print("DEBUG: img.py generate_variants: OpenAI client not available.", flush=True)
         return []
     for attempt in range(1, RETRIES_EDIT + 1):
         try:
@@ -324,15 +293,9 @@ def generate_variants(prompt: str, refs: List[Path], n: int) -> List[bytes]:
 # ───────── MAIN WORKER ───────── #
 
 def job(performer: str, performer_id: str, keep_variants: bool, out_path: str):
-    print(f"DEBUG: img.py job() called with performer='{performer}', id='{performer_id}', out_path='{out_path}', keep_variants={keep_variants}", flush=True)
     print(f"[{performer}] 🔎 Gathering refs …", flush=True)
     refs = get_six_refs(performer, performer_id)
     if not refs:
-        print(f"DEBUG: img.py job() - No refs gathered for {performer}. Exiting job.", flush=True)
-        # Decide if we should write an empty/error file to out_path or just return
-        # For now, let it proceed, Path(out_path).write_bytes might fail if variants are empty.
-        # Or, create a placeholder/error indicator for out_path
-        # For simplicity, let's ensure variants is handled if refs are empty
         Path(out_path).write_text(f"Error: No reference images found for {performer}")
         return
 
@@ -341,7 +304,6 @@ def job(performer: str, performer_id: str, keep_variants: bool, out_path: str):
 
     bp = blueprint(performer, refs)
     if not bp:
-        print(f"DEBUG: img.py job() - No blueprint created for {performer}. Exiting job.", flush=True)
         Path(out_path).write_text(f"Error: Could not create blueprint for {performer}")
         return
 
@@ -350,7 +312,6 @@ def job(performer: str, performer_id: str, keep_variants: bool, out_path: str):
     variants = generate_variants(prompt, refs, 1) # n=1 for the primary image
 
     if not variants:
-        print(f"DEBUG: img.py job() - No variants generated for {performer}. Exiting job.", flush=True)
         Path(out_path).write_text(f"Error: No image variants generated for {performer}")
         return
 
@@ -374,14 +335,12 @@ def job(performer: str, performer_id: str, keep_variants: bool, out_path: str):
 # ───────── CLI ───────── #
 
 def main():
-    print("DEBUG: img.py main() called", flush=True)
     ap = argparse.ArgumentParser(description="Generate a hero image for a performer.")
     ap.add_argument("performer", help="Performer name (e.g. 'Shakira')")
     ap.add_argument("--id", dest="performer_id", help="External performer ID for filenames")
     ap.add_argument("--out", default="hero.jpg", help="Output image path")
     ap.add_argument("--variants", type=int, default=1, help="Total number of variants to generate (including the main one). If > 1, others are saved.") # Clarified help
     args = ap.parse_args()
-    print(f"DEBUG: img.py main() parsed args: {args}", flush=True)
 
     performer_id_val = args.performer_id or _slugify(args.performer)
     
@@ -435,23 +394,18 @@ def main():
     # Then if keep_variants_for_job (False): loop for others is skipped. This is fine.
 
     job(args.performer, performer_id_val, args.variants > 1, args.out)
-    print("DEBUG: img.py main() finished", flush=True)
 
 
 if __name__ == "__main__":
-    print("DEBUG: img.py __main__ block reached", flush=True)
     try:
         main()
     except SystemExit as se:
-        print(f"DEBUG: img.py SystemExit in __main__: {se.code}", flush=True)
         # sys.exit (called by argparse or our code) will be caught here.
         # We should re-exit with the same code to preserve behavior.
         # The message to stderr (if any) would have already been printed by sys.exit or argparse.
         sys.exit(se.code) # Re-raise SystemExit
     except Exception as e:
-        print(f"DEBUG: img.py EXCEPTION in main: {type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc(file=sys.stdout) # Print to stdout for capture
         sys.stdout.flush()
         sys.exit(1) # Exit with non-zero for general errors
-    print("DEBUG: img.py script finishing after __main__ block", flush=True)
