@@ -15,6 +15,7 @@ import subprocess
 from typing import List
 from rq import get_current_job #type: ignore
 import shlex
+import re
 
 def generate_performers(ids: List[int]) -> None:
     """
@@ -39,6 +40,7 @@ def generate_performers(ids: List[int]) -> None:
         job.meta['progress_lines'] = [] # Initialize a list for progress lines
         job.meta['last_progress_line'] = f"Job initiated for IDs: {', '.join(map(str, ids))}. Waiting for first log line..."
         job.meta['stderr_output'] = "" # Initialize stderr output
+        job.meta['failed_generations'] = [] # Initialize list for specific generation failures
         job.save_meta()
 
     # Using Popen to stream output
@@ -64,6 +66,20 @@ def generate_performers(ids: List[int]) -> None:
                 
                 job.meta['progress_lines'] = current_progress_lines
                 job.meta['last_progress_line'] = line 
+                
+                # Check for specific generation failure message
+                if line.startswith("❌ Generation failed for"):
+                    match = re.search(r"❌ Generation failed for (.+?) \\(ID: (\\d+)\\): (.*)", line)
+                    if match:
+                        failure_info = {
+                            "name": match.group(1).strip(),
+                            "id": match.group(2).strip(),
+                            "reason": match.group(3).strip()
+                        }
+                        current_failures = job.meta.get('failed_generations', [])
+                        current_failures.append(failure_info)
+                        job.meta['failed_generations'] = current_failures
+                
                 job.save_meta()
     
     # Wait for the process to complete and get any remaining output
@@ -79,6 +95,20 @@ def generate_performers(ids: List[int]) -> None:
                 current_progress_lines.append(line)
                 job.meta['progress_lines'] = current_progress_lines
                 job.meta['last_progress_line'] = line
+
+                # Check for specific generation failure message in remaining output
+                if line.startswith("❌ Generation failed for"):
+                    match = re.search(r"❌ Generation failed for (.+?) \\(ID: (\\d+)\\): (.*)", line)
+                    if match:
+                        failure_info = {
+                            "name": match.group(1).strip(),
+                            "id": match.group(2).strip(),
+                            "reason": match.group(3).strip()
+                        }
+                        current_failures = job.meta.get('failed_generations', [])
+                        current_failures.append(failure_info)
+                        job.meta['failed_generations'] = current_failures
+                
                 job.save_meta()
 
     final_stderr = ""

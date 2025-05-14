@@ -32,6 +32,7 @@ from rq.job import Job #type:ignore
 from tasks import generate_performers
 import ssl # Add ssl import
 from urllib.parse import urlparse # Add urlparse import
+from rq.exceptions import NoSuchJobError # Import NoSuchJobError
 
 load_dotenv()
 
@@ -1898,12 +1899,13 @@ def performer_action_route(action, image_key):
 def generate_images_route():
     """Page with a form that starts a background image-generation job.
        Flash messages will indicate queueing status.
+       Displays specific generation failures if a job ID is provided.
     """
     redis_url_env = os.getenv("REDIS_URL")
     app.logger.info(f"Attempting to connect to Redis with URL: {redis_url_env}") 
     if not redis_url_env:
         flash("REDIS_URL is not set. Cannot connect to Redis.", "danger")
-        return render_template("generate.html") # Render without job details
+        return render_template("generate.html")
 
     try:
         url = urlparse(redis_url_env)
@@ -1933,12 +1935,35 @@ def generate_images_route():
     except Exception as e:
         app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}' (parsed to host={url.hostname if 'url' in locals() else 'N/A'}, port={url.port if 'url' in locals() else 'N/A'}): {e}", exc_info=True)
         flash(f"Failed to connect to Redis: {e}", "danger")
-        return render_template("generate.html") # Render without job details
+        return render_template("generate.html")
         
     q = Queue(connection=redis_conn)
 
-    # Removed all logic for fetching job details on GET requests
-    # The template no longer displays this information.
+    job_id = request.args.get("job")
+    failed_generations_info = []
+    job_status_for_page = None # To inform template if job is still running or failed broadly
+
+    if job_id:
+        try:
+            job = Job.fetch(job_id, connection=redis_conn)
+            failed_generations_info = job.meta.get('failed_generations', [])
+            job_status_for_page = job.get_status()
+
+            if job.is_failed and not failed_generations_info:
+                # General job failure, not specific line items
+                flash(f"Job {job_id} failed. Details: {job.exc_info or job.meta.get('current_task_description', 'No specific error message.')}", "danger")
+            elif job.is_finished and not failed_generations_info:
+                flash(f"Job {job_id} completed successfully with no reported generation failures.", "info")
+            # If job is still running (started, queued), failed_generations_info might be empty or partial.
+            # The template will just show what's available.
+
+        except NoSuchJobError:
+            flash(f"Job ID {job_id} not found.", "warning")
+            job_id = None # Clear job_id if not found, so template doesn't expect it
+        except Exception as e:
+            app.logger.error(f"Error fetching job {job_id} for failure details: {e}", exc_info=True)
+            flash(f"Error retrieving details for job {job_id}.", "warning")
+            # Keep job_id so user knows which job had an error during fetch
 
     if request.method == "POST":
         performer_ids_str = request.form.get("performer_ids", "")
@@ -1949,31 +1974,25 @@ def generate_images_route():
 
         if not performer_ids:
             flash("Please enter at least one numeric performer ID.", "warning")
-            # Render the template again, performer_ids_str will be in request.form
-            return render_template("generate.html") 
+            return render_template("generate.html", failed_generations=failed_generations_info, job_id=job_id, job_status=job_status_for_page)
         else:
             try:
                 job = q.enqueue(
                     generate_performers,
                     [int(pid) for pid in performer_ids],
-                    job_timeout=600
+                    job_timeout=600 
                 )
                 flash(
                     f"Image-generation job '{job.id}' queued for IDs: {', '.join(performer_ids)}.",
                     "success"
                 )
-                # Redirect to the same page (GET request), which will now just show the form and flash message.
-                # The ?job=job.id query parameter is no longer strictly necessary for display
-                # but can be kept if you plan to use it for other purposes or API lookups later.
-                return redirect(url_for("generate_images_route")) # Removed job.id from redirect query args
+                return redirect(url_for("generate_images_route", job=job.id)) # Add job.id back
             except Exception as e:
                 app.logger.error(f"Error enqueuing job: {e}", exc_info=True)
                 flash(f"Error starting image generation job: {str(e)}. Please try again.", "danger")
-                # Render the template again, performer_ids_str will be in request.form
-                return render_template("generate.html")
+                return render_template("generate.html", failed_generations=failed_generations_info, job_id=job_id, job_status=job_status_for_page)
 
-    # For GET requests, or if POST fails before enqueueing and needs to re-render
-    return render_template("generate.html")
+    return render_template("generate.html", failed_generations=failed_generations_info, job_id=job_id, job_status=job_status_for_page)
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

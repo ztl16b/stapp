@@ -4,9 +4,9 @@
 
 {# ─── Auto-refresh while the job is running ──────────────────────────────── #}
 {% block head_extra %}
-    {# {% if job_id and job_status != 'finished' and job_status != 'failed' %}
-        <meta http-equiv="refresh" content="5">
-    {% endif %} #}
+    {% if job_id and job_status and job_status not in ['finished', 'failed'] %}
+        <meta http-equiv="refresh" content="10">
+    {% endif %}
 {% endblock %}
 
 {% block content %}
@@ -42,14 +42,39 @@
         <button type="submit" class="btn btn-primary">Generate Images</button>
     </form>
 
-    {# All job status, live output, detailed log, and final script output sections are removed #}
-    {# Example of what was removed:
-    {% if job_id %}
-        ... job status and log display ...
+    {# ─── Display Failed Generations ────────────────────────────────────── #}
+    {% if job_id and failed_generations %}
+        <div class="mt-4">
+            <h4>Image Generation Failures for Job <small class="text-muted">{{ job_id }}</small>:</h4>
+            <div class="alert alert-warning" role="alert">
+                <ul class="list-unstyled mb-0">
+                    {% for failure in failed_generations %}
+                        <li class="mb-2 pb-2 border-bottom">
+                            <strong>Performer:</strong> {{ failure.name }} (ID: {{ failure.id }})
+                            <br>
+                            <small class="text-danger"><strong>Reason:</strong> {{ failure.reason }}</small>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    {% elif job_id and job_status %}
+        {# Optionally, provide some feedback if job_id is present but no specific failures listed #}
+        {# This could be because the job is still running, or finished successfully without itemized errors #}
+        <div class="mt-4">
+            {% if job_status == 'finished' %}
+                {# <div class="alert alert-info">Job {{ job_id }} finished. No specific generation failures reported through this view.</div> #}
+            {% elif job_status == 'failed' %}
+                {# General failure messages are flashed by app.py route, so this might be redundant #}
+                {# <div class="alert alert-danger">Job {{ job_id }} failed. Check flashed messages for details.</div> #}
+            {% elif job_status in ['queued', 'started', 'deferred'] %}
+                <div class="alert alert-info">
+                    Job {{ job_id }} is currently <strong>{{ job_status }}</strong>.
+                    Page will refresh in 10 seconds to check for updates.
+                    Specific generation failures will appear above if they occur.
+                </div> 
+            {% endif %}
+        </div>
     {% endif %}
-    {% if output %}
-        ... final script output ...
-    {% endif %}
-    #}
 </div>
 {% endblock %}
