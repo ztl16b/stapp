@@ -192,13 +192,17 @@
                                     {% endif %}
                                 </a>
                             </th>
+                            {% if bucket_name == 'temp' %}
                             <th>Upload Time</th>
+                            {% endif %}
                             <th>Uploader Initials</th>
                             <th>Performer</th>
                             <th>Reviewed</th>
                             <th>Perf Img</th>
+                            {% if bucket_name == 'upload' or bucket_name == 'performers' %}
                             <th>Clip 1 Verdict</th>
                             <th>Clip 2 Verdict</th>
+                            {% endif %}
                             <th>URL</th>
                             {% if bucket_name == 'bad' %}
                             <th>Bad Reason</th>
@@ -240,8 +244,10 @@
                                     <span class="badge bg-danger">FALSE</span>
                                 {% endif %}
                             </td>
+                            {% if bucket_name == 'upload' or bucket_name == 'performers' %}
                             <td>{{ file.metadata.get('clip1_v', 'N/A') }}</td>
                             <td>{{ file.metadata.get('clip2_v', 'N/A') }}</td>
+                            {% endif %}
                             <td>
                                 <a href="https://{{ bucket.bucket }}.s3.amazonaws.com/{{ file.key }}" target="_blank">
                                     https://{{ bucket.bucket }}.s3.amazonaws.com/{{ file.key }}

@@ -970,8 +970,8 @@ def browse_bucket(bucket_name):
         date_to = request.args.get('date_to', '')
         per_page = 200
         # max_items_to_scan = 300 # Limit initial scan  -- This will be replaced
-        num_recent_items_target = 100  # Target number of most recent items to process
-        s3_candidate_scan_limit = 5000  # How many items to fetch from S3 to find the recent ones
+        num_recent_items_target = 50  # Target number of most recent items to process
+        s3_candidate_scan_limit = 10000  # How many items to fetch fro3 to find the recent ones
 
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
         
