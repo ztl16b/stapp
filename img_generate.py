@@ -166,33 +166,52 @@ def main(ids: List[int]) -> None:
 
     print("\nProcessing completed for all submitted IDs.")
 
-    if problematic_ids:
-        # Remove duplicates and sort for consistency
-        unique_problematic_ids = sorted(list(set(problematic_ids)))
-        
-        failure_file_content = "\n".join(unique_problematic_ids)
-        s3_key_for_failures = "temp/problem_performers.txt" # Updated S3 key
+    # Convert current run problem IDs to a set for efficient handling
+    problematic_ids_current_run_set = set(str(pid) for pid in problematic_ids)
 
-        print(f"\nEncountered issues with {len(unique_problematic_ids)} performer ID(s). Attempting to upload list to S3...")
-        
-        try:
-            # RESOURCES_BUCKET is checked for existence at the start of the script.
-            # The global s3 client is used.
-            s3.put_object(
-                Bucket=RESOURCES_BUCKET, 
-                Key=s3_key_for_failures, 
-                Body=failure_file_content,
-                ContentType='text/plain',
-                # Consider adding ACL if needed, e.g., ACL='public-read' or other
-            )
-            print(f"Successfully uploaded list of problematic performer IDs to: s3://{RESOURCES_BUCKET}/{s3_key_for_failures}")
-        except Exception as e:
-            print(f"ERROR: Failed to upload problematic performer IDs list to S3. Details: {e}")
-            print("Problematic IDs were:")
-            for pid_val in unique_problematic_ids:
-                print(f"- {pid_val}")
+    if not problematic_ids_current_run_set:
+        print("\nNo new problematic performer IDs identified in this run.")
     else:
-        print("\nNo issues encountered with any performer IDs during this run.")
+        print(f"\nIdentified {len(problematic_ids_current_run_set)} problematic ID(s) in this run. Attempting to update S3 list...")
+        
+        s3_key_for_failures = "temp/problem_performers.txt"
+        existing_ids_from_s3 = set()
+
+        # Try to fetch existing problematic IDs from S3
+        try:
+            response = s3.get_object(Bucket=RESOURCES_BUCKET, Key=s3_key_for_failures)
+            file_content = response['Body'].read().decode('utf-8')
+            if file_content.strip():
+                existing_ids_from_s3.update(line.strip() for line in file_content.splitlines() if line.strip())
+            print(f"Found {len(existing_ids_from_s3)} existing problematic ID(s) in S3 file.")
+        except s3.exceptions.NoSuchKey:
+            print(f"No existing '{s3_key_for_failures}' file found in S3. A new file will be created.")
+        except Exception as e:
+            print(f"ERROR: Could not read existing problematic IDs from S3. Will proceed with current run IDs only. Details: {e}")
+
+        # Combine existing IDs with new IDs from the current run
+        all_problem_ids_set = existing_ids_from_s3.union(problematic_ids_current_run_set)
+
+        if not all_problem_ids_set:
+            print("No problematic IDs to upload (neither existing nor new).")
+        else:
+            # Sort for consistency
+            final_ids_list = sorted(list(all_problem_ids_set))
+            failure_file_content = "\n".join(final_ids_list)
+            
+            try:
+                s3.put_object(
+                    Bucket=RESOURCES_BUCKET, 
+                    Key=s3_key_for_failures, 
+                    Body=failure_file_content,
+                    ContentType='text/plain',
+                )
+                print(f"Successfully updated list of problematic performer IDs ({len(final_ids_list)} total) to: s3://{RESOURCES_BUCKET}/{s3_key_for_failures}")
+            except Exception as e:
+                print(f"ERROR: Failed to upload updated problematic performer IDs list to S3. Details: {e}")
+                print("Current run problematic IDs were:")
+                for pid_val in sorted(list(problematic_ids_current_run_set)):
+                    print(f"- {pid_val}")
 
 if __name__ == "__main__":
     try:
