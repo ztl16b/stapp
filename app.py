@@ -500,22 +500,39 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
         if len(parts) >= 3:
             filename = parts[2]  # Get just the original filename part
     
-    # Determine destination path based on dest_bucket
-    # Default dest_key is just the filename. This might be used if a bucket doesn't have a defined prefix
-    # or isn't one of the explicitly handled cases below.
-    dest_key = filename
+    # Determine destination path based on dest_bucket and destination hint
+    dest_key = filename # Default to filename (root of dest_bucket if no prefix matches)
 
-    if dest_bucket == S3_PERFORMER_BUCKET and S3_PERFORMER_BUCKET_PREFIX:
-        dest_key = f"{S3_PERFORMER_BUCKET_PREFIX}{filename}"
-    elif dest_bucket == S3_INCREDIBLE_BUCKET and S3_INCREDIBLE_BUCKET_PREFIX:
-        dest_key = f"{S3_INCREDIBLE_BUCKET_PREFIX}{filename}"
-    elif dest_bucket == S3_GOOD_BUCKET and S3_GOOD_BUCKET_PREFIX:
-        dest_key = f"{S3_GOOD_BUCKET_PREFIX}{filename}"
-    elif dest_bucket == S3_BAD_BUCKET and S3_BAD_BUCKET_PREFIX:
-        dest_key = f"{S3_BAD_BUCKET_PREFIX}{filename}"
-    elif dest_bucket == S3_ISSUE_BUCKET and S3_ISSUE_BUCKET_PREFIX: # Added for completeness based on available prefixes
-        dest_key = f"{S3_ISSUE_BUCKET_PREFIX}{filename}"
-    # If no specific bucket matches, dest_key remains `filename` (root of dest_bucket)
+    if destination == 'good':
+        if dest_bucket == S3_PERFORMER_BUCKET and S3_PERFORMER_BUCKET_PREFIX: # Used by performer_action_route for 'good'
+            dest_key = f"{S3_PERFORMER_BUCKET_PREFIX}{filename}"
+        elif dest_bucket == S3_GOOD_BUCKET and S3_GOOD_BUCKET_PREFIX: # Used by move_image_route (perf_ven_review) for 'good'
+            dest_key = f"{S3_GOOD_BUCKET_PREFIX}{filename}"
+        # If other 'good' destinations with specific (bucket, prefix) combos are needed, add here.
+    elif destination == 'bad':
+        if dest_bucket == S3_BAD_BUCKET and S3_BAD_BUCKET_PREFIX:
+            dest_key = f"{S3_BAD_BUCKET_PREFIX}{filename}"
+    elif destination == 'incredible':
+        # Note: 'incredible' action in performer_action_route involves two copies:
+        # 1. To S3_PERFORMER_BUCKET with destination='good' (handled by the 'good' block)
+        # 2. To S3_INCREDIBLE_BUCKET with destination='incredible' (this block)
+        if dest_bucket == S3_INCREDIBLE_BUCKET and S3_INCREDIBLE_BUCKET_PREFIX:
+            dest_key = f"{S3_INCREDIBLE_BUCKET_PREFIX}{filename}"
+    else:
+        # Fallback logic if destination hint is None or not one of the handled specific actions.
+        # This attempts to match based on bucket type if a prefix is defined.
+        # Order is important if bucket names can be the same for different roles.
+        if dest_bucket == S3_PERFORMER_BUCKET and S3_PERFORMER_BUCKET_PREFIX:
+            dest_key = f"{S3_PERFORMER_BUCKET_PREFIX}{filename}"
+        elif dest_bucket == S3_BAD_BUCKET and S3_BAD_BUCKET_PREFIX: # Check specific types before more general ones
+            dest_key = f"{S3_BAD_BUCKET_PREFIX}{filename}"
+        elif dest_bucket == S3_INCREDIBLE_BUCKET and S3_INCREDIBLE_BUCKET_PREFIX:
+            dest_key = f"{S3_INCREDIBLE_BUCKET_PREFIX}{filename}"
+        elif dest_bucket == S3_GOOD_BUCKET and S3_GOOD_BUCKET_PREFIX:
+            dest_key = f"{S3_GOOD_BUCKET_PREFIX}{filename}"
+        elif dest_bucket == S3_ISSUE_BUCKET and S3_ISSUE_BUCKET_PREFIX:
+            dest_key = f"{S3_ISSUE_BUCKET_PREFIX}{filename}"
+        # If no specific prefix is matched above, dest_key remains `filename` (root of dest_bucket)
     
     # Determine content type based on file extension
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
