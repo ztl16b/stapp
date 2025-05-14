@@ -31,6 +31,7 @@ from rq import Queue #type:ignore
 from rq.job import Job #type:ignore
 from tasks import generate_performers
 import ssl # Add ssl import
+from urllib.parse import urlparse # Add urlparse import
 
 load_dotenv()
 
@@ -1914,30 +1915,34 @@ def generate_images_route():
         )
 
     try:
-        # Create a more explicit SSL context for the web dyno
-        # This mirrors what ssl_cert_reqs=None should do but is more direct
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        url = urlparse(redis_url_env)
+        app.logger.info(f"Parsed Redis URL: scheme={url.scheme}, hostname={url.hostname}, port={url.port}, password_present={'Yes' if url.password else 'No'}, path={url.path}")
 
-        # redis-py >= 4.2.0 allows passing an SSLContext directly
-        # For Redis.from_url, we can't pass the context directly in one go.
-        # We need to parse the URL and then pass components.
-        # However, a simpler approach might be to see if there's a global SSL issue.
-        # Let's first ensure this part of the code is reached cleanly.
+        if url.scheme != "rediss":
+            app.logger.error(f"REDIS_URL scheme is '{url.scheme}', expected 'rediss'. Cannot enforce SSL correctly.")
+            raise ValueError("REDIS_URL must use rediss:// scheme for SSL connections.")
+
+        db_number = 0
+        if url.path and len(url.path) > 1 and url.path[1:].isdigit():
+            db_number = int(url.path[1:])
+
+        redis_conn = Redis(
+            host=url.hostname,
+            port=url.port,
+            password=url.password,
+            db=db_number,
+            ssl=True,
+            ssl_cert_reqs=None, # Equivalent to ssl.CERT_NONE, tells client not to verify server cert
+            # Forcing a specific SSL version (less likely needed, but for extreme debugging):
+            # ssl_version=ssl.PROTOCOL_TLS_CLIENT 
+        )
         
-        # The existing method should be fine, but the error is baffling.
-        # The workers use the same REDIS_URL and connect.
-        # For now, keeping the Redis.from_url as is, as the issue is likely environmental
-        # to the web dyno's SSL handling rather than redis-py's options.
-        # The SSL error happens *during* the SSL handshake (_ssl.c:1028).
-
-        redis_conn = Redis.from_url(redis_url_env, ssl_cert_reqs=None) # Keeping this as is for now
-        app.logger.info("Attempting redis_conn.ping()")
+        app.logger.info(f"Explicitly configured redis.Redis instance. Attempting ping to {url.hostname}:{url.port} DB {db_number}")
         redis_conn.ping()
-        app.logger.info("Redis ping successful in /generate")
+        app.logger.info("Redis ping successful in /generate with explicit config")
+        
     except Exception as e:
-        app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}': {e}", exc_info=True) # Add exc_info=True for full traceback
+        app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}' (parsed to host={url.hostname if 'url' in locals() else 'N/A'}, port={url.port if 'url' in locals() else 'N/A'}): {e}", exc_info=True)
         flash(f"Failed to connect to Redis: {e}", "danger")
         return render_template(
             "generate.html",
