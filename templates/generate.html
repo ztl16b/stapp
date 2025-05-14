@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Generate Images{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Generate Performer Images</h1>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <form method="POST" action="{{ url_for('generate_images_route') }}">
+        <div class="mb-3">
+            <label for="performer_ids" class="form-label">Performer IDs (comma or space-separated):</label>
+            <textarea class="form-control" id="performer_ids" name="performer_ids" rows="5" placeholder="Paste performer IDs here, e.g., 123, 456, 789 or 123 456 789">{{ request.form.performer_ids }}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Generate Images</button>
+    </form>
+
+    {% if output %}
+    <div class="mt-4">
+        <h2>Script Output:</h2>
+        <pre class="bg-light p-3 rounded"><code>{{ output }}</code></pre>
+    </div>
+    {% endif %}
+</div>
+{% endblock %} 

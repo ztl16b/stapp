@@ -24,6 +24,8 @@ import psutil #type:ignore
 import concurrent.futures
 from zoneinfo import ZoneInfo
 import csv
+import subprocess
+import shlex
 
 load_dotenv()
 
@@ -1884,6 +1886,54 @@ def performer_action_route(action, image_key):
         flash(f"Unsupported source bucket '{source_bucket}' for this performer action. Expected '{S3_UPLOAD_BUCKET}'.", "danger")
     
     return redirect(url_for('perf_review_image_route'))
+
+@app.route('/generate', methods=['GET', 'POST'])
+@login_required
+def generate_images_route():
+    output = None
+    if request.method == 'POST':
+        performer_ids_str = request.form.get('performer_ids', '')
+        # Split by comma or space, and filter out empty strings
+        performer_ids = [pid.strip() for pid in re.split(r'[\\s,]+', performer_ids_str) if pid.strip().isdigit()]
+
+        if not performer_ids:
+            flash('Please enter at least one valid numeric performer ID.', 'warning')
+        else:
+            try:
+                # Ensure img_generate.py is executable or called with python interpreter
+                cmd = ['python', 'img_generate.py'] + performer_ids
+                app.logger.info(f"Executing command: {' '.join(shlex.quote(c) for c in cmd)}")
+                
+                # Using subprocess.run to capture output
+                process = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=600) # 10 min timeout
+                
+                output = process.stdout
+                if process.stderr:
+                    output += "\\n--- Errors ---\\n" + process.stderr
+
+                if process.returncode == 0:
+                    flash(f'Successfully started image generation for IDs: {", ".join(performer_ids)}.', 'success')
+                else:
+                    flash(f'Image generation script finished with errors for IDs: {", ".join(performer_ids)}.', 'danger')
+                
+                app.logger.info(f"Script stdout:\\n{process.stdout}")
+                if process.stderr:
+                    app.logger.error(f"Script stderr:\\n{process.stderr}")
+
+            except subprocess.TimeoutExpired:
+                flash('Image generation script timed out after 10 minutes.', 'danger')
+                output = "Process timed out."
+                app.logger.error("Image generation script timed out.")
+            except FileNotFoundError:
+                flash('Error: img_generate.py script not found. Make sure it is in the correct path.', 'danger')
+                output = "Error: img_generate.py not found."
+                app.logger.error("img_generate.py not found.")
+            except Exception as e:
+                flash(f'An unexpected error occurred: {str(e)}', 'danger')
+                output = f"An unexpected error occurred: {str(e)}"
+                app.logger.error(f"Error during script execution: {e}", exc_info=True)
+                
+    return render_template('generate.html', output=output)
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
