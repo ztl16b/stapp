@@ -398,7 +398,7 @@ def get_random_image_key(bucket_name, filter_by_review=None):
     """Gets a random object key from the specified bucket, optionally filtered by review status.
        Limits initial scan to a defined number of items before further processing.
     """
-    MAX_ITEMS_TO_CONSIDER = 200
+    MAX_ITEMS_TO_CONSIDER = 100
     collected_objects = []
     prefix = None
 
@@ -1596,7 +1596,7 @@ def get_performer_image_key(filter_by_review=None):
     """Gets a random object key from the performers bucket, specifically from the performers/detail folder.
        Limits initial scan to a defined number of items before further processing.
     """
-    MAX_ITEMS_TO_CONSIDER = 200
+    MAX_ITEMS_TO_CONSIDER = 100
     collected_objects = []
     prefix = 'images/performers/detail/'
 
