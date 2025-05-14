@@ -969,147 +969,118 @@ def browse_bucket(bucket_name):
         date_from = request.args.get('date_from', '')
         date_to = request.args.get('date_to', '')
         per_page = 200
-        max_items_to_scan = 300 # Limit initial scan
+        # max_items_to_scan = 300 # Limit initial scan  -- This will be replaced
+        num_recent_items_target = 100  # Target number of most recent items to process
+        s3_candidate_scan_limit = 5000  # How many items to fetch from S3 to find the recent ones
 
         prefix = str(bucket_info['prefix']) if bucket_info['prefix'] else ''
         
         # --- Fetch and Filter Data ---
-        all_scanned_files = []
         s3 = get_s3_client() # Use thread-local client
         s3_paginator = s3.get_paginator('list_objects_v2')
-        is_truncated = False
-        items_scanned = 0
-        unreviewed_count = 0  # Initialize counter for unreviewed images
-
-        app.logger.info(f"Starting scan for bucket '{bucket_name}' prefix '{prefix}', max_scan={max_items_to_scan}")
         
-        # For performers bucket, special handling if needed
-        try_without_prefix = False
-        if bucket_name == 'performers':
-            try:
-                # Check if we have any items with the exact prefix
-                test_prefix_response = s3.list_objects_v2(
-                    Bucket=bucket_info['bucket'],
-                    Prefix=prefix,
-                    MaxKeys=5
-                )
-                
-                # Log the complete response to debug
-                app.logger.info(f"DEBUG: Prefix search response for '{prefix}': {test_prefix_response}")
-                
-                # Try to locate the specific 10.webp file
-                app.logger.info(f"DEBUG: Checking for 10.webp in bucket {bucket_info['bucket']}")
-                # Check with prefix
-                file_with_prefix = s3.list_objects_v2(
-                    Bucket=bucket_info['bucket'],
-                    Prefix=f"{prefix}10.webp",
-                    MaxKeys=1
-                )
-                app.logger.info(f"DEBUG: Search with prefix '{prefix}10.webp' result: {file_with_prefix}")
-                
-                # Check without prefix
-                file_without_prefix = s3.list_objects_v2(
-                    Bucket=bucket_info['bucket'],
-                    Prefix="10.webp",
-                    MaxKeys=1
-                )
-                app.logger.info(f"DEBUG: Search with just '10.webp' result: {file_without_prefix}")
-                
-                if 'Contents' not in test_prefix_response or len(test_prefix_response['Contents']) == 0:
-                    app.logger.info(f"DEBUG: No objects found with prefix '{prefix}'. Will try without prefix.")
-                    try_without_prefix = True
-            except Exception as e:
-                app.logger.error(f"DEBUG: Error checking prefix: {e}")
-        
-        # Log debug info for performers bucket
-        if bucket_name == 'performers':
-            try:
-                # Just fetch a list of all objects in bucket without prefix to see what's there
-                app.logger.info("DEBUG: Listing all objects in performers bucket:")
-                all_objects_response = s3.list_objects_v2(Bucket=bucket_info['bucket'])
-                if 'Contents' in all_objects_response:
-                    for item in all_objects_response['Contents'][:20]:  # Log first 20 for brevity
-                        app.logger.info(f"DEBUG: Found object: {item['Key']}")
-                else:
-                    app.logger.info("DEBUG: No objects found in performers bucket")
-            except Exception as e:
-                app.logger.error(f"DEBUG: Error listing all objects: {e}")
+        s3_results_candidates = [] # Temp list for S3 scan results before sorting
+        items_retrieved_from_s3 = 0
+        s3_scan_was_truncated = False # True if S3 scan was cut short or S3 reported more data
 
-        # Scan up to max_items_to_scan or until paginator finishes
-        scan_prefix = prefix
+        app.logger.info(f"Scanning S3 for up to {s3_candidate_scan_limit} items to find the {num_recent_items_target} most recent for bucket '{bucket_name}', prefix '{prefix}'.")
+        
+        # Special handling for '10.webp' in 'performers' bucket: add to candidates for sorting
         if bucket_name == 'performers':
-            # Always use empty prefix for performers bucket to find all files
-            scan_prefix = ''
-            app.logger.info(f"Using empty prefix for performers bucket scan to find all files")
-            
-            # Check if the file "10.webp" exists directly in the bucket
             try:
-                app.logger.info(f"Special check for '10.webp' in the bucket")
-                direct_check = s3.head_object(
-                    Bucket=bucket_info['bucket'],
-                    Key="10.webp"
-                )
-                app.logger.info(f"10.webp found directly in bucket: {direct_check}")
-                
-                # If we found the file, add it to the scanned files directly
-                all_scanned_files.append({
+                app.logger.info(f"Special check for '10.webp' in the bucket {bucket_info['bucket']}")
+                # Ensure LastModified is a datetime object for consistent sorting
+                direct_check = s3.head_object(Bucket=bucket_info['bucket'], Key="10.webp")
+                last_modified_dt = direct_check.get('LastModified', datetime.now(timezone.utc))
+                if not isinstance(last_modified_dt, datetime):
+                     last_modified_dt = datetime.now(timezone.utc) # Fallback
+
+                s3_results_candidates.append({
                     'key': "10.webp",
                     'size': direct_check.get('ContentLength', 0),
-                    'last_modified': direct_check.get('LastModified', datetime.now()),
-                    'metadata': direct_check.get('Metadata', {})
+                    'last_modified': last_modified_dt,
+                    'metadata': {} # Metadata will be fetched/merged later
                 })
-                
+                app.logger.info(f"Added 10.webp to candidates with LastModified: {last_modified_dt}")
             except Exception as e:
-                app.logger.error(f"Error checking for 10.webp directly: {str(e)}")
-        
-        for page_obj in s3_paginator.paginate(Bucket=bucket_info['bucket'], Prefix=scan_prefix):
-            page_truncated = False
+                app.logger.error(f"Error checking or adding 10.webp directly: {str(e)}")
+
+        # Main S3 scanning loop
+        scan_prefix_for_paginate = prefix 
+        if bucket_name == 'performers':
+            # For performers, scan_prefix_for_paginate is empty to find all, then filter by actual prefix.
+             scan_prefix_for_paginate = ''
+             app.logger.info(f"Using empty scan_prefix_for_paginate for performers bucket to find all files for recency sort.")
+
+
+        for page_obj in s3_paginator.paginate(Bucket=bucket_info['bucket'], Prefix=scan_prefix_for_paginate):
+            current_page_s3_truncated = page_obj.get('IsTruncated', False)
             if 'Contents' in page_obj:
-                app.logger.info(f"DEBUG: Found {len(page_obj['Contents'])} items with prefix '{scan_prefix}'")
-                
+                app.logger.info(f"DEBUG: S3 page returned {len(page_obj['Contents'])} items with scan_prefix_for_paginate '{scan_prefix_for_paginate}'")
                 for item in page_obj['Contents']:
-                    if item['Key'] == scan_prefix: # Skip the prefix itself
+                    if item['Key'] == scan_prefix_for_paginate and scan_prefix_for_paginate: # Skip the prefix folder itself
                         continue
-                    
-                    # For performers bucket, check if it's an image file
+                    if item['Key'] == "10.webp" and bucket_name == 'performers': # Avoid double-adding if 10.webp was in Contents
+                        # Check if already added from head_object
+                        if not any(c['key'] == "10.webp" for c in s3_results_candidates):
+                             # Not added via head_object, so add it now from list_objects
+                             s3_results_candidates.append({
+                                'key': item['Key'],
+                                'size': item['Size'],
+                                'last_modified': item['LastModified'],
+                                'metadata': {}
+                            })
+                             items_retrieved_from_s3 +=1 # Count it here
+                        continue
+
+
+                    # Performers bucket: specific path filtering
                     if bucket_name == 'performers':
-                        # If it doesn't have an extension, skip it
+                        # Check if the item's key starts with the actual desired prefix string
+                        actual_performer_prefix = 'images/performers/detail/' # As defined in buckets dict
+                        if not item['Key'].startswith(actual_performer_prefix):
+                            continue 
+                        # Also check for image extension
                         file_ext = item['Key'].lower().split('.')[-1] if '.' in item['Key'] else ''
                         if file_ext not in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
                             continue
+                        app.logger.info(f"Queueing file for recency check in performers bucket: {item['Key']}")
                         
-                        # For performers bucket, we want to include:
-                        # 1. ONLY files with the exact prefix 'images/performers/detail/'
-                        if not item['Key'].startswith('images/performers/detail/'):
-                            continue
-                        
-                        app.logger.info(f"Including file in performers bucket: {item['Key']}")
-                        
-                    items_scanned += 1
-                    # Store raw data needed for initial filtering
-                    all_scanned_files.append({
+                    s3_results_candidates.append({
                         'key': item['Key'],
                         'size': item['Size'],
                         'last_modified': item['LastModified'],
-                        'metadata': {}
+                        'metadata': {} 
                     })
+                    items_retrieved_from_s3 += 1
 
-                    if items_scanned >= max_items_to_scan:
-                        page_truncated = True # Mark that we stopped scanning mid-page
-                        break # Stop scanning files within this page
-
-            # Check if S3 itself reported truncation OR if we stopped mid-page
-            current_page_s3_truncated = page_obj.get('IsTruncated', False)
-            is_truncated = current_page_s3_truncated or page_truncated
+                    if items_retrieved_from_s3 >= s3_candidate_scan_limit:
+                        s3_scan_was_truncated = current_page_s3_truncated or True 
+                        break 
             
-            if items_scanned >= max_items_to_scan:
-                 app.logger.info(f"Reached max_items_to_scan ({max_items_to_scan}). S3 IsTruncated on last page: {current_page_s3_truncated}")
-                 break # Stop iterating paginator pages
+            if not s3_scan_was_truncated: 
+                s3_scan_was_truncated = current_page_s3_truncated
+            
+            if items_retrieved_from_s3 >= s3_candidate_scan_limit:
+                 app.logger.info(f"Reached s3_candidate_scan_limit ({s3_candidate_scan_limit}).")
+                 break
 
+        app.logger.info(f"Retrieved {items_retrieved_from_s3} candidate items from S3. S3 scan reported truncation: {s3_scan_was_truncated}")
 
-        app.logger.info(f"Scanned {items_scanned} items. Final is_truncated determination: {is_truncated}")
+        # Sort all candidates by recency (most recent first)
+        s3_results_candidates.sort(key=lambda x: x['last_modified'], reverse=True)
+        
+        # Select the top 'num_recent_items_target'
+        all_scanned_files = s3_results_candidates[:num_recent_items_target]
+        
+        items_scanned = len(all_scanned_files) 
+        is_truncated = s3_scan_was_truncated # If the S3 scan itself was truncated, then our total estimate should reflect that
 
-        # --- Apply Filters (Client-side on the scanned items) ---
+        app.logger.info(f"Selected {items_scanned} most recent items for processing (target: {num_recent_items_target}). Overall list might be truncated: {is_truncated}")
+        
+        unreviewed_count = 0  # Initialize counter for unreviewed images
+
+        # --- Apply Filters (Client-side on the 'all_scanned_files' which are the N most recent) ---
         # 1. Date Filter
         if date_from or date_to:
             pre_filter_count = len(all_scanned_files)
