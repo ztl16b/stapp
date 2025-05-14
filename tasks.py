@@ -23,6 +23,6 @@ def generate_performers(ids: List[int]) -> None:
     if not ids:
         raise ValueError("No performer IDs supplied")
 
-    cmd = ["python", "generate.py", *map(str, ids)]
+    cmd = ["python", "img_generate.py", *map(str, ids)]
     print("→", " ".join(cmd), flush=True)
     run(cmd, check=True)
