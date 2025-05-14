@@ -207,7 +207,7 @@ def login():
             session['logged_in'] = True
             session['permission_level'] = 'reviewer' # Set permission level
             session.permanent = True
-            flash('Reviewer login successful!', 'success')
+            flash('Login successful!', 'success')
             next_url = session.get('next')
             if next_url:
                 session.pop('next', None)
@@ -244,7 +244,6 @@ def index():
     return redirect(url_for('upload'))
 
 @app.route('/upload', methods=['GET', 'POST'])
-@login_required
 def upload():
     if request.method == 'POST':
         # Basic validation for file upload
