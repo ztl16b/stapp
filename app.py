@@ -1898,6 +1898,7 @@ def generate_images_route():
        and shows job status when revisited.
     """
     redis_url_env = os.getenv("REDIS_URL")
+    app.logger.info(f"Attempting to connect to Redis with URL: {redis_url_env}") # Log the URL
     if not redis_url_env:
         flash("REDIS_URL is not set. Cannot connect to Redis.", "danger")
         return render_template(
@@ -1915,7 +1916,7 @@ def generate_images_route():
         redis_conn = Redis.from_url(redis_url_env, ssl_cert_reqs=None)
         redis_conn.ping()
     except Exception as e:
-        app.logger.error(f"Failed to connect to Redis: {e}")
+        app.logger.error(f"Failed to connect to Redis with URL '{redis_url_env}': {e}") # Enhanced error log
         flash(f"Failed to connect to Redis: {e}", "danger")
         return render_template(
             "generate.html",
