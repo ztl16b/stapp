@@ -171,7 +171,7 @@ def main(ids: List[int]) -> None:
         unique_problematic_ids = sorted(list(set(problematic_ids)))
         
         failure_file_content = "\n".join(unique_problematic_ids)
-        s3_key_for_failures = "problem_performers.txt" # You can change the key/path if needed
+        s3_key_for_failures = "temp/problem_performers.txt" # Updated S3 key
 
         print(f"\nEncountered issues with {len(unique_problematic_ids)} performer ID(s). Attempting to upload list to S3...")
         
