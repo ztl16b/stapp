@@ -92,8 +92,9 @@ def run_test_images(performer: str, performer_id: str, out_path: Path) -> None:
     nick, key = acquire_api_key()
     env = os.environ.copy()
     env["OPENAI_API_KEY"] = key
-    env["GOOGLE_CSE_KEY"] = GOOGLE_CSE_KEY
-    env["GOOGLE_CSE_CX"]  = GOOGLE_CSE_CX
+    # GOOGLE_CSE_KEY, GOOGLE_CSE_CX, S3_REF_BUCKET, and S3_REF_BUCKET_PREFIX
+    # will be inherited from the current environment via os.environ.copy()
+    # if they are set, which is expected.
 
     cmd = [
         "python", str(TEST_SCRIPT),
@@ -101,8 +102,13 @@ def run_test_images(performer: str, performer_id: str, out_path: Path) -> None:
         "--out", str(out_path),
         "--id",  performer_id,
     ]
-    print(f"[{nick}] →", " ".join(shlex.quote(c) for c in cmd))
-    subprocess.run(cmd, check=True, env=env)
+    # Enhanced print statement to include performer_id and flush
+    print(f"[{nick}:{performer_id}] Starting img.py: {' '.join(shlex.quote(c) for c in cmd)}", flush=True)
+    
+    # Redirect stderr to stdout for the subprocess
+    # This ensures all output from img.py (including errors) is captured in sequence
+    # by tasks.py through img_generate.py's stdout.
+    subprocess.run(cmd, check=True, env=env, stderr=subprocess.STDOUT)
 
 def process_performer_id(perf_id: int, df: pd.DataFrame) -> str:
     if perf_id not in df.index or pd.isna(df.loc[perf_id, "name_alias"]):

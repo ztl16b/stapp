@@ -13,7 +13,7 @@ Enqueue with:
 
 import subprocess
 from typing import List
-from rq import get_current_job
+from rq import get_current_job #type: ignore
 import shlex
 
 def generate_performers(ids: List[int]) -> None:

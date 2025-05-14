@@ -51,25 +51,60 @@
             {% if job_status == 'finished' %}
                 <div class="alert alert-success">
                     Job&nbsp;{{ job_id }} finished&nbsp;✓
+                    {% if job_meta and job_meta.current_task_description %}
+                        <br>{{ job_meta.current_task_description }}
+                    {% endif %}
                 </div>
             {% elif job_status == 'failed' %}
                 <div class="alert alert-danger">
-                    Job&nbsp;{{ job_id }} failed&nbsp;✕ – check worker logs.
+                    Job&nbsp;{{ job_id }} failed&nbsp;✕
+                    {% if job_meta and job_meta.current_task_description %}
+                        <br>{{ job_meta.current_task_description }}
+                    {% elif job_meta and job_meta.last_progress_line and ('Error' in job_meta.last_progress_line or 'failed' in job_meta.last_progress_line or 'Exception' in job_meta.last_progress_line) %}
+                        <br>Details: {{ job_meta.last_progress_line }}
+                    {% else %}
+                        – check worker logs and detailed log below.
+                    {% endif %}
+                    {% if job_meta and job_meta.stderr_output %}
+                        <hr><strong>Error Output:</strong>
+                        <pre class="small"><code>{{ job_meta.stderr_output }}</code></pre>
+                    {% endif %}
                 </div>
-            {% else %}
+            {% else %} {# Job is likely 'queued', 'started', 'deferred' #}
                 <div class="alert alert-info">
                     Job&nbsp;{{ job_id }} is <strong>{{ job_status }}</strong>&hellip;
+                    {% if job_meta and job_meta.current_task_description %}
+                        <br>{{ job_meta.current_task_description }}
+                    {% elif job_meta and job_meta.last_progress_line %}
+                        <br>Latest: {{ job_meta.last_progress_line }}
+                    {% endif %}
                     <br>
                     This page refreshes every&nbsp;5&nbsp;seconds.
                 </div>
             {% endif %}
         </div>
+
+        {# ─── Detailed Log (from job.meta.progress_lines) ───────────────── #}
+        {% if job_meta and job_meta.progress_lines %}
+        <div class="mt-3">
+            <h4>Detailed Log:</h4>
+            <pre class="bg-light p-3 rounded small" style="max-height: 400px; overflow-y: auto;"><code>{% for line in job_meta.progress_lines -%}
+{{ line }}
+{% endfor %}</code></pre>
+        </div>
+        {% elif job_meta and job_meta.last_progress_line %}
+        {# Fallback to show last_progress_line if progress_lines is empty but last_progress_line exists #}
+        <div class="mt-3">
+            <h4>Detailed Log:</h4>
+            <pre class="bg-light p-3 rounded small"><code>{{ job_meta.last_progress_line }}</code></pre>
+        </div>
+        {% endif %}
     {% endif %}
 
-    {# ─── Final script output (only after finish) ─────────────────────────── #}
+    {# ─── Final script output (legacy, might be different from progress_lines) #}
     {% if output %}
         <div class="mt-4">
-            <h2>Script&nbsp;Output</h2>
+            <h2>Final Script&nbsp;Output</h2>
             <pre class="bg-light p-3 rounded small"><code>{{ output }}</code></pre>
         </div>
     {% endif %}
