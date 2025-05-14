@@ -984,7 +984,8 @@ def browse_buckets():
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
         'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'},
-        'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX} # New reference bucket
+        'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX}, # New reference bucket
+        'problem_performers_edit': {'name': 'Edit Problem Performers', 'bucket': None, 'prefix': None, 'is_editor': True} # Special entry
     }
     app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
@@ -1012,7 +1013,8 @@ def browse_bucket(bucket_name):
         'temp': {'name': 'Temp Bucket', 'bucket': S3_TEMP_BUCKET, 'prefix': 'tmp_upload/'},
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
         'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'},
-        'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX} # New reference bucket
+        'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX}, # New reference bucket
+        'problem_performers_edit': {'name': 'Edit Problem Performers', 'bucket': None, 'prefix': None, 'is_editor': True} # Special entry
     }
 
     if bucket_name not in buckets:
@@ -1994,6 +1996,71 @@ def generate_images_route():
 
     # For GET requests, or if POST fails and re-renders
     return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
+
+@app.route('/edit_problem_performers', methods=['GET', 'POST'])
+@login_required
+def edit_problem_performers_route():
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
+    s3 = get_s3_client()
+    problem_file_key = "temp/problem_performers.txt"
+    current_content = ""
+    error_message = None
+
+    if request.method == 'POST':
+        new_content = request.form.get('problem_performers_content', '')
+        try:
+            if not S3_RESOURCES_BUCKET:
+                raise ValueError("S3_RESOURCES_BUCKET environment variable is not set.")
+            
+            s3.put_object(
+                Bucket=S3_RESOURCES_BUCKET,
+                Key=problem_file_key,
+                Body=new_content.encode('utf-8'),
+                ContentType='text/plain'
+            )
+            flash('Successfully updated problem performers list.', 'success')
+            current_content = new_content # Show updated content after saving
+        except Exception as e:
+            app.logger.error(f"Error updating {problem_file_key} in S3: {str(e)}")
+            flash(f"Error updating problem performers list: {str(e)}", 'danger')
+            error_message = str(e)
+            # In case of save error, try to reload current content to display
+            try:
+                if S3_RESOURCES_BUCKET:
+                    response = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key=problem_file_key)
+                    current_content = response['Body'].read().decode('utf-8')
+            except Exception: # Nosemgrep: general-exception-caught
+                # If reloading also fails, current_content remains as it was before POST or empty
+                pass
+        
+        return render_template('edit_problem_performers.html', 
+                               content=current_content, 
+                               error_message=error_message)
+
+    # GET request logic
+    try:
+        if not S3_RESOURCES_BUCKET:
+            raise ValueError("S3_RESOURCES_BUCKET environment variable is not set.")
+        response = s3.get_object(Bucket=S3_RESOURCES_BUCKET, Key=problem_file_key)
+        current_content = response['Body'].read().decode('utf-8')
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            app.logger.info(f"File '{problem_file_key}' not found in bucket '{S3_RESOURCES_BUCKET}'. Will create on save.")
+            # File doesn't exist, treat as empty content
+            current_content = "" 
+        else:
+            app.logger.error(f"Error fetching '{problem_file_key}' from S3: {str(e)}")
+            error_message = f"Error fetching problem performers list: {str(e)}"
+    except Exception as e:
+        app.logger.error(f"Unexpected error reading '{problem_file_key}' from S3: {str(e)}")
+        error_message = f"Unexpected error reading problem performers list: {str(e)}"
+        
+    return render_template('edit_problem_performers.html', 
+                           content=current_content, 
+                           error_message=error_message)
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
