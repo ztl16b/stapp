@@ -3,7 +3,7 @@
 {% block title %}Edit Completed Performers | Image Interface{% endblock %}
 
 {% block content %}
-<div class="container mt-4">
+<div class="container mt-4 pb-5">
     <h2>Edit Completed Performers List</h2>
     <p>Edit the list of performer IDs below. Each ID should be on a new line.</p>
 
@@ -67,8 +67,8 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .then(data => {
                 if (data.success) {
-                    lookupResultDiv.innerHTML = `
-                        <p><strong>Name:</strong> ${data.name_alias}</p>
+                    lookupResultDiv.innerHTML = 
+                        `<p><strong>Name:</strong> ${data.name_alias}</p>
                          <p><strong>Category:</strong> ${data.category_name}</p>`;
                 } else {
                     lookupResultDiv.innerHTML = `<p class="text-danger">${data.message || 'Unknown error'}</p>`;
@@ -82,4 +82,4 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% endblock %}
-{% endblock %} 
+{% endblock %}
