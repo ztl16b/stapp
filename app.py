@@ -985,8 +985,8 @@ def browse_buckets():
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
         'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'},
         'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX}, # New reference bucket
-        'problem_performers_edit': {'name': 'Edit Problem Performers', 'bucket': None, 'prefix': None, 'is_editor': True}, # Special entry
-        'completed_performers_edit': {'name': 'Edit Completed Performers', 'bucket': None, 'prefix': None, 'is_editor': True} # New special entry
+        'problem_performers_edit': {'name': 'Edit Problem Performers', 'bucket': None, 'prefix': None, 'is_editor': True, 'route_name': 'edit_problem_performers_route'}, # Special entry
+        'completed_performers_edit': {'name': 'Edit Completed Performers', 'bucket': None, 'prefix': None, 'is_editor': True, 'route_name': 'edit_completed_performers_route'} # New special entry
     }
     app.logger.info(f"Buckets dictionary: {buckets}")
     return render_template('browse.html', buckets=buckets)
@@ -1015,8 +1015,8 @@ def browse_bucket(bucket_name):
         'issue': {'name': 'Issue Images', 'bucket': S3_ISSUE_BUCKET, 'prefix': 'issue_files/'},
         'performers': {'name': 'Performers Images', 'bucket': S3_PERFORMER_BUCKET, 'prefix': 'images/performers/detail/'},
         'reference': {'name': 'Reference Images', 'bucket': S3_REF_BUCKET, 'prefix': S3_REF_BUCKET_PREFIX}, # New reference bucket
-        'problem_performers_edit': {'name': 'Edit Problem Performers', 'bucket': None, 'prefix': None, 'is_editor': True}, # Special entry
-        'completed_performers_edit': {'name': 'Edit Completed Performers', 'bucket': None, 'prefix': None, 'is_editor': True} # New special entry
+        'problem_performers_edit': {'name': 'Edit Problem Performers', 'bucket': None, 'prefix': None, 'is_editor': True, 'route_name': 'edit_problem_performers_route'}, # Special entry
+        'completed_performers_edit': {'name': 'Edit Completed Performers', 'bucket': None, 'prefix': None, 'is_editor': True, 'route_name': 'edit_completed_performers_route'} # New special entry
     }
 
     if bucket_name not in buckets:

@@ -14,7 +14,7 @@
                     <h5 class="card-title">{{ item_info.name }}</h5>
                     {% if item_info.is_editor %}
                         <p class="card-text">Edit the {{ item_info.name | lower | replace("edit ", "") }}.</p>
-                        <a href="{{ url_for('edit_problem_performers_route') }}" class="btn btn-secondary">Edit</a>
+                        <a href="{{ url_for(item_info.route_name) }}" class="btn btn-secondary">Edit</a>
                     {% else %}
                         <p class="card-text">Browse images in the {{ item_info.name }} bucket.</p>
                         <a href="{{ url_for('browse_bucket', bucket_name=key) }}" class="btn btn-primary">Browse</a>
