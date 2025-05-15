@@ -2100,7 +2100,7 @@ def edit_completed_performers_route():
     completed_file_key = "temp/completed_performers.txt"
     current_content = ""
     error_message = None
-    id_count = 0
+    id_count = 0 # Initialize id_count
 
     if request.method == 'POST':
         new_content = request.form.get('completed_performers_content', '')
@@ -2127,9 +2127,15 @@ def edit_completed_performers_route():
             except Exception: # Nosemgrep: general-exception-caught
                 pass
         
+        # Recalculate count after POST for display
+        if current_content:
+            ids = [line.strip() for line in current_content.splitlines() if line.strip().isdigit()]
+            id_count = len(ids)
+            
         return render_template('edit_completed_performers.html', 
                                content=current_content, 
-                               error_message=error_message)
+                               error_message=error_message,
+                               id_count=id_count) # Pass id_count
 
     # GET request logic
     try:
@@ -2148,9 +2154,15 @@ def edit_completed_performers_route():
         app.logger.error(f"Unexpected error reading '{completed_file_key}' from S3: {str(e)}")
         error_message = f"Unexpected error reading completed performers list: {str(e)}"
         
+    # Calculate count for GET request
+    if current_content:
+        ids = [line.strip() for line in current_content.splitlines() if line.strip().isdigit()]
+        id_count = len(ids)
+        
     return render_template('edit_completed_performers.html', 
                            content=current_content, 
-                           error_message=error_message)
+                           error_message=error_message,
+                           id_count=id_count) # Pass id_count
 
 @app.route('/api/performer_info/<performer_id>')
 @login_required
