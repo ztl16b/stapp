@@ -123,9 +123,17 @@ def load_performer_data():
         
         csv_reader = csv.DictReader(csv_content.splitlines())
         
-        performer_data = {row['performer_id']: row['name_alias'] for row in csv_reader if 'performer_id' in row and 'name_alias' in row}
+        # performer_data = {row['performer_id']: row['name_alias'] for row in csv_reader if 'performer_id' in row and 'name_alias' in row}
+        new_performer_data = {}
+        for row in csv_reader:
+            if 'performer_id' in row and row['performer_id'].strip(): # Ensure performer_id exists and is not empty
+                new_performer_data[row['performer_id']] = {
+                    'name_alias': row.get('name_alias', 'N/A'),
+                    'category_name': row.get('category_name', 'N/A')
+                }
+        performer_data = new_performer_data
         
-        app.logger.info(f"Loaded {len(performer_data)} performers from CSV")
+        app.logger.info(f"Loaded {len(performer_data)} performers from CSV with details")
     except Exception as e:
         app.logger.error(f"Error loading performer data: {e}")
         performer_data = {}
@@ -183,7 +191,11 @@ def get_performer_name(performer_id):
     if not performer_data:
         load_performer_data()
     
-    return performer_data.get(performer_id, "Unknown Performer")
+    # return performer_data.get(performer_id, "Unknown Performer")
+    performer_info = performer_data.get(str(performer_id)) # Ensure ID is string for lookup
+    if performer_info:
+        return performer_info.get('name_alias', "Unknown Performer")
+    return "Unknown Performer"
 
 def login_required(f):
     @wraps(f)
@@ -2010,6 +2022,7 @@ def edit_problem_performers_route():
     problem_file_key = "temp/problem_performers.txt"
     current_content = ""
     error_message = None
+    id_count = 0 # Initialize id_count
 
     if request.method == 'POST':
         new_content = request.form.get('problem_performers_content', '')
@@ -2038,9 +2051,15 @@ def edit_problem_performers_route():
                 # If reloading also fails, current_content remains as it was before POST or empty
                 pass
         
+        # Recalculate count after POST for display
+        if current_content:
+            ids = [line.strip() for line in current_content.splitlines() if line.strip().isdigit()]
+            id_count = len(ids)
+            
         return render_template('edit_problem_performers.html', 
                                content=current_content, 
-                               error_message=error_message)
+                               error_message=error_message,
+                               id_count=id_count) # Pass id_count
 
     # GET request logic
     try:
@@ -2059,10 +2078,16 @@ def edit_problem_performers_route():
     except Exception as e:
         app.logger.error(f"Unexpected error reading '{problem_file_key}' from S3: {str(e)}")
         error_message = f"Unexpected error reading problem performers list: {str(e)}"
+    
+    # Calculate count for GET request
+    if current_content:
+        ids = [line.strip() for line in current_content.splitlines() if line.strip().isdigit()]
+        id_count = len(ids)
         
     return render_template('edit_problem_performers.html', 
                            content=current_content, 
-                           error_message=error_message)
+                           error_message=error_message,
+                           id_count=id_count) # Pass id_count
 
 @app.route('/edit_completed_performers', methods=['GET', 'POST'])
 @login_required
@@ -2126,6 +2151,28 @@ def edit_completed_performers_route():
     return render_template('edit_completed_performers.html', 
                            content=current_content, 
                            error_message=error_message)
+
+@app.route('/api/performer_info/<performer_id>')
+@login_required
+def api_lookup_performer_info(performer_id):
+    global performer_data
+    if not performer_data:
+        load_performer_data() # Attempt to load if empty
+    
+    if not performer_data: # Still empty after load attempt
+        return jsonify({'success': False, 'message': 'Performer data not available.'}), 500
+
+    # Ensure performer_id is treated as a string for dictionary lookup consistency
+    performer_info = performer_data.get(str(performer_id))
+    
+    if performer_info:
+        return jsonify({
+            'success': True, 
+            'name_alias': performer_info.get('name_alias', 'N/A'),
+            'category_name': performer_info.get('category_name', 'N/A')
+        })
+    else:
+        return jsonify({'success': False, 'message': 'Performer ID not found.'}), 404
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):

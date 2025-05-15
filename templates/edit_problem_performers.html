@@ -7,6 +7,23 @@
     <h2>Edit Problem Performers List</h2>
     <p>Edit the list of performer IDs below. Each ID should be on a new line.</p>
 
+    <p class="text-muted">Total Problem Performer IDs: <strong>{{ id_count if id_count is defined else 0 }}</strong></p>
+
+    <hr>
+    <h4>Performer Lookup</h4>
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <input type="text" id="lookupPerformerId" class="form-control" placeholder="Enter Performer ID">
+        </div>
+        <div class="col-md-2">
+            <button type="button" id="lookupButton" class="btn btn-info w-100">Lookup</button>
+        </div>
+    </div>
+    <div id="lookupResult" class="mb-3" style="min-height: 50px;">
+        <!-- Lookup results will be displayed here -->
+    </div>
+    <hr>
+
     {% if error_message %}
         <div class="alert alert-danger" role="alert">
             {{ error_message }}
@@ -22,4 +39,47 @@
         <a href="{{ url_for('browse_buckets') }}" class="btn btn-secondary">Cancel</a>
     </form>
 </div>
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const lookupButton = document.getElementById('lookupButton');
+    const lookupPerformerIdInput = document.getElementById('lookupPerformerId');
+    const lookupResultDiv = document.getElementById('lookupResult');
+
+    lookupButton.addEventListener('click', function() {
+        const performerId = lookupPerformerIdInput.value.trim();
+        if (!performerId) {
+            lookupResultDiv.innerHTML = '<p class="text-warning">Please enter a Performer ID.</p>';
+            return;
+        }
+
+        lookupResultDiv.innerHTML = '<p class="text-info">Looking up...</p>';
+
+        fetch(`/api/performer_info/${performerId}`)
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { 
+                        throw new Error(err.message || `HTTP error! Status: ${response.status}`); 
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    lookupResultDiv.innerHTML = `
+                        <p><strong>Name:</strong> ${data.name_alias}</p>
+                         <p><strong>Category:</strong> ${data.category_name}</p>`;
+                } else {
+                    lookupResultDiv.innerHTML = `<p class="text-danger">${data.message || 'Unknown error'}</p>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error during performer lookup:', error);
+                lookupResultDiv.innerHTML = `<p class="text-danger">Lookup failed: ${error.message}</p>`;
+            });
+    });
+});
+</script>
+{% endblock %}
 {% endblock %} 
