@@ -99,7 +99,8 @@ def _upload_reference_images(performer_id: str, refs: List[Path]) -> None:
                 key,
                 ExtraArgs={
                     "ACL": "public-read",
-                    "ContentDisposition": "inline"
+                    "ContentDisposition": "inline",
+                    "ContentType": "image/jpeg"
                 },
             )
             print(f"⬆️  {p.name} → s3://{RAW_BUCKET}/{key}", flush=True)

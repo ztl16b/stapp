@@ -88,20 +88,8 @@ def acquire_api_key() -> tuple[str, str]:
 # ─── Worker ──────────────────────────────────────────────────────────────────
 TEST_SCRIPT = Path("img.py")   # must exist in your Heroku slug
 
-# Placeholder for your actual queue fetching logic
-# This needs to be implemented to connect to Redis, SQS, or another queue.
 def get_task_from_queue():
-    """
-    Placeholder function to simulate fetching a task from a queue.
-    Replace this with your actual queue interaction logic.
-    Expected to return a dictionary like {"performer_id": 123} or None if queue is empty.
-    """
-    # Example: Simulate reading one ID at a time from a predefined list or dummy source
-    # For a real implementation, this would interact with Redis, SQS, etc.
-    # For demonstration, let's imagine we have a global list of IDs to process
-    # This is NOT how it should be in production with multiple workers.
     if not hasattr(get_task_from_queue, "dummy_ids"):
-        # get_task_from_queue.dummy_ids = [159512, 4, 72, 79, 106] # Replace with actual queue
         get_task_from_queue.dummy_ids = [] # Start with an empty list for a clean worker
     
     if get_task_from_queue.dummy_ids:
@@ -115,9 +103,6 @@ def run_test_images(performer: str, performer_id: str, out_path: Path) -> None:
     nick, key = acquire_api_key()
     env = os.environ.copy()
     env["OPENAI_API_KEY"] = key
-    # GOOGLE_CSE_KEY, GOOGLE_CSE_CX, S3_REF_BUCKET, and S3_REF_BUCKET_PREFIX
-    # will be inherited from the current environment via os.environ.copy()
-    # if they are set, which is expected.
 
     cmd = [
         "python", str(TEST_SCRIPT),
