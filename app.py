@@ -1101,26 +1101,6 @@ def browse_bucket(bucket_name):
 
         app.logger.info(f"Scanning S3 for up to {s3_candidate_scan_limit} items to find the {num_recent_items_target} most recent for bucket '{bucket_name}', prefix '{prefix}'.")
         
-        # Special handling for '10.webp' in 'performers' bucket: add to candidates for sorting
-        if bucket_name == 'performers':
-            try:
-                app.logger.info(f"Special check for '10.webp' in the bucket {bucket_info['bucket']}")
-                # Ensure LastModified is a datetime object for consistent sorting
-                direct_check = s3.head_object(Bucket=bucket_info['bucket'], Key="10.webp")
-                last_modified_dt = direct_check.get('LastModified', datetime.now(timezone.utc))
-                if not isinstance(last_modified_dt, datetime):
-                     last_modified_dt = datetime.now(timezone.utc) # Fallback
-
-                s3_results_candidates.append({
-                    'key': "10.webp",
-                    'size': direct_check.get('ContentLength', 0),
-                    'last_modified': last_modified_dt,
-                    'metadata': {} # Metadata will be fetched/merged later
-                })
-                app.logger.info(f"Added 10.webp to candidates with LastModified: {last_modified_dt}")
-            except Exception as e:
-                app.logger.error(f"Error checking or adding 10.webp directly: {str(e)}")
-
         # Main S3 scanning loop
         scan_prefix_for_paginate = prefix 
         if bucket_name == 'performers':
