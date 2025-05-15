@@ -234,7 +234,7 @@
                                     <span class="badge bg-danger">FALSE</span>
                                 {% endif %}
                             </td>
-                            {% if bucket_name == 'upload' or bucket_name == 'performers' %}
+                            {% if bucket_name == 'upload'%}
                             <td>{{ file.metadata.get('clip1_v', 'N/A') }}</td>
                             <td>{{ file.metadata.get('clip2_v', 'N/A') }}</td>
                             {% endif %}
