@@ -89,10 +89,10 @@
                         <li class="nav-item">
                             <a class="nav-link {% if request.endpoint == 'perf_review_image_route' %}active{% endif %}" href="{{ url_for('perf_review_image_route') }}">Perf Review</a>
                         </li>
+                        {% if session.permission_level == 'admin' %}
                         <li class="nav-item">
                             <a class="nav-link {% if request.endpoint == 'generate_images_route' %}active{% endif %}" href="{{ url_for('generate_images_route') }}">Generate</a>
                         </li>
-                        {% if session.permission_level == 'admin' %}
                         <li class="nav-item">
                             <a class="nav-link {% if request.endpoint == 'browse_buckets' %}active{% endif %}" href="{{ url_for('browse_buckets') }}">Browse</a>
                         </li>

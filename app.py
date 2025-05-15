@@ -1937,9 +1937,6 @@ def generate_images_route():
         return redirect(url_for('upload'))
 
     redis_url_env = os.getenv("REDIS_URL")
-    # ... (Redis connection logic for POST requests remains the same) ...
-    # This part is primarily for POST to enqueue jobs.
-    # For GET, we don't strictly need Redis connection unless other job-related info is shown.
 
     s3_problem_performers = []
     s3_problem_performers_error = None
