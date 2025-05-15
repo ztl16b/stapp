@@ -320,6 +320,22 @@ def upload():
         # Process the file
         filename = secure_filename(file.filename)
         content_type = file.content_type
+
+        # Ensure image files get a specific image ContentType
+        if content_type == 'application/octet-stream' or not content_type:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in ['.jpg', '.jpeg']:
+                content_type = 'image/jpeg'
+            elif ext == '.png':
+                content_type = 'image/png'
+            elif ext == '.gif':
+                content_type = 'image/gif'
+            elif ext == '.webp':
+                content_type = 'image/webp'
+            elif ext == '.bmp':
+                content_type = 'image/bmp'
+            elif not content_type: # If still None after checking common extensions
+                 content_type = 'application/octet-stream' # Fallback
         
         # Process the single file directly with uploader initials
         result = process_image(file_data, filename, content_type, uploader_initials=uploader_initials)
@@ -587,7 +603,26 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
         # If no specific prefix is matched above, dest_key remains `filename` (root of dest_bucket)
     
     # Determine content type based on file extension
-    content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+    content_type_guess, _ = mimetypes.guess_type(filename)
+    
+    # Start with the guess or a generic fallback
+    content_type = content_type_guess if content_type_guess else 'application/octet-stream'
+
+    # If the determined content_type is generic (application/octet-stream)
+    # and the file has a common image extension, override with a specific image ContentType.
+    if content_type == 'application/octet-stream':
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in ['.jpg', '.jpeg']:
+            content_type = 'image/jpeg'
+        elif ext == '.png':
+            content_type = 'image/png'
+        elif ext == '.gif':
+            content_type = 'image/gif'
+        elif ext == '.webp':
+            content_type = 'image/webp'
+        elif ext == '.bmp':
+            content_type = 'image/bmp'
+    # For non-image files or images with specific mimetypes, the initial 'content_type' will be used or remains 'application/octet-stream' if truly unknown.
         
     # Get metadata from source object if it exists
     try:

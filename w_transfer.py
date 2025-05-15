@@ -15,10 +15,9 @@ import requests                   # type: ignore
 import schedule                   # type: ignore
 from botocore.exceptions import ClientError  # type: ignore
 from dotenv import load_dotenv    # type: ignore
-
-# ─────────────────────────── ENV ────────────────────────────────────────────
 load_dotenv()
 
+# ─────────────────────────── ENV ────────────────────────────────────────────
 AWS_ACCESS_KEY_ID       = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY   = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION              = os.getenv("AWS_REGION")
@@ -105,7 +104,7 @@ B) the *event type* given in **{category_name}** when no single performer matter
 1. Choose evaluation target
 ━━━━━━━━━━━━━━━━━━━━━━
 • If **{name_alias}** clearly refers to a person / band → target = *Performer*.  
-• Otherwise (empty, “N/A”, generic sport / event name) → target = *Event*.
+• Otherwise (empty, "N/A", generic sport / event name) → target = *Event*.
 
 ━━━━━━━━━━━━━━━━━━━━━━
 2. Scoring rules (0 = totally wrong, 100 = perfect match)
@@ -135,7 +134,7 @@ Subject : "{name_alias}"
 Event   : {category_name}
 
 ━━━━━━━━━━━━━━━━━━━
-A. CRITICAL “CLIPPING” CHECK  ⟶ auto-Reject
+A. CRITICAL "CLIPPING" CHECK  ⟶ auto-Reject
 ━━━━━━━━━━━━━━━━━━━
 ▶ Scan FIRST for **any limb or body part that clips through**:
 • musical instruments (guitar, drum, mic stand, etc.)
@@ -144,7 +143,7 @@ A. CRITICAL “CLIPPING” CHECK  ⟶ auto-Reject
 If you find even ONE clipping point →  
  • Set **Realism Score = 3** (or lower)  
  • Set **Verdict = Reject**  
- • “Reason” must name the body part and object (e.g., “Left leg clips through guitar body.”)  
+ • "Reason" must name the body part and object (e.g., "Left leg clips through guitar body.")  
  • Stop here – do **not** run the remaining tests.
 
 ━━━━━━━━━━━━━━━━━━━
@@ -170,9 +169,9 @@ SCORING
 ━━━━━━━━━━
 OUTPUT (format exactly)
 ━━━━━━━━━━
-Realism Score: <0-10> – <short description of worst defect or “No defects”>  
+Realism Score: <0-10> – <short description of worst defect or "No defects">  
 Verdict: <Approve|Reject>  
-Reason: <≤12 words (e.g., “Leg merges through guitar.” or “Image fully photorealistic.”)>
+Reason: <≤12 words (e.g., "Leg merges through guitar." or "Image fully photorealistic.")>
 """
 
 # ───────────────────────── LOGGING ──────────────────────────────────────────
@@ -334,13 +333,38 @@ def process_image(key: str) -> bool:
 # ───────────── helper: upload to Issue bucket ─────────────
 def _to_issue(body: bytes, ctype: str, keyname: str, extra_meta: Dict[str, str]) -> None:
     meta = {**extra_meta, "upload_time": datetime.now(timezone.utc).isoformat()}
+    
+    # Determine the content type for the S3 upload
+    upload_content_type = ctype # Start with ContentType from original S3 object or default 'image/jpeg' (from obj.get call)
+
+    # If the original (or default) content type is generic (application/octet-stream),
+    # or if it is the default 'image/jpeg' from the get() call and the keyname (which has original ext) suggests a different specific image type,
+    # try to determine a more specific one from the file extension in keyname.
+    file_extension = os.path.splitext(keyname)[1].lower()
+
+    if upload_content_type == 'application/octet-stream' or \
+       (ctype == 'image/jpeg' and file_extension not in ['.jpg', '.jpeg', '']): # Check if default 'image/jpeg' was likely used
+        
+        if file_extension in ['.jpg', '.jpeg']:
+            upload_content_type = 'image/jpeg'
+        elif file_extension == '.png':
+            upload_content_type = 'image/png'
+        elif file_extension == '.gif':
+            upload_content_type = 'image/gif'
+        elif file_extension == '.webp':
+            upload_content_type = 'image/webp'
+        elif file_extension == '.bmp':
+            upload_content_type = 'image/bmp'
+        # If it's still 'application/octet-stream' and not a known image ext, it remains as is.
+        # Or if ctype was 'image/jpeg' (default) and ext is not a known image, it also remains 'image/jpeg'.
+
     s3.put_object(
         Bucket=S3_ISSUE_BUCKET,
         Key=f"{S3_ISSUE_BUCKET_PREFIX}{keyname}",
         ACL="public-read",
         ContentDisposition="inline",
         Body=body,
-        ContentType=ctype,
+        ContentType=upload_content_type, # Use the refined content type
         Metadata={k: _http_safe(v) for k, v in meta.items()},
     )
     logger.info("Rejected → %s/%s", S3_ISSUE_BUCKET, keyname)

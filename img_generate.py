@@ -35,7 +35,7 @@ s3 = boto3.client(
 )
 
 def upload_to_s3(local_path: Path, s3_key: str) -> None:
-    s3.upload_file(str(local_path), S3_BUCKET, s3_key, ExtraArgs={'ACL': 'public-read', 'ContentDisposition': 'inline'})
+    s3.upload_file(str(local_path), S3_BUCKET, s3_key, ExtraArgs={'ACL': 'public-read', 'ContentDisposition': 'inline', 'ContentType': 'image/jpeg'})
 
 def load_performer_meta() -> pd.DataFrame:
     """Download performer-infos CSV from S3 → DataFrame indexed by performer_id"""
