@@ -1996,32 +1996,44 @@ def generate_images_route():
         
         # ... (performer_ids parsing logic remains the same) ...
         performer_ids_str = request.form.get("performer_ids", "")
-        performer_ids = [
-            pid for pid in re.split(r"[\s,]+", performer_ids_str)
+        performer_ids_list = [
+            pid.strip() for pid in re.split(r"[\\s,]+", performer_ids_str)
             if pid.strip().isdigit()
         ]
 
-        if not performer_ids:
+        if not performer_ids_list:
             flash("Please enter at least one numeric performer ID.", "warning")
             return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
         else:
-            try:
-                job = q.enqueue(
-                    generate_performers,
-                    [int(pid) for pid in performer_ids],
-                    job_timeout=600 
-                )
+            queued_jobs_count = 0
+            failed_to_queue_count = 0
+            for pid_str in performer_ids_list:
+                try:
+                    performer_id = int(pid_str)
+                    job = q.enqueue(
+                        generate_performers, # This will now be called with a single ID
+                        performer_id,
+                        job_timeout=600 
+                    )
+                    app.logger.info(f"Image-generation job '{job.id}' queued for ID: {performer_id}.")
+                    queued_jobs_count += 1
+                except Exception as e:
+                    app.logger.error(f"Error enqueuing job for ID {pid_str}: {e}", exc_info=True)
+                    failed_to_queue_count += 1
+            
+            if queued_jobs_count > 0:
                 flash(
-                    f"Image-generation job '{job.id}' queued for IDs: {', '.join(performer_ids)}.",
+                    f"{queued_jobs_count} image-generation job(s) queued successfully for IDs: {', '.join(performer_ids_list[:queued_jobs_count])}.", # Show only successfully queued IDs for brevity if many
                     "success"
                 )
-                # Redirect back to the GET version of the page. The GET will re-fetch S3 data.
-                # No job.id needed in redirect for this display requirements.
-                return redirect(url_for("generate_images_route")) 
-            except Exception as e:
-                app.logger.error(f"Error enqueuing job: {e}", exc_info=True)
-                flash(f"Error starting image generation job: {str(e)}. Please try again.", "danger")
-                return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)
+            if failed_to_queue_count > 0:
+                flash(
+                    f"Failed to queue {failed_to_queue_count} image-generation job(s). Please check logs.",
+                    "danger"
+                )
+            
+            # Redirect back to the GET version of the page.
+            return redirect(url_for("generate_images_route")) 
 
     # For GET requests, or if POST fails and re-renders
     return render_template("generate.html", s3_problem_performers=s3_problem_performers, s3_problem_performers_error=s3_problem_performers_error)

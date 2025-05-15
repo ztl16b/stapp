@@ -17,20 +17,21 @@ from rq import get_current_job #type: ignore
 import shlex
 import re
 
-def generate_performers(ids: List[int]) -> None:
+def generate_performers(performer_id: int) -> None:
     """
     Call your existing img_generate.py script and update job metadata with progress.
+    Now expects a single performer_id.
     """
     job = get_current_job()
 
-    if not ids:
+    if not isinstance(performer_id, int):
         if job:
-            job.meta['current_task_description'] = "Error: No performer IDs supplied."
+            job.meta['current_task_description'] = f"Error: Invalid performer ID type supplied: {type(performer_id)}."
             job.save_meta()
-        raise ValueError("No performer IDs supplied")
+        raise ValueError(f"Invalid performer ID type supplied: {type(performer_id)}")
 
-    # Construct the command arguments
-    cmd_args = ["python", "img_generate.py"] + [str(pid) for pid in ids]
+    # Construct the command arguments for a single ID
+    cmd_args = ["python", "img_generate.py", str(performer_id)]
     
     # For logging, create a string representation of the command
     logged_cmd = " ".join(shlex.quote(c) for c in cmd_args)
@@ -38,7 +39,7 @@ def generate_performers(ids: List[int]) -> None:
 
     if job:
         job.meta['progress_lines'] = [] # Initialize a list for progress lines
-        job.meta['last_progress_line'] = f"Job initiated for IDs: {', '.join(map(str, ids))}. Waiting for first log line..."
+        job.meta['last_progress_line'] = f"Job initiated for ID: {performer_id}. Waiting for first log line..."
         job.meta['stderr_output'] = "" # Initialize stderr output
         job.meta['failed_generations'] = [] # Initialize list for specific generation failures
         job.save_meta()
@@ -159,7 +160,7 @@ def generate_performers(ids: List[int]) -> None:
                 job.save_meta()
 
     if process.returncode != 0:
-        error_message = f"Error during generation for IDs: {', '.join(map(str, ids))}. Exit code: {process.returncode}."
+        error_message = f"Error during generation for ID: {performer_id}. Exit code: {process.returncode}."
         if final_stderr:
             error_message += f" Stderr: {final_stderr[:250]}..." # Add a snippet of stderr
         if job:
@@ -169,7 +170,7 @@ def generate_performers(ids: List[int]) -> None:
         raise subprocess.CalledProcessError(process.returncode, cmd_args, output=stdout_remaining, stderr=final_stderr)
     
     if job:
-        success_message = f"Successfully completed generation for IDs: {', '.join(map(str, ids))}"
+        success_message = f"Successfully completed generation for ID: {performer_id}"
         job.meta['current_task_description'] = success_message
         # The last line from stdout should already be in 'last_progress_line'
         # If not, or if we want to ensure a completion message:
