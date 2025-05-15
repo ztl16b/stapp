@@ -49,11 +49,7 @@
         {% elif s3_problem_performers %}
             <div class="alert alert-warning" role="alert">
                 <p>The following performer IDs were previously identified as problematic during generation runs:</p>
-                <ul class="list-group">
-                    {% for performer_id in s3_problem_performers %}
-                        <li class="list-group-item">{{ performer_id }}</li>
-                    {% endfor %}
-                </ul>
+                <p><strong>{{ s3_problem_performers | join(', ') }}</strong></p>
             </div>
         {% else %}
             <div class="alert alert-success" role="alert">
