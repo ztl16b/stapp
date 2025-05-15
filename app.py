@@ -2075,6 +2075,7 @@ def edit_completed_performers_route():
     completed_file_key = "temp/completed_performers.txt"
     current_content = ""
     error_message = None
+    id_count = 0
 
     if request.method == 'POST':
         new_content = request.form.get('completed_performers_content', '')
