@@ -1931,6 +1931,11 @@ def generate_images_route():
     """Page with a form that starts a background image-generation job.
        Displays a list of problematic performer IDs from S3.
     """
+    # Add permission check
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('upload'))
+
     redis_url_env = os.getenv("REDIS_URL")
     # ... (Redis connection logic for POST requests remains the same) ...
     # This part is primarily for POST to enqueue jobs.
