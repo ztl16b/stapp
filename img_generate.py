@@ -88,6 +88,29 @@ def acquire_api_key() -> tuple[str, str]:
 # ─── Worker ──────────────────────────────────────────────────────────────────
 TEST_SCRIPT = Path("img.py")   # must exist in your Heroku slug
 
+# Placeholder for your actual queue fetching logic
+# This needs to be implemented to connect to Redis, SQS, or another queue.
+def get_task_from_queue():
+    """
+    Placeholder function to simulate fetching a task from a queue.
+    Replace this with your actual queue interaction logic.
+    Expected to return a dictionary like {"performer_id": 123} or None if queue is empty.
+    """
+    # Example: Simulate reading one ID at a time from a predefined list or dummy source
+    # For a real implementation, this would interact with Redis, SQS, etc.
+    # For demonstration, let's imagine we have a global list of IDs to process
+    # This is NOT how it should be in production with multiple workers.
+    if not hasattr(get_task_from_queue, "dummy_ids"):
+        # get_task_from_queue.dummy_ids = [159512, 4, 72, 79, 106] # Replace with actual queue
+        get_task_from_queue.dummy_ids = [] # Start with an empty list for a clean worker
+    
+    if get_task_from_queue.dummy_ids:
+        next_id = get_task_from_queue.dummy_ids.pop(0)
+        print(f"[QueueStub] Dispensing task ID: {next_id}")
+        return {"performer_id": next_id}
+    print("[QueueStub] No tasks in dummy queue.")
+    return None
+
 def run_test_images(performer: str, performer_id: str, out_path: Path) -> None:
     nick, key = acquire_api_key()
     env = os.environ.copy()
@@ -112,7 +135,7 @@ def run_test_images(performer: str, performer_id: str, out_path: Path) -> None:
 
 def process_performer_id(perf_id: int, df: pd.DataFrame) -> str:
     if perf_id not in df.index or pd.isna(df.loc[perf_id, "name_alias"]):
-        return f"⚠️  {perf_id} skipped – ID not in CSV"
+        return f"⚠️  {perf_id} skipped – ID not in CSV or name_alias is NaN"
 
     performer  = df.loc[perf_id, "name_alias"]
     s3_key     = f"{S3_PREFIX}/{perf_id}.jpg" if S3_PREFIX else f"{perf_id}.jpg"
@@ -134,88 +157,125 @@ def process_performer_id(perf_id: int, df: pd.DataFrame) -> str:
         elapsed = time.perf_counter() - start
         return f"✅ [{performer} 🕒 {elapsed:.2f}s] → s3://{S3_BUCKET}/{s3_key}"
 
-# ─── Main entry - expects performer IDs as CLI args ──────────────────────────
-def main(ids: List[int]) -> None:
-    if not ids:
-        print("Usage: python generate.py 118 106 72 …")
-        sys.exit(1)
+# ─── Main entry - Refactored to worker loop ──────────────────────────
+# Commenting out the original main function and its S3 problematic ID logic
+# def main(ids: List[int]) -> None:
+#     if not ids:
+#         print("Usage: python generate.py 118 106 72 …")
+#         sys.exit(1)
+# 
+#     df = load_performer_meta()
+#     problematic_ids = [] # List to store IDs that cause issues
+# 
+#     max_workers = min(len(ids), TOTAL_RATE_LIMIT)
+#     with ThreadPoolExecutor(max_workers=max_workers) as pool:
+#         futures = {pool.submit(process_performer_id, pid, df): pid for pid in ids}
+#         for fut in as_completed(futures):
+#             original_pid = futures[fut] # Get the original pid associated with this future
+#             try:
+#                 result_message = fut.result()
+#                 print(result_message) # Keep existing print behavior
+# 
+#                 # Check for failure or warning messages
+#                 if (result_message.startswith("❌ Generation failed for") or \
+#                     result_message.startswith("❌ Upload failed for") or \
+#                     result_message.startswith("⚠️")):
+#                     problematic_ids.append(str(original_pid))
+#             
+#             except Exception as e:
+#                 # This catches exceptions from the process_performer_id task itself,
+#                 # not just errors reported in its return string.
+#                 print(f"ERROR: Exception while processing performer ID {original_pid}: {e}")
+#                 problematic_ids.append(str(original_pid)) # Log ID if task itself crashes
+# 
+#     print("\nProcessing completed for all submitted IDs.")
+# 
+#     # Convert current run problem IDs to a set for efficient handling
+#     problematic_ids_current_run_set = set(str(pid) for pid in problematic_ids)
+# 
+#     # --- Logic for handling problematic_ids.txt on S3 ---
+#     # This logic might need to be re-evaluated in a distributed worker context.
+#     # For now, it's commented out as individual workers shouldn't manage this shared file directly.
+#     # 
+#     s3_key_for_failures = os.getenv("PROBLEMATIC_IDS_S3_KEY", "problematic_performer_ids.txt")
+#     existing_problem_ids_content = ""
+#     try:
+#         response = s3.get_object(Bucket=RESOURCES_BUCKET, Key=s3_key_for_failures)
+#         existing_problem_ids_content = response['Body'].read().decode('utf-8')
+#         print(f"Successfully downloaded existing problematic IDs list from s3://{RESOURCES_BUCKET}/{s3_key_for_failures}")
+#     except s3.exceptions.NoSuchKey:
+#         print(f"No existing problematic IDs list found at s3://{RESOURCES_BUCKET}/{s3_key_for_failures}. A new one will be created if needed.")
+#     except Exception as e:
+#         print(f"WARN: Could not download existing problematic IDs list. Proceeding without it. Error: {e}")
+# 
+#     all_problem_ids_set = set(existing_problem_ids_content.splitlines())
+#     all_problem_ids_set.update(problematic_ids_current_run_set)
+#     
+#     if not problematic_ids_current_run_set:
+#         print("No new problematic IDs in this run.")
+#     else:
+#         print(f"Newly problematic IDs in this run: {', '.join(sorted(list(problematic_ids_current_run_set)))}")
+# 
+#     if not all_problem_ids_set:
+#         print("No problematic IDs to upload (neither existing nor new).")
+#     else:
+#         # Sort for consistency
+#         final_ids_list = sorted(list(all_problem_ids_set))
+#         failure_file_content = "\n".join(final_ids_list)
+#         
+#         try:
+#             s3.put_object(
+#                 Bucket=RESOURCES_BUCKET, 
+#                 Key=s3_key_for_failures, 
+#                 Body=failure_file_content,
+#                 ContentType='text/plain',
+#             )
+#             print(f"Successfully updated list of problematic performer IDs ({len(final_ids_list)} total) to: s3://{RESOURCES_BUCKET}/{s3_key_for_failures}")
+#         except Exception as e:
+#             print(f"ERROR: Failed to upload updated problematic performer IDs list to S3. Details: {e}")
+#             print("Current run problematic IDs were:")
+#             for pid_val in sorted(list(problematic_ids_current_run_set)):
+#                 print(f"- {pid_val}")
 
-    df = load_performer_meta()
-    problematic_ids = [] # List to store IDs that cause issues
+def main_worker_loop() -> None:
+    print("Image generation worker started. Polling for tasks...")
+    df = load_performer_meta()  # Load metadata once per worker instance
 
-    max_workers = min(len(ids), TOTAL_RATE_LIMIT)
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(process_performer_id, pid, df): pid for pid in ids}
-        for fut in as_completed(futures):
-            original_pid = futures[fut] # Get the original pid associated with this future
-            try:
-                result_message = fut.result()
-                print(result_message) # Keep existing print behavior
+    while True:
+        task = get_task_from_queue() # Fetch a single task (e.g., performer ID)
 
-                # Check for failure or warning messages
-                if (result_message.startswith("❌ Generation failed for") or \
-                    result_message.startswith("❌ Upload failed for") or \
-                    result_message.startswith("⚠️")):
-                    problematic_ids.append(str(original_pid))
-            
-            except Exception as e:
-                # This catches exceptions from the process_performer_id task itself,
-                # not just errors reported in its return string.
-                print(f"ERROR: Exception while processing performer ID {original_pid}: {e}")
-                problematic_ids.append(str(original_pid)) # Log ID if task itself crashes
-
-    print("\nProcessing completed for all submitted IDs.")
-
-    # Convert current run problem IDs to a set for efficient handling
-    problematic_ids_current_run_set = set(str(pid) for pid in problematic_ids)
-
-    if not problematic_ids_current_run_set:
-        print("\nNo new problematic performer IDs identified in this run.")
-    else:
-        print(f"\nIdentified {len(problematic_ids_current_run_set)} problematic ID(s) in this run. Attempting to update S3 list...")
-        
-        s3_key_for_failures = "temp/problem_performers.txt"
-        existing_ids_from_s3 = set()
-
-        # Try to fetch existing problematic IDs from S3
-        try:
-            response = s3.get_object(Bucket=RESOURCES_BUCKET, Key=s3_key_for_failures)
-            file_content = response['Body'].read().decode('utf-8')
-            if file_content.strip():
-                existing_ids_from_s3.update(line.strip() for line in file_content.splitlines() if line.strip())
-            print(f"Found {len(existing_ids_from_s3)} existing problematic ID(s) in S3 file.")
-        except s3.exceptions.NoSuchKey:
-            print(f"No existing '{s3_key_for_failures}' file found in S3. A new file will be created.")
-        except Exception as e:
-            print(f"ERROR: Could not read existing problematic IDs from S3. Will proceed with current run IDs only. Details: {e}")
-
-        # Combine existing IDs with new IDs from the current run
-        all_problem_ids_set = existing_ids_from_s3.union(problematic_ids_current_run_set)
-
-        if not all_problem_ids_set:
-            print("No problematic IDs to upload (neither existing nor new).")
+        if task:
+            performer_id = task.get("performer_id")
+            if performer_id:
+                print(f"Processing performer ID: {performer_id}...")
+                try:
+                    result_message = process_performer_id(int(performer_id), df)
+                    print(result_message)
+                    # Handle problematic IDs:
+                    # If process_performer_id indicates a failure/warning,
+                    # you might want to log this or send it to a separate "failed tasks" queue.
+                    # The logic for managing a global problematic_ids.txt needs careful thought
+                    # in a distributed system (e.g., a separate service or atomic updates).
+                    if (result_message.startswith("❌ Generation failed for") or \
+                        result_message.startswith("❌ Upload failed for") or \
+                        result_message.startswith("⚠️")):
+                        # Log problematic ID, perhaps to a different system/queue
+                        print(f"Problematic ID encountered: {performer_id}. Details: {result_message}")
+                except Exception as e:
+                    print(f"ERROR: Unhandled exception while processing performer ID {performer_id}: {e}")
+                    # Log this critical failure
+            else:
+                print("Received task in an unexpected format.")
         else:
-            # Sort for consistency
-            final_ids_list = sorted(list(all_problem_ids_set))
-            failure_file_content = "\n".join(final_ids_list)
-            
-            try:
-                s3.put_object(
-                    Bucket=RESOURCES_BUCKET, 
-                    Key=s3_key_for_failures, 
-                    Body=failure_file_content,
-                    ContentType='text/plain',
-                )
-                print(f"Successfully updated list of problematic performer IDs ({len(final_ids_list)} total) to: s3://{RESOURCES_BUCKET}/{s3_key_for_failures}")
-            except Exception as e:
-                print(f"ERROR: Failed to upload updated problematic performer IDs list to S3. Details: {e}")
-                print("Current run problematic IDs were:")
-                for pid_val in sorted(list(problematic_ids_current_run_set)):
-                    print(f"- {pid_val}")
+            # No task found, wait a bit before polling again
+            print("No task in queue. Worker will sleep for 10 seconds.")
+            time.sleep(10) # Adjust sleep time as needed; consider exponential backoff for empty queue
 
 if __name__ == "__main__":
-    try:
-        performer_ids = [int(arg) for arg in sys.argv[1:]]
-    except ValueError:
-        sys.exit("ERROR: All arguments must be integer performer IDs.")
-    main(performer_ids)
+    # Commenting out old CLI parsing and main call
+    # try:
+    #     performer_ids = [int(arg) for arg in sys.argv[1:]]
+    # except ValueError:
+    #     sys.exit("ERROR: All arguments must be integer performer IDs.")
+    # main(performer_ids)
+    main_worker_loop()
