@@ -612,6 +612,10 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
         if S3_TEMP_BUCKET_PREFIX:
             dest_key = f"{S3_TEMP_BUCKET_PREFIX}{filename}"
         # else dest_key remains filename (root of S3_TEMP_BUCKET)
+    elif destination == 'to_issue_staging': # New destination type for moving TO Issue bucket
+        if dest_bucket == S3_ISSUE_BUCKET and S3_ISSUE_BUCKET_PREFIX:
+            dest_key = f"{S3_ISSUE_BUCKET_PREFIX}{filename}"
+        # else dest_key remains filename (root of S3_ISSUE_BUCKET)
     else:
         # Fallback logic if destination hint is None or not one of the handled specific actions.
         # This attempts to match based on bucket type if a prefix is defined.
@@ -681,7 +685,7 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
     elif destination == 'incredible':
         metadata['review_status'] = 'TRUE'
         metadata['perfimg_status'] = 'TRUE'
-    elif destination in ['to_upload_staging', 'to_temp_staging']: # New
+    elif destination in ['to_upload_staging', 'to_temp_staging', 'to_issue_staging']: # New
         metadata['review_status'] = 'FALSE'
         metadata['perfimg_status'] = 'FALSE'
         if 'bad_reason' in metadata: # Remove bad_reason if moving to staging
@@ -2345,6 +2349,67 @@ def batch_move_from_issue_route(target_action):
          flash("No files were processed or eligible for the batch operation.", "info")
 
     return redirect(url_for('browse_bucket', bucket_name='issue'))
+
+@app.route('/batch_move_from_upload/<target_action>', methods=['POST'])
+@login_required
+def batch_move_from_upload_route(target_action):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('browse_bucket', bucket_name='upload'))
+
+    selected_files = request.form.getlist('selected_files')
+    if not selected_files:
+        flash('No files were selected for the batch operation.', 'warning')
+        return redirect(url_for('browse_bucket', bucket_name='upload'))
+
+    source_bucket = S3_UPLOAD_BUCKET
+    successful_moves = 0
+    failed_moves = 0
+    
+    actual_destination_bucket = None
+    actual_destination_bucket_name = ""
+    destination_hint_for_prepare = ""
+
+    if target_action == 'to_issue':
+        actual_destination_bucket = S3_ISSUE_BUCKET
+        actual_destination_bucket_name = "Issue"
+        destination_hint_for_prepare = 'to_issue_staging'
+    elif target_action == 'to_bad':
+        actual_destination_bucket = S3_BAD_BUCKET
+        actual_destination_bucket_name = "Bad"
+        destination_hint_for_prepare = 'bad' # Existing hint
+    elif target_action == 'to_incredible':
+        actual_destination_bucket = S3_INCREDIBLE_BUCKET
+        actual_destination_bucket_name = "Incredible"
+        destination_hint_for_prepare = 'incredible' # Existing hint
+    elif target_action == 'to_performers':
+        actual_destination_bucket = S3_PERFORMER_BUCKET
+        actual_destination_bucket_name = "Performers"
+        destination_hint_for_prepare = 'good' # Existing hint, sets review/perfimg status to TRUE
+    else:
+        flash(f"Invalid batch target action: {target_action}", "danger")
+        return redirect(url_for('browse_bucket', bucket_name='upload'))
+
+    for object_key in selected_files:
+        app.logger.info(f"Batch moving '{object_key}' from {source_bucket} to {actual_destination_bucket_name} bucket ({actual_destination_bucket}) using hint '{destination_hint_for_prepare}'")
+        # For 'bad' destination, no bad_reason is passed for batch moves from upload.
+        # For 'incredible' and 'performers' (using 'good' hint), no special params needed beyond what _prepare_s3_operation does.
+        if move_s3_object(source_bucket, actual_destination_bucket, object_key, destination=destination_hint_for_prepare):
+            successful_moves += 1
+        else:
+            failed_moves += 1
+            app.logger.error(f"Batch move FAILED for '{object_key}' to {actual_destination_bucket_name} bucket. See previous logs from move_s3_object.")
+
+    if successful_moves > 0:
+        flash(f"Successfully moved {successful_moves} file(s) to the {actual_destination_bucket_name} bucket.", "success")
+    if failed_moves > 0:
+        flash(f"Failed to move {failed_moves} file(s) to the {actual_destination_bucket_name} bucket. Please check logs for details.", "danger")
+    if not selected_files: # Should be caught by earlier check
+        pass 
+    elif successful_moves == 0 and failed_moves == 0 and selected_files:
+         flash("No files were processed or eligible for the batch operation.", "info")
+
+    return redirect(url_for('browse_bucket', bucket_name='upload'))
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
