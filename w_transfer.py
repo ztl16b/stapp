@@ -65,6 +65,11 @@ REDIS_URL               = os.getenv("REDIS_URL")
 LOCK_TTL                = int(os.getenv("LOCK_TTL", "900"))          # 15m default
 PROCESSED_TTL           = int(os.getenv("PROCESSED_TTL", str(7*24*3600)))  # 7 days
 
+# NEW: Gemini Rate Limiting Config
+GEMINI_RPM_LIMIT          = int(os.getenv("GEMINI_RPM_LIMIT", "150"))
+GEMINI_RPM_WINDOW_SECONDS = 60  # Corresponds to "Per Minute" for RPM
+REDIS_GEMINI_RPM_KEY    = "gemini:api_rate_limit_rpm_timestamps" # Unique key for this limiter
+
 REQUIRED_VARS = (
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION,
     S3_TEMP_BUCKET, S3_UPLOAD_BUCKET, S3_ISSUE_BUCKET,
@@ -96,6 +101,55 @@ s3 = boto3.client(
 rds = redis.from_url(REDIS_URL, decode_responses=True, ssl_cert_reqs=None)
 
 # (No global genai.configure — we set per‑call)
+
+# ─────────────────── Gemini Rate Limiter ───────────────────────────────────
+def _wait_for_gemini_rate_limit() -> None:
+    """
+    Blocks until a slot is available for a Gemini API call, based on a shared
+    RPM limit enforced via Redis. Uses global 'rds' and 'logger'.
+    """
+    # Generate a unique member ID for this attempt to ensure it's a new entry in ZSET.
+    unique_member_id = f"{time.time():.6f}:{os.getpid()}:{time.monotonic_ns()}"
+
+    while True:
+        now = time.time()
+        
+        # Remove timestamps older than the current window.
+        # These are entries whose score (timestamp) is <= (now - window_duration).
+        threshold_timestamp = now - GEMINI_RPM_WINDOW_SECONDS
+        rds.zremrangebyscore(REDIS_GEMINI_RPM_KEY, '-inf', threshold_timestamp)
+        
+        # Count how many requests are currently in the window.
+        current_request_count = rds.zcard(REDIS_GEMINI_RPM_KEY)
+        
+        if current_request_count < GEMINI_RPM_LIMIT:
+            # Slot available, add current request's timestamp and proceed.
+            rds.zadd(REDIS_GEMINI_RPM_KEY, {unique_member_id: now})
+            # Set an expiry on the key itself as a safeguard.
+            # Expire after a bit more than the window to be safe (e.g., window + 10% + 1 min buffer).
+            expiry_seconds = GEMINI_RPM_WINDOW_SECONDS + int(GEMINI_RPM_WINDOW_SECONDS * 0.1) + 60
+            rds.expire(REDIS_GEMINI_RPM_KEY, expiry_seconds)
+            break # Allowed to proceed
+        else:
+            # Limit reached, calculate wait time.
+            # Find the timestamp of the oldest request in the current window.
+            oldest_request_in_window = rds.zrange(REDIS_GEMINI_RPM_KEY, 0, 0, withscores=True)
+            
+            wait_seconds = 0.5  # Default wait time if set is empty or in an unexpected state.
+            
+            if oldest_request_in_window:
+                oldest_timestamp_score = oldest_request_in_window[0][1]
+                # Time until the oldest request expires from the window.
+                wait_seconds = (oldest_timestamp_score + GEMINI_RPM_WINDOW_SECONDS) - now
+                # Ensure positive wait time, add a small buffer (e.g., 100-200ms) to avoid hammering.
+                wait_seconds = max(0.2, wait_seconds + 0.15)
+            
+            logger.info(
+                f"Gemini API rate limit ({GEMINI_RPM_LIMIT} RPM) active. "
+                f"Currently {current_request_count} requests in window. "
+                f"Waiting for {wait_seconds:.2f}s."
+            )
+            time.sleep(wait_seconds)
 
 # ─────────────────── Redis locking helpers ────────────────────────────────
 
@@ -274,6 +328,8 @@ def _img_part(b: bytes, mime: str = "image/jpeg") -> Dict[str, str]:
 
 def _gemini(prompt_tmpl: str, img: bytes, tag: str,
             alias: str, category: str, api_key: str) -> str:
+    _wait_for_gemini_rate_limit()  # Apply rate limiting before making the call
+    
     prompt = prompt_tmpl.format(name_alias=alias or "N/A", category_name=category or "N/A")
     try:
         genai.configure(api_key=api_key)
