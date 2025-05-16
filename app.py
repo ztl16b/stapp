@@ -586,6 +586,16 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
         # 2. To S3_INCREDIBLE_BUCKET with destination='incredible' (this block)
         if dest_bucket == S3_INCREDIBLE_BUCKET and S3_INCREDIBLE_BUCKET_PREFIX:
             dest_key = f"{S3_INCREDIBLE_BUCKET_PREFIX}{filename}"
+    elif destination == 'to_upload_staging': # New destination type
+        # dest_bucket is S3_UPLOAD_BUCKET when this is called
+        if S3_UPLOAD_BUCKET_PREFIX:
+            dest_key = f"{S3_UPLOAD_BUCKET_PREFIX}{filename}"
+        # else dest_key remains filename (root of S3_UPLOAD_BUCKET)
+    elif destination == 'to_temp_staging': # New destination type
+        # dest_bucket is S3_TEMP_BUCKET when this is called
+        if S3_TEMP_BUCKET_PREFIX:
+            dest_key = f"{S3_TEMP_BUCKET_PREFIX}{filename}"
+        # else dest_key remains filename (root of S3_TEMP_BUCKET)
     else:
         # Fallback logic if destination hint is None or not one of the handled specific actions.
         # This attempts to match based on bucket type if a prefix is defined.
@@ -655,6 +665,11 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
     elif destination == 'incredible':
         metadata['review_status'] = 'TRUE'
         metadata['perfimg_status'] = 'TRUE'
+    elif destination in ['to_upload_staging', 'to_temp_staging']: # New
+        metadata['review_status'] = 'FALSE'
+        metadata['perfimg_status'] = 'FALSE'
+        if 'bad_reason' in metadata: # Remove bad_reason if moving to staging
+            del metadata['bad_reason']
     
     return {
         'copy_source': {'Bucket': source_bucket, 'Key': original_key},
@@ -2214,6 +2229,51 @@ def api_lookup_performer_info(performer_id):
         })
     else:
         return jsonify({'success': False, 'message': 'Performer ID not found.'}), 404
+
+@app.route('/move_from_issue/<target_action>/<path:object_key>', methods=['POST'])
+@login_required
+def move_issue_file_route(target_action, object_key):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('browse_bucket', bucket_name='issue'))
+
+    if not object_key:
+        flash("No image key provided for move operation.", "danger")
+        return redirect(url_for('browse_bucket', bucket_name='issue'))
+
+    source_bucket = S3_ISSUE_BUCKET
+    filename = object_key.split('/')[-1] # For flash messages
+
+    app.logger.info(f"Attempting to move '{object_key}' from issue bucket to '{target_action}' destination.")
+
+    success = False
+    destination_bucket_for_flash = ""
+    actual_destination_bucket = None
+
+    if target_action == 'to_upload':
+        actual_destination_bucket = S3_UPLOAD_BUCKET
+        if move_s3_object(source_bucket, actual_destination_bucket, object_key, destination='to_upload_staging'):
+            success = True
+            destination_bucket_for_flash = "Upload"
+    elif target_action == 'to_temp':
+        actual_destination_bucket = S3_TEMP_BUCKET
+        if move_s3_object(source_bucket, actual_destination_bucket, object_key, destination='to_temp_staging'):
+            success = True
+            destination_bucket_for_flash = "Temp"
+    else:
+        flash(f"Invalid target action: {target_action}", "danger")
+        return redirect(url_for('browse_bucket', bucket_name='issue'))
+
+    if success:
+        flash(f"Image '{filename}' successfully moved from Issue bucket to {destination_bucket_for_flash} bucket.", "success")
+        app.logger.info(f"Successfully moved '{object_key}' from {source_bucket} to {destination_bucket_for_flash} bucket ({actual_destination_bucket}).")
+    else:
+        app.logger.error(f"Failed to move '{object_key}' from {source_bucket} to {destination_bucket_for_flash} bucket ({actual_destination_bucket}). Check earlier logs from move_s3_object.")
+        # move_s3_object should flash specific errors. Add a generic one if it didn't.
+        if not any(m[0] == 'danger' for m in session.get('_flashes', [])):
+            flash(f"Failed to move image '{filename}' to {destination_bucket_for_flash} bucket. See logs for details.", "danger")
+            
+    return redirect(url_for('browse_bucket', bucket_name='issue'))
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
