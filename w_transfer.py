@@ -142,15 +142,124 @@ PERFORMER_INFO = _load_performer_csv()
 # ─────────────────────── PROMPTS (placeholders) ─────────────────────────────
 TEXT_PROMPT = """
 You are an image-audit specialist. Your directive:
-… (same as before) …
+
+▶ **Reject any image that contains overlayed or super-imposed text**
+    (≈ ≥ 3 % of image height, clearly legible at first glance).  
+    Size, not trademark status, is the deciding factor.
+
+Image subject : "{name_alias}"
+Event type    : {category_name}
+
+Allowed (no rejection)
+▪ Faint, unreadable signage in the background
+▪ Tiny garment tags or micro-text not intended as an overlay
+▪ Text on Clothing (e.g. Logos or Symbols on T-shirts or Jackets)
+
+Disallowed (automatic rejection)
+▪ Performer / tour name displayed as big graphic text
+▪ Venue names displayed as big graphic text
+▪ Sponsor, venue, product, watermark, slogans, sports-team logos
+▪ Any large overlay graphic, even if it merely says "Live" or similar
+
+────────────────────────────────────────────
+Tasks
+1. **Identify prominent text / logos only.**  
+    • List each large, readable string (or write "None").  
+    • Ignore micro-details too small or blurry to read.
+
+2. Decide: Does the image contain any large overlayed text / logo?  
+    (If uncertain, answer **Yes**.)
+
+3. If "Yes", reject and name the offending text/logo. If "No", approve.
+
+────────────────────────────────────────────
+Format (keep exactly)
+Prominent Text Detected: <text or "None">  
+Large overlayed text present?: <Yes|No>  
+Verdict: <Approve|Reject>  
+Reason: <short sentence>
 """
 
 LIKENESS_PROMPT = """
-… (same as before) …
+You are an image-audit specialist.  
+Your ONLY task is to decide whether the photo accurately depicts either …
+
+A) the *specific performer* named in **{name_alias}**, **or**  
+B) the *event type* given in **{category_name}** when no single performer matters  
+(e.g., NASCAR race, rodeo, basketball game).
+
+━━━━━━━━━━━━━━━━━━━━━━
+1. Choose evaluation target
+━━━━━━━━━━━━━━━━━━━━━━
+• If **{name_alias}** clearly refers to a person / band → target = *Performer*.  
+• Otherwise (empty, “N/A”, generic sport / event name) → target = *Event*.
+
+━━━━━━━━━━━━━━━━━━━━━━
+2. Scoring rules (0 = totally wrong, 100 = perfect match)
+━━━━━━━━━━━━━━━━━━━━━━
+▶ **Performer mode** – compare face, hair, age, distinctive features with public photos.  
+▶ **Event mode** – confirm scene matches the event type (activity, gear, venue).
+
+━━━━━━━━━━━━━━━━━━━━━━
+3. Verdict thresholds
+━━━━━━━━━━━━━━━━━━━━━━
+• *Performer* → Reject if **Score < 75**  
+• *Event*     → Reject if **Score < 80**
+
+━━━━━━━━━━━━━━━━━━━━━━
+4. Output — format EXACTLY
+━━━━━━━━━━━━━━━━━━━━━━
+Evaluation Target: <Performer|Event>  
+Score: <0-100> – <one-sentence explanation>  
+Verdict: <Approve|Reject>  
+Reason: <≤ 12 words>
 """
 
 CLIP_PROMPT = """
-… (same as before) …
+You are a forensic image examiner with **zero tolerance** for visual impossibilities.
+
+Subject : "{name_alias}"
+Event   : {category_name}
+
+━━━━━━━━━━━━━━━━━━━
+A. CRITICAL “CLIPPING” CHECK  ⟶ auto-Reject
+━━━━━━━━━━━━━━━━━━━
+▶ Scan FIRST for **any limb or body part that clips through**:
+• musical instruments (guitar, drum, mic stand, etc.)
+• stage props, furniture, cables, straps, clothing, other people
+• other objects that are solid and opaque
+If you find even ONE clipping point →  
+ • Set **Realism Score = 3** (or lower)  
+ • Set **Verdict = Reject**  
+ • “Reason” must name the body part and object (e.g., “Left leg clips through guitar body.”)  
+ • Stop here – do **not** run the remaining tests.
+
+━━━━━━━━━━━━━━━━━━━
+B. SECOND-LEVEL CHECKS (only if no clipping found)
+━━━━━━━━━━━━━━━━━━━
+1. Anatomy & Body Integrity  
+– Correct limb count and natural joint bends. No duplicated / missing parts.
+
+2. Object Solidity & Contact  
+– Hands grip objects believably; nothing floats or fuses unnaturally.
+
+3. Texture Continuity  
+– No melting, checkerboard, GAN grid, or random letters in any region.
+
+━━━━━━━━━━
+SCORING
+━━━━━━━━━━
+• Start at 10.  
+• −7 for **any** clipping found (handled in section A).
+• −1 per flaw in section B.
+• An image must finish **≥ 8** and have **no critical anomaly** to be approved.
+
+━━━━━━━━━━
+OUTPUT (format exactly)
+━━━━━━━━━━
+Realism Score: <0-10> – <short description of worst defect or “No defects”>  
+Verdict: <Approve|Reject>  
+Reason: <≤12 words (e.g., “Leg merges through guitar.” or “Image fully photorealistic.”)>
 """
 
 # ───────────────────────── HELPERS ──────────────────────────────────────────
