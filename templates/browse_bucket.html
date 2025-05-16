@@ -194,6 +194,7 @@
 
     {% if files %}
         <form id="batchDeleteForm" action="{{ url_for('delete_selected_route', bucket_name=bucket_name) }}" method="post">
+            <input type="hidden" name="batch_bad_reason" id="batchBadReasonInput">
             <div class="table-responsive">
                 <table class="table table-striped">
                     <thead class="table-light">
@@ -418,11 +419,26 @@
             </div>
             <div class="modal-body">
                 <p>Are you sure you want to move <span id="modalBadSelectedCount">0</span> selected file(s) to the Bad bucket?</p>
+                <div class="mb-3">
+                    <label for="batchBadReasonSelect" class="form-label">Reason:</label>
+                    <select class="form-select" id="batchBadReasonSelect">
+                        <option value="" selected disabled>Select a reason...</option>
+                        <option value="Low Quality">Low Quality</option>
+                        <option value="Wrong Performer">Wrong Performer</option>
+                        <option value="Not a Performer Image">Not a Performer Image</option>
+                        <option value="Duplicate">Duplicate</option>
+                        <option value="Corrupt File">Corrupt File</option>
+                        <option value="other">Other (Please specify)</option>
+                    </select>
+                </div>
+                <div class="mb-3" id="batchOtherReasonContainer" style="display: none;">
+                    <label for="batchOtherReasonText" class="form-label">Other Reason:</label>
+                    <input type="text" class="form-control" id="batchOtherReasonText" placeholder="Specify other reason">
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" form="batchDeleteForm" class="btn btn-danger"
-                        onclick="document.getElementById('batchDeleteForm').action = '{{ url_for('batch_move_from_upload_route', target_action='to_bad') }}';">
+                <button type="submit" form="batchDeleteForm" class="btn btn-danger" id="confirmMoveToBadBtn">
                     Move to Bad
                 </button>
             </div>
@@ -583,6 +599,70 @@
         
         // Initialize count
         updateSelectedCount();
+
+        // Event listener for the "Move to Bad" modal's select dropdown (for Upload bucket)
+        const batchBadReasonSelect = document.getElementById('batchBadReasonSelect');
+        const batchOtherReasonContainer = document.getElementById('batchOtherReasonContainer');
+        const batchOtherReasonText = document.getElementById('batchOtherReasonText');
+
+        if (batchBadReasonSelect) {
+            batchBadReasonSelect.addEventListener('change', function() {
+                if (this.value === 'other') {
+                    batchOtherReasonContainer.style.display = 'block';
+                    batchOtherReasonText.required = true;
+                } else {
+                    batchOtherReasonContainer.style.display = 'none';
+                    batchOtherReasonText.required = false;
+                    batchOtherReasonText.value = ''; // Clear if other is deselected
+                }
+            });
+        }
+
+        // Enhanced onclick for the "Confirm Move to Bad" button in the modal
+        const confirmMoveToBadBtn = document.getElementById('confirmMoveToBadBtn');
+        if (confirmMoveToBadBtn) {
+            confirmMoveToBadBtn.addEventListener('click', function(event) {
+                const form = document.getElementById('batchDeleteForm');
+                const badReasonSelect = document.getElementById('batchBadReasonSelect');
+                const otherReasonText = document.getElementById('batchOtherReasonText');
+                const hiddenBadReasonInput = document.getElementById('batchBadReasonInput');
+                let badReason = '';
+
+                if (badReasonSelect.value === 'other') {
+                    badReason = otherReasonText.value.trim();
+                    if (!badReason) {
+                        alert('Please specify the reason for marking as bad.');
+                        event.preventDefault(); // Prevent form submission
+                        return;
+                    }
+                    badReason = "Other: " + badReason; // Prefix with "Other: "
+                } else if (badReasonSelect.value) {
+                    badReason = badReasonSelect.value;
+                } else {
+                    alert('Please select a reason for marking as bad.');
+                    event.preventDefault(); // Prevent form submission
+                    return;
+                }
+
+                hiddenBadReasonInput.value = badReason;
+                form.action = '{{ url_for("batch_move_from_upload_route", target_action="to_bad") }}';
+                // Allow form to submit
+            });
+        }
+
+        // Reset modal fields when hidden (optional but good UX)
+        const moveToBadModalElement = document.getElementById('moveSelectedToBadModal');
+        if (moveToBadModalElement) {
+            moveToBadModalElement.addEventListener('hidden.bs.modal', function () {
+                if(batchBadReasonSelect) batchBadReasonSelect.value = '';
+                if(batchOtherReasonContainer) batchOtherReasonContainer.style.display = 'none';
+                if(batchOtherReasonText) {
+                     batchOtherReasonText.value = '';
+                     batchOtherReasonText.required = false;
+                }
+            });
+        }
+
     });
 </script>
 {% endblock %} 

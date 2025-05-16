@@ -2378,6 +2378,17 @@ def batch_move_from_upload_route(target_action):
         actual_destination_bucket = S3_BAD_BUCKET
         actual_destination_bucket_name = "Bad"
         destination_hint_for_prepare = 'bad' # Existing hint
+        # Retrieve the bad_reason from the form for 'to_bad' action
+        processed_bad_reason = request.form.get('batch_bad_reason', None)
+        if processed_bad_reason and processed_bad_reason.strip():
+            app.logger.info(f"Bad reason provided for batch move: {processed_bad_reason}")
+        else:
+            # If for some reason bad_reason is empty or not provided by client-side validation,
+            # default to a generic reason or handle as an error if reason is strictly required.
+            # For now, allow it to be None if not provided, _prepare_s3_operation will handle it.
+            app.logger.warning("No specific bad reason provided for batch move to Bad bucket.")
+            processed_bad_reason = None # Explicitly set to None if empty
+
     elif target_action == 'to_incredible':
         actual_destination_bucket = S3_INCREDIBLE_BUCKET
         actual_destination_bucket_name = "Incredible"
@@ -2394,7 +2405,12 @@ def batch_move_from_upload_route(target_action):
         app.logger.info(f"Batch moving '{object_key}' from {source_bucket} to {actual_destination_bucket_name} bucket ({actual_destination_bucket}) using hint '{destination_hint_for_prepare}'")
         # For 'bad' destination, no bad_reason is passed for batch moves from upload.
         # For 'incredible' and 'performers' (using 'good' hint), no special params needed beyond what _prepare_s3_operation does.
-        if move_s3_object(source_bucket, actual_destination_bucket, object_key, destination=destination_hint_for_prepare):
+        
+        current_bad_reason_for_move = None
+        if target_action == 'to_bad':
+            current_bad_reason_for_move = processed_bad_reason # Use the reason captured earlier
+            
+        if move_s3_object(source_bucket, actual_destination_bucket, object_key, destination=destination_hint_for_prepare, bad_reason=current_bad_reason_for_move):
             successful_moves += 1
         else:
             failed_moves += 1
