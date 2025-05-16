@@ -17,8 +17,8 @@ from rq import get_current_job #type: ignore
 import shlex
 import re
 import os
-import boto3
-from botocore.exceptions import ClientError
+import boto3 #type: ignore
+from botocore.exceptions import ClientError #type: ignore
 
 # S3 Configuration for problem performers list
 S3_RESOURCES_BUCKET = os.getenv("S3_RESOURCES_BUCKET")

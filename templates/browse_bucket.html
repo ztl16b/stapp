@@ -212,7 +212,6 @@
                             {% if bucket_name == 'bad' %}
                             <th>Bad Reason</th>
                             {% endif %}
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -261,21 +260,6 @@
                                 {% endif %}
                             </td>
                             {% endif %}
-                            <td>
-                                {# Actions for Issue Bucket #}
-                                {% if bucket_name == 'issue' %}
-                                    <!-- Form to move to Upload Bucket -->
-                                    <form method="POST" action="{{ url_for('move_issue_file_route', target_action='to_upload', object_key=file.key) }}" style="display: inline; margin-right: 5px;">
-                                        <button type="submit" class="btn btn-sm btn-info" onclick="return confirm('Are you sure you want to move this file to the Upload bucket?');">Move to Upload</button>
-                                    </form>
-                                
-                                    <!-- Form to move to Temp Bucket -->
-                                    <form method="POST" action="{{ url_for('move_issue_file_route', target_action='to_temp', object_key=file.key) }}" style="display: inline;">
-                                        <button type="submit" class="btn btn-sm btn-warning" onclick="return confirm('Are you sure you want to move this file to the Temp bucket?');">Move to Temp</button>
-                                    </form>
-                                {% endif %}
-                                {# Add other general actions here if needed, e.g., a delete button available for all buckets #}
-                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
