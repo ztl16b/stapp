@@ -58,7 +58,7 @@ GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY")      # text audit
 GEMINI_API_KEY_2        = os.getenv("GEMINI_API_KEY_2")    # likeness audit
 GEMINI_API_KEY_AY       = os.getenv("GEMINI_API_KEY_AY")   # clip audits
 
-GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-pro-preview-05-06")
+GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash-preview-04-17")
 
 # NEW: Redis
 REDIS_URL               = os.getenv("REDIS_URL")
@@ -125,14 +125,10 @@ def _wait_for_gemini_rate_limit() -> None:
         if current_request_count < GEMINI_RPM_LIMIT:
             # Slot available, add current request's timestamp and proceed.
             rds.zadd(REDIS_GEMINI_RPM_KEY, {unique_member_id: now})
-            # Set an expiry on the key itself as a safeguard.
-            # Expire after a bit more than the window to be safe (e.g., window + 10% + 1 min buffer).
             expiry_seconds = GEMINI_RPM_WINDOW_SECONDS + int(GEMINI_RPM_WINDOW_SECONDS * 0.1) + 60
             rds.expire(REDIS_GEMINI_RPM_KEY, expiry_seconds)
             break # Allowed to proceed
         else:
-            # Limit reached, calculate wait time.
-            # Find the timestamp of the oldest request in the current window.
             oldest_request_in_window = rds.zrange(REDIS_GEMINI_RPM_KEY, 0, 0, withscores=True)
             
             wait_seconds = 0.5  # Default wait time if set is empty or in an unexpected state.
