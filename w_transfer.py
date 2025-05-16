@@ -348,7 +348,7 @@ def process_image(key: str) -> bool:
         clip2_v, clip2_r = _verdict(clip2_raw)
 
         # 6) SAVE (dup‑aware vs previously uploaded files)
-        processed_name = f"{base.replace('-', '.')}\.webp"
+        processed_name = f"{base.replace('-', '.')}.webp"
         upload_key = f"{S3_UPLOAD_BUCKET_PREFIX}{processed_name}"
         duplicate = _object_exists(S3_UPLOAD_BUCKET, upload_key)
 
