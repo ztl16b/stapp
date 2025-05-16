@@ -568,6 +568,22 @@ def _prepare_s3_operation(source_bucket, dest_bucket, object_key, destination=No
         if len(parts) >= 3:
             filename = parts[2]  # Get just the original filename part
     
+    # If moving from S3_ISSUE_BUCKET, clean up the filename by removing _text or _likeness suffixes
+    if source_bucket == S3_ISSUE_BUCKET:
+        filename_base, file_ext = os.path.splitext(filename)
+        modified = False
+        if filename_base.endswith('_text'):
+            filename_base = filename_base[:-len('_text')]
+            modified = True
+        elif filename_base.endswith('_likeness'): # Use elif to avoid stripping both if somehow present like "_likeness_text"
+            filename_base = filename_base[:-len('_likeness')]
+            modified = True
+        
+        if modified:
+            new_filename = filename_base + file_ext
+            app.logger.info(f"Filename modification for issue bucket: '{filename}' -> '{new_filename}'")
+            filename = new_filename
+
     # Determine destination path based on dest_bucket and destination hint
     dest_key = filename # Default to filename (root of dest_bucket if no prefix matches)
 
