@@ -305,15 +305,28 @@ def process_image(key: str) -> bool:
     try:
         filename = key.rsplit("/", 1)[-1]
         base, ext = os.path.splitext(filename)
-        logger.info("→ %s", filename)
+        logger.info("→ %s (processing key: %s)", filename, key)
 
         # look‑up alias & category
         pid = _extract_performer_id(base)
         alias, category = PERFORMER_INFO.get(pid, ("", ""))
         if not alias and not category:
-            logger.warning("Performer ID %s not found in CSV; using blanks.", pid)
+            logger.warning("Performer ID %s not found in CSV (for key %s); using blanks.", pid, key)
 
-        obj = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
+        try:
+            obj = s3.get_object(Bucket=S3_TEMP_BUCKET, Key=key)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "NoSuchKey":
+                logger.warning(
+                    "Object %s no longer exists in %s (likely processed by another worker or deleted prematurely). Skipping.",
+                    key, S3_TEMP_BUCKET
+                )
+                return True # Mark as handled, will be marked 'done' in _scan
+            else:
+                # Log other S3 client errors specifically before re-raising
+                logger.error("S3 ClientError (not NoSuchKey) getting object for key %s: %s", key, e)
+                raise
+
         img_bytes: bytes = obj["Body"].read()
         ctype = obj.get("ContentType", "image/jpeg")
 
@@ -377,7 +390,7 @@ def process_image(key: str) -> bool:
         return True
 
     except Exception as e:
-        logger.error("Process failed: %s", e)
+        logger.error("Process failed for key %s: %s", key, e)
         traceback.print_exc()
         return False
 
