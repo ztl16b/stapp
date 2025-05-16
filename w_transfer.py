@@ -93,7 +93,7 @@ s3 = boto3.client(
     region_name=AWS_REGION,
 )
 
-rds = redis.from_url(REDIS_URL, decode_responses=True)
+rds = redis.from_url(REDIS_URL, decode_responses=True, ssl_cert_reqs=None)
 
 # (No global genai.configure — we set per‑call)
 
@@ -192,7 +192,7 @@ B) the *event type* given in **{category_name}** when no single performer matter
 1. Choose evaluation target
 ━━━━━━━━━━━━━━━━━━━━━━
 • If **{name_alias}** clearly refers to a person / band → target = *Performer*.  
-• Otherwise (empty, “N/A”, generic sport / event name) → target = *Event*.
+• Otherwise (empty, "N/A", generic sport / event name) → target = *Event*.
 
 ━━━━━━━━━━━━━━━━━━━━━━
 2. Scoring rules (0 = totally wrong, 100 = perfect match)
@@ -222,7 +222,7 @@ Subject : "{name_alias}"
 Event   : {category_name}
 
 ━━━━━━━━━━━━━━━━━━━
-A. CRITICAL “CLIPPING” CHECK  ⟶ auto-Reject
+A. CRITICAL "CLIPPING" CHECK  ⟶ auto-Reject
 ━━━━━━━━━━━━━━━━━━━
 ▶ Scan FIRST for **any limb or body part that clips through**:
 • musical instruments (guitar, drum, mic stand, etc.)
@@ -231,7 +231,7 @@ A. CRITICAL “CLIPPING” CHECK  ⟶ auto-Reject
 If you find even ONE clipping point →  
  • Set **Realism Score = 3** (or lower)  
  • Set **Verdict = Reject**  
- • “Reason” must name the body part and object (e.g., “Left leg clips through guitar body.”)  
+ • "Reason" must name the body part and object (e.g., "Left leg clips through guitar body.")  
  • Stop here – do **not** run the remaining tests.
 
 ━━━━━━━━━━━━━━━━━━━
@@ -257,9 +257,9 @@ SCORING
 ━━━━━━━━━━
 OUTPUT (format exactly)
 ━━━━━━━━━━
-Realism Score: <0-10> – <short description of worst defect or “No defects”>  
+Realism Score: <0-10> – <short description of worst defect or "No defects">  
 Verdict: <Approve|Reject>  
-Reason: <≤12 words (e.g., “Leg merges through guitar.” or “Image fully photorealistic.”)>
+Reason: <≤12 words (e.g., "Leg merges through guitar." or "Image fully photorealistic.")>
 """
 
 # ───────────────────────── HELPERS ──────────────────────────────────────────
