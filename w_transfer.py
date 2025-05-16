@@ -53,12 +53,35 @@ PERFORMER_META_CSV_KEY  = os.getenv("PERFORMER_META_CSV_KEY")  # e.g. "lookups/p
 BYTESCALE_API_KEY       = os.getenv("BYTESCALE_API_KEY")
 BYTESCALE_UPLOAD_URL    = os.getenv("BYTESCALE_UPLOAD_URL")
 
-# ── Gemini keys (rotated by audit step) ─────────────────────────────────────
-GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY")      # text audit
-GEMINI_API_KEY_2        = os.getenv("GEMINI_API_KEY_2")    # likeness audit
-GEMINI_API_KEY_AY       = os.getenv("GEMINI_API_KEY_AY")   # clip audits
+# ── Gemini keys & limits (rotated by audit step) ───────────────────────────
+# DEPRECATED Fixed Keys:
+# GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY")      # text audit
+# GEMINI_API_KEY_2        = os.getenv("GEMINI_API_KEY_2")    # likeness audit
+# GEMINI_API_KEY_AY       = os.getenv("GEMINI_API_KEY_AY")   # clip audits
 
-GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash-preview-04-17")
+# NEW: Gemini API Key Pools (comma-separated strings from env vars)
+GEMINI_API_KEYS_TEXT_STR     = os.getenv("GEMINI_API_KEYS_TEXT", "")
+GEMINI_API_KEYS_LIKENESS_STR = os.getenv("GEMINI_API_KEYS_LIKENESS", "")
+GEMINI_API_KEYS_CLIP_STR     = os.getenv("GEMINI_API_KEYS_CLIP", "")
+
+GEMINI_API_KEYS_TEXT     = [k.strip() for k in GEMINI_API_KEYS_TEXT_STR.split(',') if k.strip()]
+GEMINI_API_KEYS_LIKENESS = [k.strip() for k in GEMINI_API_KEYS_LIKENESS_STR.split(',') if k.strip()]
+GEMINI_API_KEYS_CLIP     = [k.strip() for k in GEMINI_API_KEYS_CLIP_STR.split(',') if k.strip()]
+
+ALL_GEMINI_KEYS = list(set(GEMINI_API_KEYS_TEXT + GEMINI_API_KEYS_LIKENESS + GEMINI_API_KEYS_CLIP))
+
+# Mapping from audit tag to the list of keys
+AUDIT_TAG_TO_KEYS_LIST: Dict[str, list[str]] = {
+    "TEXT": GEMINI_API_KEYS_TEXT,
+    "LIKENESS": GEMINI_API_KEYS_LIKENESS,
+    "CLIP-1": GEMINI_API_KEYS_CLIP,
+    "CLIP-2": GEMINI_API_KEYS_CLIP, # Both CLIP audits use the same pool
+}
+
+GEMINI_MODEL_ID         = os.getenv("GEMINI_MODEL_ID", "gemini-1.5-pro-preview-0514") # User updated this
+GEMINI_DAILY_LIMIT_PER_KEY = int(os.getenv("GEMINI_DAILY_LIMIT_PER_KEY", "1000"))
+REDIS_DAILY_QUOTA_KEY_TTL = 25 * 3600 # 25 hours TTL for daily counters
+
 
 # NEW: Redis
 REDIS_URL               = os.getenv("REDIS_URL")
@@ -75,7 +98,7 @@ REQUIRED_VARS = (
     S3_TEMP_BUCKET, S3_UPLOAD_BUCKET, S3_ISSUE_BUCKET,
     S3_RESOURCES_BUCKET, PERFORMER_META_CSV_KEY,
     BYTESCALE_API_KEY, BYTESCALE_UPLOAD_URL,
-    GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_AY,
+    ALL_GEMINI_KEYS, # Check that at least one key is configured overall
     REDIS_URL,
 )
 if not all(REQUIRED_VARS):
@@ -101,6 +124,78 @@ s3 = boto3.client(
 rds = redis.from_url(REDIS_URL, decode_responses=True, ssl_cert_reqs=None)
 
 # (No global genai.configure — we set per‑call)
+
+# ─────────────────── Gemini Daily Quota & Key Selection Helpers ─────────────
+
+def _get_daily_quota_redis_key(api_key: str) -> str:
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return f"gemini:daily_quota:{api_key}:{date_str}"
+
+def _get_available_api_key(audit_tag: str) -> str | None:
+    keys_for_audit_type = AUDIT_TAG_TO_KEYS_LIST.get(audit_tag)
+    if not keys_for_audit_type: # Should not happen if ALL_GEMINI_KEYS is populated and map is correct
+        logger.error(
+            "CRITICAL: No API key pool configured internally for audit tag: %s. This is a code setup issue.",
+             audit_tag
+        )
+        return None
+    
+    if not ALL_GEMINI_KEYS: # Should be caught by REQUIRED_VARS check, but good to have safeguard
+        logger.error("CRITICAL: No Gemini API keys loaded at all.")
+        return None
+        
+    if not keys_for_audit_type and AUDIT_TAG_TO_KEYS_LIST: # If specific pool is empty but others exist
+         logger.warning("No specific API keys configured for audit tag '%s' pool. Cannot select a key.", audit_tag)
+         return None
+
+
+    candidate_keys: list[tuple[int, str]] = [] # List of (count, key)
+    for key_value in keys_for_audit_type:
+        redis_key = _get_daily_quota_redis_key(key_value)
+        try:
+            count_str = rds.get(redis_key)
+            current_count = int(count_str) if count_str is not None else 0
+        except (redis.RedisError, ValueError) as e:
+            logger.warning(
+                "Redis error getting daily count for key %s (tag %s): %s. Assuming 0 for safety.",
+                key_value[-4:], audit_tag, e
+            )
+            current_count = 0
+
+        if current_count < GEMINI_DAILY_LIMIT_PER_KEY:
+            candidate_keys.append((current_count, key_value))
+        else:
+            logger.warning("API key ending in ...%s has reached daily limit (%d) for audit tag %s.",
+                           key_value[-4:], current_count, audit_tag)
+
+    if not candidate_keys:
+        logger.error("All API keys for audit tag '%s' have reached their daily limit or its pool is empty/misconfigured.", audit_tag)
+        return None
+
+    candidate_keys.sort(key=lambda x: x[0]) # Sort by count (ascending)
+    selected_key = candidate_keys[0][1]
+    logger.info("Selected API key ending ...%s (usage: %d) for audit tag %s.",
+                selected_key[-4:], candidate_keys[0][0], audit_tag)
+    return selected_key
+
+def _record_api_key_usage(api_key: str, audit_tag: str, mark_exhausted: bool = False) -> None:
+    redis_key = _get_daily_quota_redis_key(api_key)
+    try:
+        if mark_exhausted:
+            logger.warning("Marking API key ...%s as exhausted for the day for audit %s.", api_key[-4:], audit_tag)
+            rds.set(redis_key, str(GEMINI_DAILY_LIMIT_PER_KEY), ex=REDIS_DAILY_QUOTA_KEY_TTL)
+        else:
+            new_count = rds.incr(redis_key)
+            # Ensure TTL is set/refreshed on each increment
+            rds.expire(redis_key, REDIS_DAILY_QUOTA_KEY_TTL)
+            logger.info("Incremented usage for API key ...%s to %d for audit %s.", api_key[-4:], new_count, audit_tag)
+
+            if new_count >= GEMINI_DAILY_LIMIT_PER_KEY:
+                 logger.warning("API key ...%s has now reached daily limit (%d) after use for audit %s.",
+                               api_key[-4:], new_count, audit_tag)
+    except redis.RedisError as e:
+        logger.error("Redis error recording API key usage for key ...%s (tag %s): %s", api_key[-4:], audit_tag, e)
+
 
 # ─────────────────── Gemini Rate Limiter ───────────────────────────────────
 def _wait_for_gemini_rate_limit() -> None:
@@ -323,18 +418,48 @@ def _img_part(b: bytes, mime: str = "image/jpeg") -> Dict[str, str]:
 
 
 def _gemini(prompt_tmpl: str, img: bytes, tag: str,
-            alias: str, category: str, api_key: str) -> str:
-    _wait_for_gemini_rate_limit()  # Apply rate limiting before making the call
-    
+            alias: str, category: str) -> str:
+    _wait_for_gemini_rate_limit()
+
+    selected_api_key = _get_available_api_key(tag)
+    if not selected_api_key:
+        logger.error("No available Gemini API key for audit tag '%s'. Skipping API call.", tag)
+        return ""
+
     prompt = prompt_tmpl.format(name_alias=alias or "N/A", category_name=category or "N/A")
+    api_key_for_logging = selected_api_key[-4:] # Log only last 4 chars for security
+
     try:
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=selected_api_key)
         model = genai.GenerativeModel(GEMINI_MODEL_ID)
         resp_txt = model.generate_content([{"text": prompt}, _img_part(img)]).text.strip()
-        logger.info("Gemini %s response:\n%s", tag, resp_txt)
+        
+        logger.info("Gemini %s response (key: ...%s):\n%s", tag, api_key_for_logging, resp_txt)
+        _record_api_key_usage(selected_api_key, tag) # Record successful usage
         return resp_txt
     except Exception as e:
-        logger.error("Gemini error during %s audit: %s", tag, e)
+        error_str = str(e).lower() # Compare in lowercase
+        # Check if it's a daily quota error based on message content
+        is_daily_quota_error = (
+            "429" in error_str and # HTTP status code for rate limiting / quota
+            ("generate_requests_per_model_per_day" in error_str or
+             "daily limit" in error_str or
+             "quota_id: \"GenerateRequestsPerDayPerProjectPerModel\"".lower() in error_str or # Match specific ID
+             "user_requests_per_day_per_project" in error_str # Another possible metric string
+            )
+        )
+
+        if is_daily_quota_error:
+            logger.error(
+                "Gemini daily quota error for key ...%s during %s audit: %s",
+                api_key_for_logging, tag, e
+            )
+            _record_api_key_usage(selected_api_key, tag, mark_exhausted=True)
+        else:
+            logger.error(
+                "Gemini error (key: ...%s) during %s audit: %s",
+                api_key_for_logging, tag, e
+            )
         return ""
 
 
@@ -383,7 +508,7 @@ def process_image(key: str) -> bool:
         ctype = obj.get("ContentType", "image/jpeg")
 
         # 1) TEXT AUDIT – GEMINI_API_KEY
-        text_raw = _gemini(TEXT_PROMPT, img_bytes, "TEXT", alias, category, GEMINI_API_KEY)
+        text_raw = _gemini(TEXT_PROMPT, img_bytes, "TEXT", alias, category)
         text_v, text_r = _verdict(text_raw)
         if text_v != "APPROVE":
             _to_issue(img_bytes, ctype, base + "_text" + ext, {"text_v": text_v, "text_r": text_r})
@@ -391,7 +516,7 @@ def process_image(key: str) -> bool:
             return True
 
         # 2) LIKENESS AUDIT – GEMINI_API_KEY_2
-        like_raw = _gemini(LIKENESS_PROMPT, img_bytes, "LIKENESS", alias, category, GEMINI_API_KEY_2)
+        like_raw = _gemini(LIKENESS_PROMPT, img_bytes, "LIKENESS", alias, category)
         like_v, like_r = _verdict(like_raw)
         if like_v != "APPROVE":
             _to_issue(img_bytes, ctype, base + "_likeness" + ext,
@@ -400,7 +525,7 @@ def process_image(key: str) -> bool:
             return True
 
         # 3) CLIP‑1 AUDIT – GEMINI_API_KEY_AY
-        clip1_raw = _gemini(CLIP_PROMPT, img_bytes, "CLIP-1", alias, category, GEMINI_API_KEY_AY)
+        clip1_raw = _gemini(CLIP_PROMPT, img_bytes, "CLIP-1", alias, category)
         clip1_v, clip1_r = _verdict(clip1_raw)
 
         # 4) BYTESCALE CONVERT
@@ -409,7 +534,7 @@ def process_image(key: str) -> bool:
             return False
 
         # 5) CLIP‑2 AUDIT – GEMINI_API_KEY_AY
-        clip2_raw = _gemini(CLIP_PROMPT, webp_bytes, "CLIP-2", alias, category, GEMINI_API_KEY_AY)
+        clip2_raw = _gemini(CLIP_PROMPT, webp_bytes, "CLIP-2", alias, category)
         clip2_v, clip2_r = _verdict(clip2_raw)
 
         # 6) SAVE (dup‑aware vs previously uploaded files)
