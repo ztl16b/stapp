@@ -2275,6 +2275,61 @@ def move_issue_file_route(target_action, object_key):
             
     return redirect(url_for('browse_bucket', bucket_name='issue'))
 
+@app.route('/batch_move_from_issue/<target_action>', methods=['POST'])
+@login_required
+def batch_move_from_issue_route(target_action):
+    if session.get('permission_level') != 'admin':
+        flash('You do not have permission to access this page.', 'danger')
+        return redirect(url_for('browse_bucket', bucket_name='issue'))
+
+    selected_files = request.form.getlist('selected_files')
+    if not selected_files:
+        flash('No files were selected for the batch operation.', 'warning')
+        return redirect(url_for('browse_bucket', bucket_name='issue'))
+
+    source_bucket = S3_ISSUE_BUCKET
+    successful_moves = 0
+    failed_moves = 0
+    
+    actual_destination_bucket = None # Initialize to prevent UnboundLocalError if target_action is invalid
+    actual_destination_bucket_name = ""
+    destination_hint_for_prepare = ""
+
+    if target_action == 'to_upload':
+        actual_destination_bucket = S3_UPLOAD_BUCKET
+        actual_destination_bucket_name = "Upload"
+        destination_hint_for_prepare = 'to_upload_staging'
+    elif target_action == 'to_temp':
+        actual_destination_bucket = S3_TEMP_BUCKET
+        actual_destination_bucket_name = "Temp"
+        destination_hint_for_prepare = 'to_temp_staging'
+    else:
+        flash(f"Invalid batch target action: {target_action}", "danger")
+        return redirect(url_for('browse_bucket', bucket_name='issue'))
+
+    for object_key in selected_files:
+        # filename = object_key.split('/')[-1] # Not strictly needed for logging here as object_key is logged
+        app.logger.info(f"Batch moving '{object_key}' from {source_bucket} to {actual_destination_bucket_name} bucket ({actual_destination_bucket})")
+        if move_s3_object(source_bucket, actual_destination_bucket, object_key, destination=destination_hint_for_prepare):
+            successful_moves += 1
+        else:
+            failed_moves += 1
+            # move_s3_object flashes its own detailed error, so we don't need to flash per file here.
+            app.logger.error(f"Batch move FAILED for '{object_key}' to {actual_destination_bucket_name} bucket. See previous logs from move_s3_object.")
+
+    if successful_moves > 0:
+        flash(f"Successfully moved {successful_moves} file(s) to the {actual_destination_bucket_name} bucket.", "success")
+    if failed_moves > 0:
+        flash(f"Failed to move {failed_moves} file(s) to the {actual_destination_bucket_name} bucket. Please check logs for details.", "danger")
+    # Only flash if selected_files was not empty initially but neither success nor fail counts incremented (should not happen with current logic)
+    # This condition is better: if selected_files was not empty and we didn't achieve any successful or failed moves (e.g. if loop was skipped)
+    if not selected_files: # This case is already handled by the check at the beginning
+        pass
+    elif successful_moves == 0 and failed_moves == 0:
+         flash("No files were processed or eligible for the batch operation.", "info")
+
+    return redirect(url_for('browse_bucket', bucket_name='issue'))
+
 if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')
